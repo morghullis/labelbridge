@@ -375,6 +375,10 @@ class JobStore:
                 "INSERT OR IGNORE INTO seen(key, created_at) VALUES(?, ?)", (key, time.time())
             )
 
+    def unmark_seen(self, key: str) -> None:
+        with self._lock:
+            self._conn.execute("DELETE FROM seen WHERE key=?", (key,))
+
     def count_seen(self, prefix: str, since: float) -> int:
         with self._lock:
             return self._conn.execute(

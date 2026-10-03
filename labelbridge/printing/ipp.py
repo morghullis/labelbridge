@@ -143,7 +143,7 @@ def _post(
             if pin and fingerprint != pin.lower():
                 raise CertificateMismatch(
                     f"El certificado de {host} cambió desde que se configuró la impresora. "
-                    "Si es correcto, vuelve a guardar la impresora para confiar en el nuevo."
+                    "Si es correcto, edita la impresora y marca «Volver a confiar en el certificado»."
                 )
         conn.request("POST", path or "/", body=body, headers={"Content-Type": "application/ipp"})
         resp = conn.getresponse()

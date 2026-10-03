@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import ctypes
+import ipaddress
 import logging
 import subprocess
 import sys
@@ -48,28 +49,41 @@ def list_drivers() -> list[str]:
     return drivers or list(GENERIC_DRIVERS)
 
 
-def _ps_quote(value: str) -> str:
-    return "'" + value.replace("'", "''") + "'"
+def _ps_value(value: str) -> str:
+    """Expresión PowerShell que reconstruye el texto desde base64.
+
+    Los nombres vienen de la red (mDNS, IPP, HTTP) y no son confiables: PowerShell también cierra
+    comillas simples con comillas tipográficas (U+2018..U+201B), así que nunca se interpolan.
+    """
+    encoded = base64.b64encode(value.encode("utf-8")).decode("ascii")
+    return f"([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{encoded}')))"
 
 
 def install_network_printer(name: str, ip: str, driver: str, port: int = 9100) -> None:
     """Crea el puerto TCP/IP y la impresora con permisos de administrador (aparece el aviso UAC)."""
     if not supported():
         raise RuntimeError("Solo disponible en Windows")
+    ip = str(ipaddress.ip_address(ip.strip()))  # solo IPs válidas
+    name = " ".join(name.split())[:100] or f"Impresora {ip}"
     log_file = Path(tempfile.gettempdir()) / "labelbridge-install-printer.log"
-    port_name = f"IP_{ip}" if port == 9100 else f"IP_{ip}_{port}"
+    port_name = f"IP_{ip}" if port == 9100 else f"IP_{ip}_{int(port)}"
     script = f"""
 $ErrorActionPreference = 'Stop'
+$portName = {_ps_value(port_name)}
+$printerName = {_ps_value(name)}
+$driverName = {_ps_value(driver)}
+$hostAddress = {_ps_value(ip)}
+$logFile = {_ps_value(str(log_file))}
 try {{
-  if (-not (Get-PrinterPort -Name {_ps_quote(port_name)} -ErrorAction SilentlyContinue)) {{
-    Add-PrinterPort -Name {_ps_quote(port_name)} -PrinterHostAddress {_ps_quote(ip)} -PortNumber {int(port)}
+  if (-not (Get-PrinterPort -Name $portName -ErrorAction SilentlyContinue)) {{
+    Add-PrinterPort -Name $portName -PrinterHostAddress $hostAddress -PortNumber {int(port)}
   }}
-  if (-not (Get-Printer -Name {_ps_quote(name)} -ErrorAction SilentlyContinue)) {{
-    Add-Printer -Name {_ps_quote(name)} -DriverName {_ps_quote(driver)} -PortName {_ps_quote(port_name)}
+  if (-not (Get-Printer -Name $printerName -ErrorAction SilentlyContinue)) {{
+    Add-Printer -Name $printerName -DriverName $driverName -PortName $portName
   }}
-  'OK' | Out-File -Encoding utf8 {_ps_quote(str(log_file))}
+  'OK' | Out-File -Encoding utf8 $logFile
 }} catch {{
-  $_.Exception.Message | Out-File -Encoding utf8 {_ps_quote(str(log_file))}
+  $_.Exception.Message | Out-File -Encoding utf8 $logFile
   exit 1
 }}
 """

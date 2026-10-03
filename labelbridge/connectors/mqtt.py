@@ -70,6 +70,9 @@ class MqttService(BackgroundService):
         self.engine = engine
         self._client: mqtt.Client | None = None
         self._channel = ""
+        # mid de publicación -> (job_id, estado, updated_at): se confirma al recibir el PUBACK.
+        self._inflight: dict[int, tuple[str, str, float]] = {}
+        self._inflight_lock = threading.Lock()
         events.subscribe(self._on_event)
 
     def enabled(self) -> bool:
@@ -119,6 +122,9 @@ class MqttService(BackgroundService):
         client.on_connect_fail = self._on_connect_fail
         client.on_disconnect = self._on_disconnect
         client.on_message = self._on_message
+        client.on_publish = self._on_publish
+        with self._inflight_lock:
+            self._inflight.clear()  # cliente nuevo: lo no confirmado se reenvía
         self._client = client
         self.set_status("connecting", f"Conectando con {settings.host}…")
         try:
@@ -163,6 +169,13 @@ class MqttService(BackgroundService):
         if self.running:
             self.set_status("connecting", "Conexión perdida; reconectando…")
             log.warning("MQTT: desconectado (%s); reconectando", reason_code)
+
+    def _on_publish(self, client: mqtt.Client, userdata, mid: int, reason_code, properties) -> None:
+        with self._inflight_lock:
+            entry = self._inflight.pop(mid, None)
+        if entry is not None:
+            job_id, status, updated_at = entry
+            self.store.mark_acked(job_id, status, updated_at)
 
     def _on_message(self, client: mqtt.Client, userdata, message: mqtt.MQTTMessage) -> None:
         try:
@@ -218,7 +231,11 @@ class MqttService(BackgroundService):
             return 0
         t = topics(self._channel or self.channel())
         sent = 0
+        with self._inflight_lock:
+            waiting = {entry[0] for entry in self._inflight.values()}
         for job in self.store.pending_acks("mqtt"):
+            if job["id"] in waiting:
+                continue  # ya enviado; esperando confirmación del broker
             status = FINAL_ACK.get(job["status"])
             if status:
                 body = json.dumps(
@@ -232,13 +249,17 @@ class MqttService(BackgroundService):
                     },
                     ensure_ascii=False,
                 )
-                result = client.publish(f"{t['acks']}/{topic_part(job['external_id'])}", body, qos=1)
-                if status == "failed":
-                    client.publish(t["errors"], body, qos=1)
+                with self._inflight_lock:
+                    result = client.publish(f"{t['acks']}/{topic_part(job['external_id'])}", body, qos=1)
+                    if result.rc == mqtt.MQTT_ERR_SUCCESS:
+                        self._inflight[result.mid] = (job["id"], status, job["updated_at"])
                 if result.rc != mqtt.MQTT_ERR_SUCCESS:
                     break
+                if status == "failed":
+                    client.publish(t["errors"], body, qos=1)
                 sent += 1
-            self.store.mark_acked(job["id"], status or "received", job["updated_at"])
+            else:
+                self.store.mark_acked(job["id"], "received", job["updated_at"])  # aún no hay nada que confirmar
         return sent
 
     # --- prueba desde la UI ----------------------------------------------------------------------

@@ -116,7 +116,15 @@ mutation LabelBridgeTagsAdd($id: ID!, $tags: [String!]!) {
 
 
 class ShopifyError(Exception):
-    pass
+    """uncertain=True: no se sabe si Shopify ejecutó la operación (error 5xx, corte a mitad...)."""
+
+    def __init__(self, message: str, uncertain: bool = False) -> None:
+        super().__init__(message)
+        self.uncertain = uncertain
+
+
+class PurchaseRejected(ShopifyError):
+    """Shopify respondió que NO compró la etiqueta (userErrors): se puede reintentar."""
 
 
 def normalize_shop(shop: str) -> str:
@@ -216,8 +224,15 @@ class ShopifyClient:
 
     # --- GraphQL ------------------------------------------------------------------------
     def graphql(
-        self, query: str, variables: dict[str, Any] | None = None, _retry: int = 0, _refresh: bool = False
+        self,
+        query: str,
+        variables: dict[str, Any] | None = None,
+        *,
+        mutation: bool = False,
+        _retry: int = 0,
+        _refresh: bool = False,
     ) -> dict[str, Any]:
+        """mutation=True: nunca se reintenta algo que Shopify pudo haber ejecutado (evita compras dobles)."""
         resp = net.request(
             "POST",
             f"https://{self.shop}/admin/api/{self.api_version}/graphql.json",
@@ -227,28 +242,31 @@ class ShopifyClient:
             raise_for_status=False,
         )
         if resp.status == 401 and self.auth_mode != "token" and not _refresh:
-            return self.graphql(query, variables, _retry=_retry, _refresh=True)
+            return self.graphql(query, variables, mutation=mutation, _retry=_retry, _refresh=True)
         if resp.status == 401:
             raise ShopifyError("Token inválido o revocado (HTTP 401)")
         if resp.status == 402:
             raise ShopifyError("La tienda está pausada o sin plan activo (HTTP 402)")
         if resp.status == 404:
             raise ShopifyError(f"Tienda o versión de API no encontrada ({self.shop}, {self.api_version})")
-        if resp.status in (429, 503) and _retry < 3:
+        if (resp.status == 429 or (resp.status == 503 and not mutation)) and _retry < 3:
             time.sleep(float(resp.headers.get("retry-after", "2") or 2))
-            return self.graphql(query, variables, _retry=_retry + 1)
+            return self.graphql(query, variables, mutation=mutation, _retry=_retry + 1)
         if resp.status >= 400:
-            raise ShopifyError(f"HTTP {resp.status}: {resp.body[:300].decode('utf-8', 'replace')}")
+            raise ShopifyError(
+                f"HTTP {resp.status}: {resp.body[:300].decode('utf-8', 'replace')}", uncertain=resp.status >= 500
+            )
         payload = resp.json() or {}
         errors = payload.get("errors") or []
         if errors:
-            if any((e.get("extensions") or {}).get("code") == "THROTTLED" for e in errors) and _retry < 3:
+            codes = {(e.get("extensions") or {}).get("code") for e in errors}
+            if "THROTTLED" in codes and _retry < 3:  # rechazada antes de ejecutarse: reintentar es seguro
                 time.sleep(2 + _retry * 2)
-                return self.graphql(query, variables, _retry=_retry + 1)
+                return self.graphql(query, variables, mutation=mutation, _retry=_retry + 1)
             messages = "; ".join(str(e.get("message", e)) for e in errors)
-            if "access denied" in messages.lower() or "ACCESS_DENIED" in json.dumps(errors):
+            if "access denied" in messages.lower() or "ACCESS_DENIED" in codes:
                 messages += " (faltan permisos/scopes en la app de Shopify)"
-            raise ShopifyError(messages)
+            raise ShopifyError(messages, uncertain="INTERNAL_SERVER_ERROR" in codes)
         return payload.get("data") or {}
 
     # --- operaciones -----------------------------------------------------------------------
@@ -299,21 +317,22 @@ class ShopifyClient:
                     "notifyCustomer": bool(notify_customer),
                 }
             },
+            mutation=True,
         )
         result = data.get("shippingLabelPurchase") or {}
         errors = result.get("userErrors") or []
         if errors:
-            raise ShopifyError("; ".join(f"{e.get('code') or ''} {e.get('message')}".strip() for e in errors))
+            raise PurchaseRejected("; ".join(f"{e.get('code') or ''} {e.get('message')}".strip() for e in errors))
         purchase = result.get("shippingLabelPurchaseResult") or {}
         if not purchase.get("id"):
-            raise ShopifyError("Shopify no devolvió el resultado de la compra")
+            raise ShopifyError("Shopify no devolvió el resultado de la compra", uncertain=True)
         return str(purchase["id"])
 
     def label_result(self, result_id: str) -> dict[str, Any]:
         return self.graphql(LABEL_RESULT_QUERY, {"id": result_id}).get("node") or {}
 
     def add_tags(self, order_gid: str, tags: list[str]) -> None:
-        data = self.graphql(TAGS_ADD_MUTATION, {"id": order_gid, "tags": tags})
+        data = self.graphql(TAGS_ADD_MUTATION, {"id": order_gid, "tags": tags}, mutation=True)
         errors = (data.get("tagsAdd") or {}).get("userErrors") or []
         if errors:
             raise ShopifyError("; ".join(e.get("message", "") for e in errors))
@@ -334,6 +353,7 @@ class ShopifyService(BackgroundService):
         self._client: ShopifyClient | None = None
         self._tag_queue: deque[str] = deque()
         self._limit_warned_day = 0.0
+        self._cycle_lock = threading.Lock()
         events.subscribe(self._on_event)
         engine.url_auth_providers.append(self._auth_headers_for)
 
@@ -401,7 +421,7 @@ class ShopifyService(BackgroundService):
             settings = self.cfg.data.shopify
             try:
                 client = self.client()
-                summary = self.cycle(client, settings)
+                summary = self.cycle(client, settings, stop)
                 failures = 0
                 self.set_status("ok", f"Conectado a {client.shop} · revisado a las {time.strftime('%H:%M:%S')}{summary}")
             except (ShopifyError, net.NetworkError, net.HttpError) as exc:
@@ -418,7 +438,12 @@ class ShopifyService(BackgroundService):
             if not self.sleep(stop, wake, delay):
                 break
 
-    def cycle(self, client: ShopifyClient, settings: ShopifySettings) -> str:
+    def cycle(self, client: ShopifyClient, settings: ShopifySettings, stop: threading.Event | None = None) -> str:
+        # Un solo ciclo a la vez, aunque un reinicio deje un hilo anterior terminando su vuelta.
+        with self._cycle_lock:
+            return self._cycle(client, settings, stop or threading.Event())
+
+    def _cycle(self, client: ShopifyClient, settings: ShopifySettings, stop: threading.Event) -> str:
         since = self.since_ts()
         cursor = self.store.kv_get(self._key("cursor")) or _ts_to_iso(since)
         try:
@@ -433,17 +458,20 @@ class ShopifyService(BackgroundService):
         orders, next_after = client.orders_updated_since(
             query_from, settings.metafield_namespace, settings.metafield_key, after=after
         )
-        self.store.kv_set(
-            self._key("resume"), json.dumps({"from": query_from, "after": next_after} if next_after else None)
-        )
         queued = 0
         newest = cursor
         for order in orders:
-            queued += self._process_order(client, settings, order, since)
+            if stop.is_set():
+                return " · detenido"  # sin guardar progreso: la próxima vuelta repite estos pedidos
+            queued += self._process_order(client, settings, order, since, stop)
             if order.get("updatedAt", "") > newest:
                 newest = order["updatedAt"]
+        # Progreso guardado solo cuando todos los pedidos de estas páginas quedaron procesados.
         self.store.kv_set(self._key("cursor"), newest)
-        queued += self._check_pending_purchases(client)
+        self.store.kv_set(
+            self._key("resume"), json.dumps({"from": query_from, "after": next_after} if next_after else None)
+        )
+        queued += self._check_pending_purchases(client, stop=stop)
         self._flush_tags(client)
         if queued:
             self.engine.wake()
@@ -452,7 +480,9 @@ class ShopifyService(BackgroundService):
         return f" · {queued} etiqueta(s) en cola" if queued else ""
 
     # --- por pedido ----------------------------------------------------------------------------
-    def _process_order(self, client: ShopifyClient, s: ShopifySettings, order: dict, since: float) -> int:
+    def _process_order(
+        self, client: ShopifyClient, s: ShopifySettings, order: dict, since: float, stop: threading.Event
+    ) -> int:
         if order.get("cancelledAt"):
             return 0
         tags = [t.lower() for t in order.get("tags") or []]
@@ -499,7 +529,7 @@ class ShopifyService(BackgroundService):
                 self.store.mark_seen(key)
 
         if s.buy_shipping_label and is_new and paid_ok and open_ok:
-            queued += self._buy_labels(client, s, order, meta)
+            queued += self._buy_labels(client, s, order, meta, stop)
         return queued
 
     def _enqueue(self, req: JobRequest) -> int:
@@ -510,9 +540,13 @@ class ShopifyService(BackgroundService):
         return int(created)
 
     # --- compra de etiquetas Shopify Shipping ----------------------------------------------------
-    def _buy_labels(self, client: ShopifyClient, s: ShopifySettings, order: dict, meta: dict) -> int:
+    def _buy_labels(
+        self, client: ShopifyClient, s: ShopifySettings, order: dict, meta: dict, stop: threading.Event
+    ) -> int:
         queued = 0
         for fo in client.fulfillment_orders(order["id"]):
+            if stop.is_set():
+                break
             if fo.get("status") not in ("OPEN", "IN_PROGRESS"):
                 continue
             method = (fo.get("deliveryMethod") or {}).get("methodType")
@@ -537,19 +571,38 @@ class ShopifyService(BackgroundService):
                     )
                 return queued
             self.store.kv_set(attempts_key, str(attempts + 1))
+            # La compra se registra ANTES de pedirla: si algo falla a mitad, nunca se compra dos veces.
+            self.store.mark_seen(key)
             try:
                 result_id = client.purchase_label(fo_id, s.notify_customer)
-            except ShopifyError as exc:
-                log.error("Shopify: no se pudo comprar la etiqueta de %s: %s", meta["order_name"], exc)
-                self.events.notify("No se pudo comprar la etiqueta", f"{meta['order_name']}: {exc}", "error")
+            except PurchaseRejected as exc:
+                # Shopify contestó que no compró: se puede volver a intentar (p. ej. tras corregir el paquete).
+                self.store.unmark_seen(key)
+                log.error("Shopify rechazó la compra de la etiqueta de %s: %s", meta["order_name"], exc)
+                self.events.notify(
+                    "No se pudo comprar la etiqueta",
+                    f"{meta['order_name']}: {exc}. Corrígelo y usa «Reprocesar» en la pantalla Shopify.",
+                    "error",
+                )
                 continue
-            # A partir de aquí la compra está en marcha: nunca volver a comprar para este fulfillment order.
-            self.store.mark_seen(key)
+            except (ShopifyError, net.NetworkError, net.HttpError) as exc:
+                if not getattr(exc, "uncertain", False) and not getattr(exc, "maybe_sent", False):
+                    self.store.unmark_seen(key)  # seguro que no llegó a Shopify
+                    raise
+                # No sabemos si Shopify la compró: no se reintenta sola para no pagar dos veces.
+                log.error("Shopify: compra de etiqueta sin confirmar para %s: %s", meta["order_name"], exc)
+                self.events.notify(
+                    "Revisa la etiqueta en Shopify",
+                    f"{meta['order_name']}: no se pudo confirmar si la etiqueta se compró ({exc}). "
+                    "Revísalo en Shopify antes de comprarla a mano.",
+                    "error",
+                )
+                continue
             pending = self._pending()
             pending[result_id] = {**meta, "started": time.time()}
             self._save_pending(pending)
             log.info("Shopify: compra de etiqueta iniciada para %s", meta["order_name"])
-            queued += self._check_pending_purchases(client, wait_seconds=20)
+            queued += self._check_pending_purchases(client, wait_seconds=20, stop=stop)
         return queued
 
     def _pending(self) -> dict[str, dict]:
@@ -561,7 +614,10 @@ class ShopifyService(BackgroundService):
     def _save_pending(self, pending: dict[str, dict]) -> None:
         self.store.kv_set(self._key("pending"), json.dumps(pending))
 
-    def _check_pending_purchases(self, client: ShopifyClient, wait_seconds: float = 0) -> int:
+    def _check_pending_purchases(
+        self, client: ShopifyClient, wait_seconds: float = 0, stop: threading.Event | None = None
+    ) -> int:
+        stop = stop or threading.Event()
         pending = self._pending()
         if not pending:
             return 0
@@ -571,15 +627,25 @@ class ShopifyService(BackgroundService):
             for result_id, info in list(pending.items()):
                 result = client.label_result(result_id)
                 status = result.get("status")
+                age = time.time() - float(info.get("started", 0))
                 if status == "PURCHASED":
-                    queued += self._enqueue_documents(result, info)
-                    pending.pop(result_id)
+                    documents, new_jobs = self._enqueue_documents(result, info)
+                    queued += new_jobs
+                    if documents:
+                        pending.pop(result_id)
+                    elif age > 600:
+                        self.events.notify(
+                            "Etiqueta comprada sin documento",
+                            f"{info.get('order_name')}: Shopify no entregó el PDF/ZPL. Imprímela desde Shopify.",
+                            "error",
+                        )
+                        pending.pop(result_id)
                 elif status == "PURCHASE_FAILED":
                     reason = "; ".join(e.get("message", "") for e in result.get("errors") or []) or "sin detalle"
                     log.error("Shopify: falló la compra de etiqueta de %s: %s", info.get("order_name"), reason)
                     self.events.notify("Falló la compra de etiqueta", f"{info.get('order_name')}: {reason}", "error")
                     pending.pop(result_id)
-                elif time.time() - float(info.get("started", 0)) > 3600:
+                elif age > 3600:
                     self.events.notify(
                         "Compra de etiqueta sin respuesta",
                         f"{info.get('order_name')}: revisa el pedido en Shopify.",
@@ -587,12 +653,13 @@ class ShopifyService(BackgroundService):
                     )
                     pending.pop(result_id)
             self._save_pending(pending)
-            if not pending or time.time() >= deadline:
+            if not pending or time.time() >= deadline or stop.wait(2):
                 break
-            time.sleep(2)
         return queued
 
-    def _enqueue_documents(self, result: dict, info: dict) -> int:
+    def _enqueue_documents(self, result: dict, info: dict) -> tuple[int, int]:
+        """Encola los documentos con URL. Devuelve (documentos con URL, trabajos nuevos)."""
+        documents_with_url = 0
         queued = 0
         printer = self.cfg.data.shopify.shipping_label_printer
         order_name = info.get("order_name", "")
@@ -603,6 +670,7 @@ class ShopifyService(BackgroundService):
                 url = doc.get("url")
                 if not url:
                     continue
+                documents_with_url += 1
                 kind = "aduana" if doc.get("documentType") == "CUSTOMS_FORM" else "envío"
                 fmt = "zpl" if str(doc.get("format", "")).upper() == "ZPL" else "pdf"
                 label_id = str(label.get("id", "")).rsplit("/", 1)[-1]
@@ -626,7 +694,7 @@ class ShopifyService(BackgroundService):
                 tracking.get("company") or "",
                 tracking.get("number") or "",
             )
-        return queued
+        return documents_with_url, queued
 
     def _flush_tags(self, client: ShopifyClient) -> None:
         tag = self.cfg.data.shopify.tag_after_print.strip()

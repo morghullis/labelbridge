@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+import socket
 import ssl
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import urlparse
 
 from . import APP_NAME, __version__
 
@@ -18,7 +20,15 @@ _ssl_context: ssl.SSLContext | None = None
 
 
 class NetworkError(Exception):
-    """No se pudo conectar (DNS, timeout, TLS...)."""
+    """No se pudo conectar (DNS, timeout, TLS...).
+
+    maybe_sent=False cuando el fallo ocurrió antes de enviar la petición (DNS, conexión rechazada,
+    certificado inválido): el servidor seguro que no la recibió.
+    """
+
+    def __init__(self, message: str, maybe_sent: bool = True) -> None:
+        super().__init__(message)
+        self.maybe_sent = maybe_sent
 
 
 class HttpError(Exception):
@@ -48,6 +58,41 @@ class Response:
             return json.loads(self.body.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise NetworkError(f"La respuesta no es JSON válido ({self.url})") from exc
+
+
+_SAFE_HEADERS = {"user-agent", "accept", "accept-encoding", "accept-language"}
+
+
+class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Al redirigir a otro dominio no reenvía credenciales (tokens, Authorization, cabeceras propias).
+
+    Además así funcionan las URLs firmadas (S3, CDN) que rechazan cabeceras Authorization extra.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D401
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is None:
+            return None
+        if urlparse(newurl).hostname != urlparse(req.full_url).hostname:
+            for name in list(new.headers):
+                if name.lower() not in _SAFE_HEADERS:
+                    del new.headers[name]
+            for name in list(new.unredirected_hdrs):
+                if name.lower() not in _SAFE_HEADERS:
+                    del new.unredirected_hdrs[name]
+        return new
+
+
+_opener: urllib.request.OpenerDirector | None = None
+
+
+def _get_opener() -> urllib.request.OpenerDirector:
+    global _opener
+    if _opener is None:
+        _opener = urllib.request.build_opener(
+            _SafeRedirectHandler, urllib.request.HTTPSHandler(context=ssl_context())
+        )
+    return _opener
 
 
 def ssl_context() -> ssl.SSLContext:
@@ -84,7 +129,7 @@ def request(
         hdrs.setdefault("Content-Type", "application/json")
     req = urllib.request.Request(url, data=body, method=method.upper(), headers=hdrs)
     try:
-        with urllib.request.urlopen(req, timeout=timeout, context=ssl_context()) as resp:
+        with _get_opener().open(req, timeout=timeout) as resp:
             content = resp.read(max_bytes + 1)
             if len(content) > max_bytes:
                 raise NetworkError(f"La respuesta supera {max_bytes // (1024 * 1024)} MB")
@@ -97,6 +142,7 @@ def request(
         resp_headers = {k.lower(): v for k, v in (exc.headers or {}).items()}
         return Response(exc.code, content, url, resp_headers)
     except urllib.error.URLError as exc:
-        raise NetworkError(f"No se pudo conectar a {url}: {exc.reason}") from None
+        before_send = isinstance(exc.reason, (socket.gaierror, ConnectionRefusedError, ssl.SSLCertVerificationError))
+        raise NetworkError(f"No se pudo conectar a {url}: {exc.reason}", maybe_sent=not before_send) from None
     except (TimeoutError, OSError) as exc:
         raise NetworkError(f"Error de red con {url}: {exc}") from None

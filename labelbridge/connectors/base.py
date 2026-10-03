@@ -39,6 +39,13 @@ class BackgroundService:
         with self._lock:
             if self.running:
                 return
+            previous = self._thread
+        # Si un stop() anterior agotó su espera, el hilo viejo aún puede estar terminando: se espera.
+        if previous is not None and previous.is_alive() and previous is not threading.current_thread():
+            previous.join()
+        with self._lock:
+            if self.running:
+                return
             # Eventos nuevos por ejecución: un hilo viejo que tarda en salir no revive.
             self._stop_event = threading.Event()
             self._wake_event = threading.Event()

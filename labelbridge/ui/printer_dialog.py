@@ -136,6 +136,9 @@ class PrinterDialog(QDialog):
         self.enabled = QCheckBox("Activa")
         self.enabled.setChecked(profile.enabled)
         form.addRow("", self.enabled)
+        self.retrust = QCheckBox("Volver a confiar en el certificado de la impresora (si lo cambiaste)")
+        self.retrust.setVisible(profile.kind == "network" and bool(profile.tls_fingerprint))
+        form.addRow("", self.retrust)
         layout.addLayout(form)
 
         self.hint = label("", "Hint", wrap=True)
@@ -217,7 +220,7 @@ class PrinterDialog(QDialog):
             p.system_name = self.system_name.currentText().strip()
         elif p.kind == "network":
             new_host = self.host.text().strip()
-            if new_host != p.host or self.protocol.currentData() != p.protocol:
+            if new_host != p.host or self.protocol.currentData() != p.protocol or self.retrust.isChecked():
                 p.tls_fingerprint = ""
             p.host = new_host
             p.protocol = self.protocol.currentData()

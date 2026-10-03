@@ -239,3 +239,132 @@ def test_adhoc_printer_ports_are_restricted(core):
     assert resolve_printer("tcp://192.168.1.20:9100", core.cfg).port == 9100
     with pytest.raises(PermanentPrintError):
         resolve_printer("tcp://192.168.1.20:25", core.cfg)
+
+
+def _purchase_service(core, monkeypatch, purchase_behaviour):
+    from datetime import datetime, timezone
+
+    from labelbridge.connectors import shopify as shopify_module
+
+    fake = FakeShopify(datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+    monkeypatch.setattr("labelbridge.connectors.shopify.net.request", fake)
+    calls = []
+
+    def purchase(self, fo_id, notify):
+        calls.append(fo_id)
+        raise purchase_behaviour(shopify_module)
+
+    monkeypatch.setattr(shopify_module.ShopifyClient, "purchase_label", purchase)
+    s = core.cfg.data.shopify
+    s.enabled, s.shop, s.client_id = True, "mi-tienda", "client-id"
+    s.print_order_label, s.metafield_label, s.buy_shipping_label = False, False, True
+    core.secrets.set(SHOPIFY_CLIENT_SECRET, "secreto")
+    service = ShopifyService(core.cfg, core.secrets, core.store, core.engine, core.events)
+    service.reset_since(hours_back=1)
+    return service, s, calls
+
+
+def test_uncertain_purchase_is_never_retried(core, monkeypatch):
+    service, s, calls = _purchase_service(
+        core, monkeypatch, lambda m: m.ShopifyError("HTTP 502: Bad Gateway", uncertain=True)
+    )
+    service.cycle(service.client(), s)
+    service.reset_since(hours_back=1)  # aunque se reprocese, no se vuelve a comprar
+    service.cycle(service.client(), s)
+    assert len(calls) == 1
+    assert any(kind == "notify" and "Revisa" in data["title"] for kind, data in core.received)
+
+
+def test_rejected_purchase_can_be_retried(core, monkeypatch):
+    service, s, calls = _purchase_service(
+        core, monkeypatch, lambda m: m.PurchaseRejected("RATES_NOT_FOUND No hay tarifas")
+    )
+    service.cycle(service.client(), s)
+    service.reset_since(hours_back=1)
+    service.cycle(service.client(), s)
+    assert len(calls) == 2
+
+
+def test_progress_not_saved_when_processing_fails(core, monkeypatch):
+    from datetime import datetime, timezone
+
+    from labelbridge.connectors import shopify as shopify_module
+
+    fake = FakeShopify(datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+    monkeypatch.setattr("labelbridge.connectors.shopify.net.request", fake)
+    s = core.cfg.data.shopify
+    s.enabled, s.shop, s.client_id, s.print_order_label = True, "mi-tienda", "id", True
+    core.secrets.set(SHOPIFY_CLIENT_SECRET, "secreto")
+    service = ShopifyService(core.cfg, core.secrets, core.store, core.engine, core.events)
+    service.reset_since(hours_back=1)
+    cursor_before = core.store.kv_get(service._key("cursor"))
+
+    def boom(*args, **kwargs):
+        raise shopify_module.ShopifyError("fallo a mitad")
+
+    monkeypatch.setattr(ShopifyService, "_process_order", boom)
+    with pytest.raises(shopify_module.ShopifyError):
+        service.cycle(service.client(), s)
+    assert core.store.kv_get(service._key("cursor")) == cursor_before
+
+
+def test_redirect_to_other_host_drops_credentials():
+    import http.server
+    import threading
+
+    seen: dict = {}
+
+    class Target(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            seen["headers"] = dict(self.headers)
+            body = b"%PDF-1.4 ok"
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *a):
+            pass
+
+    target = http.server.HTTPServer(("127.0.0.1", 0), Target)
+    threading.Thread(target=target.serve_forever, daemon=True).start()
+
+    class Redirect(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            self.send_response(302)
+            # "localhost" ≠ "127.0.0.1": otro host para el cliente
+            self.send_header("Location", f"http://localhost:{target.server_address[1]}/label.pdf")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def log_message(self, *a):
+            pass
+
+    origin = http.server.HTTPServer(("127.0.0.1", 0), Redirect)
+    threading.Thread(target=origin.serve_forever, daemon=True).start()
+    try:
+        resp = net.request(
+            "GET",
+            f"http://127.0.0.1:{origin.server_address[1]}/x",
+            headers={"Authorization": "Bearer secreto", "X-Shopify-Access-Token": "shpat_x"},
+        )
+    finally:
+        origin.shutdown()
+        target.shutdown()
+    assert resp.body == b"%PDF-1.4 ok"
+    lowered = {k.lower() for k in seen["headers"]}
+    assert "authorization" not in lowered and "x-shopify-access-token" not in lowered
+
+
+def test_powershell_values_are_encoded():
+    from labelbridge.system.windows_printers import _ps_value
+
+    hostile = "Zebra\u2019 $(Start-Process calc) \u2019'"
+    expression = _ps_value(hostile)
+    assert "Start-Process" not in expression and "\u2019" not in expression and expression.count("'") == 2
+
+
+def test_raw_datatype_for_xps_drivers():
+    from labelbridge.printing.outputs import raw_datatype
+
+    assert raw_datatype(True) == "XPS_PASS" and raw_datatype(False) == "RAW"

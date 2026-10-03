@@ -139,6 +139,30 @@ def print_with_driver(profile: PrinterProfile, sources: list[PageSource], copies
             painter.end()
 
 
+PRINTER_DRIVER_XPS = 0x00000002
+
+
+def raw_datatype(xps_driver: bool) -> str:
+    """Los drivers basados en XPS (todos los v4) descartan el tipo RAW: hay que usar XPS_PASS."""
+    return "XPS_PASS" if xps_driver else "RAW"
+
+
+def _is_xps_driver(handle) -> bool:
+    import win32print
+
+    try:  # método oficial: DRIVER_INFO_8.dwPrinterDriverAttributes & PRINTER_DRIVER_XPS
+        info = win32print.GetPrinterDriver(handle, None, 8)
+        attributes = info.get("PrinterDriverAttributes", info.get("dwPrinterDriverAttributes"))
+        if attributes is not None:
+            return bool(int(attributes) & PRINTER_DRIVER_XPS)
+    except Exception:
+        pass
+    try:  # respaldo: los drivers v4 informan cVersion = 4
+        return int(win32print.GetPrinterDriver(handle, None, 2).get("Version", 3)) >= 4
+    except Exception:
+        return False
+
+
 def print_raw_system(printer_name: str, data: bytes, title: str) -> None:
     """Envía bytes sin procesar (ZPL, EPL...) a una impresora instalada, sin pasar por el driver."""
     if sys.platform == "win32":
@@ -150,21 +174,21 @@ def print_raw_system(printer_name: str, data: bytes, title: str) -> None:
         except pywintypes.error as exc:
             raise PrintError(f"No se pudo abrir '{printer_name}': {exc.strerror}") from None
         try:
-            last_error = None
-            for datatype in ("RAW", "XPS_PASS"):
-                try:
-                    win32print.StartDocPrinter(handle, 1, (title or "LabelBridge", None, datatype))
-                    break
-                except pywintypes.error as exc:
-                    last_error = exc
-            else:
-                raise PrintError(f"El spooler rechazó el trabajo RAW: {last_error.strerror if last_error else ''}")
+            datatype = raw_datatype(_is_xps_driver(handle))
+            try:
+                win32print.StartDocPrinter(handle, 1, (title or "LabelBridge", None, datatype))
+            except pywintypes.error as exc:
+                raise PrintError(f"El spooler rechazó el trabajo {datatype}: {exc.strerror}") from None
             try:
                 win32print.StartPagePrinter(handle)
-                win32print.WritePrinter(handle, data)
+                written = win32print.WritePrinter(handle, data)
+                if written != len(data):
+                    raise PrintError(f"El spooler solo aceptó {written} de {len(data)} bytes")
                 win32print.EndPagePrinter(handle)
-            finally:
-                win32print.EndDocPrinter(handle)
+            except BaseException:
+                win32print.AbortPrinter(handle)  # no enviar un trabajo a medias
+                raise
+            win32print.EndDocPrinter(handle)
         finally:
             win32print.ClosePrinter(handle)
         return

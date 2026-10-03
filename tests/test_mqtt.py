@@ -17,14 +17,19 @@ from labelbridge.connectors.mqtt import MqttService, topics
 class FakeClient:
     def __init__(self) -> None:
         self.published: list[tuple] = []
+        self.mids: list[int] = []
 
     def publish(self, topic, payload=b"", qos=0, retain=False):
         self.published.append((topic, payload, qos, retain))
+        mid = len(self.published)
+        self.mids.append(mid)
 
         class Info:
             rc = 0
 
-        return Info()
+        info = Info()
+        info.mid = mid
+        return info
 
     def is_connected(self) -> bool:
         return True
@@ -79,6 +84,11 @@ def test_acks_after_printing(core):
     assert sent["labelbridge/pc-bodega/acks/ok-1"]["status"] == "printed"
     assert sent["labelbridge/pc-bodega/acks/mal-1"]["error"] == "sin papel"
     assert sent["labelbridge/pc-bodega/errors"]["id"] == "mal-1"
+    # Sin PUBACK del broker no se da por confirmado ni se reenvía mientras espera.
+    assert len(core.store.pending_acks("mqtt")) == 2
+    assert svc.send_acks() == 0
+    for mid in list(svc._inflight):
+        svc._on_publish(fake, None, mid, None, None)
     assert core.store.pending_acks("mqtt") == []
 
 
