@@ -1,0 +1,121 @@
+"""Tema visual: claro con barra lateral oscura, acento índigo."""
+
+from __future__ import annotations
+
+ACCENT = "#4F46E5"
+ACCENT_HOVER = "#4338CA"
+TEXT = "#0F172A"
+MUTED = "#64748B"
+BORDER = "#E2E8F0"
+BG = "#F4F6FB"
+SIDEBAR = "#0F172A"
+
+STATE_COLORS = {
+    "ok": ("#DCFCE7", "#166534"),
+    "warn": ("#FEF3C7", "#92400E"),
+    "connecting": ("#E0E7FF", "#3730A3"),
+    "info": ("#E0E7FF", "#3730A3"),
+    "error": ("#FEE2E2", "#991B1B"),
+    "off": ("#F1F5F9", "#475569"),
+}
+
+JOB_STATE = {"queued": "info", "printing": "warn", "done": "ok", "failed": "error", "canceled": "off"}
+
+
+def job_state(job: dict) -> str:
+    if job.get("status") == "queued" and job.get("error"):
+        return "warn"
+    return JOB_STATE.get(job.get("status", ""), "off")
+
+STYLESHEET = f"""
+QMainWindow, QDialog {{ background: {BG}; }}
+QWidget#Content {{ background: {BG}; }}
+QLabel {{ color: {TEXT}; }}
+QToolTip {{ background: {TEXT}; color: white; border: none; padding: 6px 8px; border-radius: 6px; }}
+
+QFrame#Sidebar {{ background: {SIDEBAR}; }}
+QFrame#Sidebar QLabel {{ color: #E2E8F0; }}
+QLabel#Brand {{ color: white; font-size: 17px; font-weight: 700; }}
+QLabel#BrandSub {{ color: #94A3B8; font-size: 11px; }}
+QPushButton#NavButton {{
+    text-align: left; padding: 9px 12px; border: none; border-radius: 8px;
+    color: #CBD5E1; background: transparent; font-size: 13px;
+}}
+QPushButton#NavButton:hover {{ background: #1E293B; color: white; }}
+QPushButton#NavButton:checked {{ background: {ACCENT}; color: white; font-weight: 600; }}
+QFrame#SidebarStatus {{ background: #1E293B; border-radius: 10px; }}
+
+QLabel#PageTitle {{ font-size: 22px; font-weight: 700; }}
+QLabel#PageSubtitle {{ color: {MUTED}; font-size: 13px; }}
+QLabel#Muted {{ color: {MUTED}; }}
+QLabel#Small {{ color: {MUTED}; font-size: 11px; }}
+QLabel#SectionTitle {{ font-size: 14px; font-weight: 600; }}
+QLabel#StatValue {{ font-size: 26px; font-weight: 700; }}
+QLabel#StatLabel {{ color: {MUTED}; font-size: 11px; font-weight: 600; letter-spacing: 0.5px; }}
+QLabel#Warning {{ background: #FFFBEB; color: #92400E; border: 1px solid #FDE68A; border-radius: 8px; padding: 8px 10px; }}
+QLabel#Hint {{ background: #EEF2FF; color: #3730A3; border: 1px solid #C7D2FE; border-radius: 8px; padding: 8px 10px; }}
+
+QFrame#Card {{ background: white; border: 1px solid {BORDER}; border-radius: 12px; }}
+QLabel#CardTitle {{ font-size: 15px; font-weight: 600; }}
+QLabel#CardDesc {{ color: {MUTED}; }}
+
+QPushButton {{
+    background: white; color: {TEXT}; border: 1px solid #CBD5E1; border-radius: 8px;
+    padding: 7px 14px; font-weight: 500;
+}}
+QPushButton:hover {{ background: #F8FAFC; border-color: #94A3B8; }}
+QPushButton:pressed {{ background: #F1F5F9; }}
+QPushButton:disabled {{ color: #94A3B8; background: #F8FAFC; border-color: {BORDER}; }}
+QPushButton[variant="primary"] {{ background: {ACCENT}; color: white; border: 1px solid {ACCENT}; }}
+QPushButton[variant="primary"]:hover {{ background: {ACCENT_HOVER}; border-color: {ACCENT_HOVER}; }}
+QPushButton[variant="primary"]:disabled {{ background: #A5B4FC; border-color: #A5B4FC; }}
+QPushButton[variant="danger"] {{ color: #B91C1C; border-color: #FCA5A5; }}
+QPushButton[variant="danger"]:hover {{ background: #FEF2F2; }}
+QPushButton[variant="ghost"] {{ border: none; background: transparent; padding: 6px 8px; }}
+QPushButton[variant="ghost"]:hover {{ background: #F1F5F9; }}
+
+QLineEdit, QSpinBox, QComboBox, QPlainTextEdit, QTextEdit {{
+    background: white; color: {TEXT}; border: 1px solid #CBD5E1; border-radius: 8px;
+    padding: 6px 8px; selection-background-color: {ACCENT}; selection-color: white;
+}}
+QLineEdit:focus, QSpinBox:focus, QComboBox:focus, QPlainTextEdit:focus {{ border: 1px solid {ACCENT}; }}
+QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled {{ background: #F8FAFC; color: #94A3B8; }}
+QComboBox::drop-down {{ border: none; width: 22px; }}
+QComboBox QAbstractItemView {{ background: white; border: 1px solid {BORDER}; selection-background-color: #EEF2FF; selection-color: {TEXT}; }}
+QPlainTextEdit#Code {{
+    font-family: "Cascadia Mono", Consolas, Menlo, monospace; font-size: 12px;
+    background: #0F172A; color: #E2E8F0; border: none; border-radius: 8px; padding: 10px;
+}}
+
+QCheckBox {{ spacing: 8px; color: {TEXT}; }}
+QCheckBox::indicator {{ width: 16px; height: 16px; border-radius: 4px; border: 1px solid #94A3B8; background: white; }}
+QCheckBox::indicator:checked {{ background: {ACCENT}; border-color: {ACCENT}; }}
+QRadioButton {{ spacing: 8px; color: {TEXT}; }}
+
+QTableView, QTableWidget {{
+    background: white; border: 1px solid {BORDER}; border-radius: 10px; gridline-color: transparent;
+    selection-background-color: #EEF2FF; selection-color: {TEXT}; alternate-background-color: #FAFBFD;
+}}
+QTableView::item, QTableWidget::item {{ padding: 6px; border-bottom: 1px solid #F1F5F9; }}
+QHeaderView::section {{
+    background: #F8FAFC; color: #475569; border: none; border-bottom: 1px solid {BORDER};
+    padding: 8px; font-weight: 600; font-size: 12px;
+}}
+QTableCornerButton::section {{ background: #F8FAFC; border: none; }}
+
+QTabWidget::pane {{ border: none; }}
+QTabBar::tab {{
+    background: transparent; color: {MUTED}; padding: 8px 14px; margin-right: 4px;
+    border-bottom: 2px solid transparent; font-weight: 600;
+}}
+QTabBar::tab:selected {{ color: {ACCENT}; border-bottom: 2px solid {ACCENT}; }}
+QProgressBar {{ background: #E2E8F0; border: none; border-radius: 4px; height: 8px; text-align: center; color: transparent; }}
+QProgressBar::chunk {{ background: {ACCENT}; border-radius: 4px; }}
+QScrollArea {{ border: none; background: transparent; }}
+QScrollBar:vertical {{ background: transparent; width: 10px; margin: 2px; }}
+QScrollBar::handle:vertical {{ background: #CBD5E1; border-radius: 4px; min-height: 30px; }}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
+QMenu {{ background: white; border: 1px solid {BORDER}; padding: 4px; border-radius: 8px; }}
+QMenu::item {{ padding: 6px 18px; border-radius: 6px; }}
+QMenu::item:selected {{ background: #EEF2FF; color: {TEXT}; }}
+"""

@@ -1,0 +1,201 @@
+{
+  "name": "LabelBridge · Pedido pagado → imprimir al instante",
+  "nodes": [
+    {
+      "parameters": {
+        "authentication": "accessToken",
+        "topic": "orders/paid"
+      },
+      "id": "6001589c-b235-43b5-a75d-c00caace2773",
+      "name": "Shopify: pedido pagado",
+      "type": "n8n-nodes-base.shopifyTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        200
+      ],
+      "webhookId": "1c83041b-a01d-4f19-a957-ab0d522920a6",
+      "credentials": {
+        "shopifyAccessTokenApi": {
+          "id": "REEMPLAZAR_SHOPIFY",
+          "name": "Shopify Access Token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1e53a006-b229-4db4-ab0f-16e7649d4f0e",
+              "name": "canal",
+              "type": "string",
+              "value": "pc-bodega"
+            },
+            {
+              "id": "2f16718d-0626-46ad-b666-d6d78325cb4e",
+              "name": "printer",
+              "type": "string",
+              "value": "etiquetas"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "8852c2fc-70e2-4aee-b9f7-542247bec6fb",
+      "name": "Configuración",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        220,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "language": "javaScript",
+        "jsCode": "// =====================================================================\n// LabelBridge · Construye el trabajo de impresión a partir del pedido\n// =====================================================================\n// Entrada: el pedido (webhook orders/paid, formato REST) + \"canal\" y\n// \"printer\" del nodo Configuración. Salida: el trabajo (Job) que se\n// publica en MQTT tal cual.\n\nconst o = $json;\n\nconst canal = String(o.canal ?? '').trim();\nif (!/^[a-z0-9-]+$/.test(canal)) {\n  throw new Error(`Canal inválido \"${canal}\" en \"Configuración\": usa solo minúsculas, números y guiones (el mismo canal que en la app).`);\n}\n\n// Solo los datos que necesita la etiqueta: se minimizan los datos del cliente\n// que salen de Shopify (nada de email, teléfono del cliente, pagos, etc.).\nconst order = {\n  id: o.id,\n  name: o.name,\n  order_number: o.order_number,\n  created_at: o.created_at,\n  shipping_address: o.shipping_address ?? null,\n  shipping_lines: (o.shipping_lines ?? []).map((l) => ({ title: l.title })),\n  line_items: (o.line_items ?? []).map((li) => ({\n    quantity: li.quantity,\n    name: li.name,\n    title: li.title,\n    variant_title: li.variant_title,\n    sku: li.sku,\n  })),\n  note: o.note ?? null,\n  total_price: o.total_price,\n  currency: o.currency,\n};\n// La dirección de facturación solo se envía si el pedido no tiene dirección de envío.\nif (!o.shipping_address && o.billing_address) {\n  order.billing_address = o.billing_address;\n}\n\n// ---------------------------------------------------------------------\n// OPCIÓN A (por defecto) · format \"order\": la app dibuja la etiqueta con la\n// dirección y los artículos del pedido.\n// ---------------------------------------------------------------------\nconst job = {\n  id: `pedido-${o.id}`,                      // único: la app lo usa para no imprimir dos veces\n  title: `Pedido ${o.name}`,                  // texto del historial de la app\n  ...(o.printer ? { printer: o.printer } : {}), // sin printer → impresora predeterminada de la app\n  copies: 1,\n  format: 'order',\n  order,\n  meta: { order_id: String(o.id), order_name: o.name },\n};\n\n// ---------------------------------------------------------------------\n// OPCIÓN B · imprimir una etiqueta que ya existe como archivo (PDF/ZPL/PNG)\n// Si tu paquetería u otra app te da la URL de la etiqueta, sustituye el\n// objeto \"job\" de arriba por algo así:\n//\n// const job = {\n//   id: `etiqueta-${o.id}`,\n//   title: `Etiqueta ${o.name}`,\n//   printer: o.printer,\n//   copies: 1,\n//   format: 'pdf',                                  // 'pdf' | 'zpl' | 'image' | 'auto'\n//   url: 'https://ejemplo.com/etiquetas/123.pdf',   // la app descarga el archivo\n//   // headers: { Authorization: 'Bearer XXX' },    // opcional, si la descarga lo requiere\n//   meta: { order_id: String(o.id), order_name: o.name },\n// };\n//\n// Cada trabajo lleva UNA sola fuente de datos: \"order\", \"url\",\n// \"content\" (texto, p. ej. ZPL ^XA...^XZ) o \"content_base64\".\n// ---------------------------------------------------------------------\n\nreturn { json: job };\n"
+      },
+      "id": "59d4b768-2b67-47b1-9f8b-897e4c7eb0ef",
+      "name": "Construir trabajo",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "topic": "=labelbridge/{{ $('Configuración').first().json.canal }}/jobs/{{ $json.id.replace(/[^A-Za-z0-9_-]/g, '-') }}",
+        "sendInputData": true,
+        "options": {
+          "qos": 1,
+          "retain": true
+        }
+      },
+      "id": "b2758adc-ec8c-4da9-a0d2-d191751a1b9b",
+      "name": "Publicar en MQTT (LabelBridge)",
+      "type": "n8n-nodes-base.mqtt",
+      "typeVersion": 1,
+      "position": [
+        680,
+        200
+      ],
+      "credentials": {
+        "mqtt": {
+          "id": "REEMPLAZAR_MQTT",
+          "name": "LabelBridge MQTT"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://IP-DEL-PC:7300/api/v1/jobs",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "eeb6794b-cdc8-43dd-9995-5334363d2c13",
+      "name": "Alternativa LAN: enviar directo a la API local del PC",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        680,
+        520
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REEMPLAZAR_API_LOCAL",
+          "name": "LabelBridge API local (Authorization: Bearer)"
+        }
+      },
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "content": "## LabelBridge · Pedido pagado → imprimir al instante\n\nn8n **solo se ejecuta cuando Shopify avisa de un pedido pagado** (1 ejecución por pedido, sin sondeo) y publica el trabajo en el broker MQTT. La app LabelBridge del PC está suscrita y lo imprime al momento. Si el PC está apagado, el trabajo queda **retenido** en el broker y se imprime al encenderlo.\n\n**Puesta en marcha**\n1. **Shopify: pedido pagado** → credencial *Shopify Access Token API* (scope `read_orders` + acceso a datos protegidos de clientes: nombre y dirección).\n2. **Configuración**: `canal` = el mismo canal que en la app (solo `a-z`, `0-9` y `-`); `printer` = alias de la impresora en la app (vacío = predeterminada).\n3. **Publicar en MQTT** → credencial MQTT **LabelBridge MQTT**: Protocol `mqtts`, host del broker, puerto `8883`, usuario y contraseña de n8n (ver README).\n4. Activa / publica el workflow.\n\nTema: `labelbridge/<canal>/jobs/pedido-<id>` · QoS 1 · retain. Del pedido solo se envían los campos necesarios para la etiqueta.",
+        "height": 480,
+        "width": 940
+      },
+      "id": "7d08b703-3274-48cf-94ba-84bba0670c47",
+      "name": "Nota: configuración",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -60,
+        -340
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### Alternativa LAN (desactivada)\n\nSolo si n8n es **self-hosted en la misma red** que el PC: envía el trabajo directo a la app, sin broker (si el PC está apagado, el envío falla).\n1. Cambia `IP-DEL-PC` por la IP del PC.\n2. Credencial *Header Auth*: Name `Authorization`, Value `Bearer TU_CLAVE` (la clave de la API local de la app).\n3. Actívala (clic derecho → *Activate*) y desactiva **Publicar en MQTT** si no usas broker. La app ignora ids repetidos.",
+        "height": 360,
+        "width": 560,
+        "color": 7
+      },
+      "id": "2808a0ba-1b9f-4a42-973c-dc8195406f40",
+      "name": "Nota: alternativa LAN",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        500,
+        340
+      ]
+    }
+  ],
+  "connections": {
+    "Shopify: pedido pagado": {
+      "main": [
+        [
+          {
+            "node": "Configuración",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Configuración": {
+      "main": [
+        [
+          {
+            "node": "Construir trabajo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Construir trabajo": {
+      "main": [
+        [
+          {
+            "node": "Publicar en MQTT (LabelBridge)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Alternativa LAN: enviar directo a la API local del PC",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

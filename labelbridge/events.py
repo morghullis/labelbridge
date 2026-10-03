@@ -1,0 +1,39 @@
+"""Bus de eventos sencillo, seguro entre hilos. La UI lo reemite como señal Qt."""
+
+from __future__ import annotations
+
+import logging
+import threading
+from typing import Any, Callable
+
+log = logging.getLogger(__name__)
+
+Listener = Callable[[str, Any], None]
+
+# Tipos de evento
+JOB = "job"  # dict del trabajo (creado/actualizado)
+CONNECTOR = "connector"  # {"name", "state", "message"}
+NOTIFY = "notify"  # {"title", "message", "level"}
+PAUSED = "paused"  # bool
+
+
+class Events:
+    def __init__(self) -> None:
+        self._listeners: list[Listener] = []
+        self._lock = threading.Lock()
+
+    def subscribe(self, listener: Listener) -> None:
+        with self._lock:
+            self._listeners.append(listener)
+
+    def emit(self, kind: str, data: Any = None) -> None:
+        with self._lock:
+            listeners = list(self._listeners)
+        for listener in listeners:
+            try:
+                listener(kind, data)
+            except Exception:
+                log.exception("Error en listener de eventos (%s)", kind)
+
+    def notify(self, title: str, message: str, level: str = "info") -> None:
+        self.emit(NOTIFY, {"title": title, "message": message, "level": level})

@@ -1,0 +1,7 @@
+PySide6>=6.7,<7
+keyring>=25
+zeroconf>=0.130
+segno>=1.6
+certifi>=2024.2.2
+paho-mqtt>=2.1
+pywin32>=306; sys_platform == "win32"

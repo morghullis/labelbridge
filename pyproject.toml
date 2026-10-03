@@ -1,0 +1,14 @@
+[project]
+name = "labelbridge"
+dynamic = ["version"]
+description = "Agente de impresión de etiquetas para Shopify y n8n (Windows)"
+readme = "README.md"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-p no:cacheprovider"
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"

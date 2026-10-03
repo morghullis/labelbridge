@@ -1,0 +1,328 @@
+{
+  "name": "LabelBridge · Etiqueta de cualquier paquetería → metafield del pedido",
+  "nodes": [
+    {
+      "parameters": {
+        "authentication": "accessToken",
+        "topic": "orders/paid"
+      },
+      "id": "e178d5e1-72eb-47ce-a1bb-60b98bc9e574",
+      "name": "Shopify: pedido pagado",
+      "type": "n8n-nodes-base.shopifyTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        200
+      ],
+      "webhookId": "b3e37bef-f85a-4f8e-81b4-b15def078d5f",
+      "credentials": {
+        "shopifyAccessTokenApi": {
+          "id": "REEMPLAZAR_SHOPIFY",
+          "name": "Shopify Access Token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "fbcd36a0-7fcb-4b4c-a4ea-7fd7385eb084",
+              "name": "shop",
+              "type": "string",
+              "value": "TU-TIENDA"
+            },
+            {
+              "id": "3836e570-7ec6-491f-969e-6fd3afece6ca",
+              "name": "api_version",
+              "type": "string",
+              "value": "2026-10"
+            },
+            {
+              "id": "5ff6737a-8e74-4a38-9907-edf5bfe65697",
+              "name": "metafield_namespace",
+              "type": "string",
+              "value": "custom"
+            },
+            {
+              "id": "d87025e1-f230-4f46-ac80-56a5b8fa345d",
+              "name": "metafield_key",
+              "type": "string",
+              "value": "label_url"
+            },
+            {
+              "id": "6578e02b-1cb8-48d1-96fb-bedc0267febb",
+              "name": "order_gid",
+              "type": "string",
+              "value": "={{ $json.admin_graphql_api_id || ('gid://shopify/Order/' + $json.id) }}"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "c746e1e2-5d7d-4543-97d7-fda9a08077f0",
+      "name": "Configuración",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        220,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://{{ $('Configuración').first().json.shop }}.myshopify.com/admin/api/{{ $('Configuración').first().json.api_version }}/graphql.json",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "shopifyAccessTokenApi",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"query\": \"query LabelBridgeEtiquetaActual($id: ID!, $namespace: String!, $key: String!) { order(id: $id) { id name metafield(namespace: $namespace, key: $key) { id value } } }\",\n  \"variables\": { \"id\": \"{{ $json.order_gid }}\", \"namespace\": \"{{ $json.metafield_namespace }}\", \"key\": \"{{ $json.metafield_key }}\" }\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "b6eabe42-7c55-4355-a5ba-63f6ad14176e",
+      "name": "Consultar etiqueta actual",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        440,
+        200
+      ],
+      "credentials": {
+        "shopifyAccessTokenApi": {
+          "id": "REEMPLAZAR_SHOPIFY",
+          "name": "Shopify Access Token"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Si el pedido ya tiene la URL de la etiqueta en el metafield (por ejemplo,\n// porque Shopify reenvió el webhook), NO se crea otra etiqueta en la paquetería.\n// Si no la tiene, se devuelve el pedido completo para el nodo de la paquetería.\n\nconst pedido = $('Configuración').first().json;\nconst res = $input.first().json;\n\nif (Array.isArray(res.errors) && res.errors.length) {\n  throw new Error('Shopify GraphQL (consultar metafield): ' + JSON.stringify(res.errors));\n}\nif (!res.data?.order) {\n  throw new Error(`No se pudo leer el pedido ${pedido.order_gid}. Revisa la credencial, el subdominio en \"Configuración\" y el scope read_orders.`);\n}\nif (res.data.order.metafield?.value) {\n  return [];   // ya tiene etiqueta: no hacemos nada\n}\n\nreturn [{ json: pedido }];\n"
+      },
+      "id": "d0a042f5-5830-47ac-ba22-368ca18c7a27",
+      "name": "Saltar si ya tiene etiqueta",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.tu-paqueteria.com/v1/labels",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"reference\": \"{{ $json.name }}\",\n  \"label_format\": \"pdf\",\n  \"ship_to\": {\n    \"name\": {{ JSON.stringify($json.shipping_address?.name ?? '') }},\n    \"company\": {{ JSON.stringify($json.shipping_address?.company ?? '') }},\n    \"address1\": {{ JSON.stringify($json.shipping_address?.address1 ?? '') }},\n    \"address2\": {{ JSON.stringify($json.shipping_address?.address2 ?? '') }},\n    \"city\": {{ JSON.stringify($json.shipping_address?.city ?? '') }},\n    \"province_code\": {{ JSON.stringify($json.shipping_address?.province_code ?? '') }},\n    \"zip\": {{ JSON.stringify($json.shipping_address?.zip ?? '') }},\n    \"country_code\": {{ JSON.stringify($json.shipping_address?.country_code ?? '') }},\n    \"phone\": {{ JSON.stringify($json.shipping_address?.phone ?? '') }}\n  },\n  \"parcel\": {\n    \"weight_grams\": {{ Number($json.total_weight) || 500 }}\n  }\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "2b3adadc-b804-4f12-b6a1-7adae67b2363",
+      "name": "Crear etiqueta en tu paquetería (EDITAR)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        880,
+        200
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REEMPLAZAR_PAQUETERIA",
+          "name": "Paquetería API (EDITAR)"
+        }
+      },
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Busca la URL de la etiqueta en la respuesta de tu paquetería.\n// Por defecto espera { \"label_url\": \"https://...\" }. Si tu API la devuelve en\n// otro campo, añádelo al principio de CAMPOS (admite rutas con puntos).\nconst CAMPOS = [\n  'label_url',                 // genérico (también Shippo)\n  'labelUrl',\n  'label.url',\n  'data.label_url',\n  'postage_label.label_url',   // EasyPost\n  'label_download.pdf',        // ShipEngine\n  'label_download.href',\n];\n\nconst pedido = $('Configuración').first().json;\nconst respuesta = $input.first().json;\n\nconst leer = (obj, ruta) => ruta.split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj);\nlet labelUrl = '';\nfor (const campo of CAMPOS) {\n  const valor = leer(respuesta, campo);\n  if (typeof valor === 'string' && valor.trim()) {\n    labelUrl = valor.trim();\n    break;\n  }\n}\n\nif (!labelUrl) {\n  throw new Error(\n    'No se encontró la URL de la etiqueta en la respuesta de la paquetería. ' +\n    '¿Editaste y ACTIVASTE el nodo \"Crear etiqueta en tu paquetería (EDITAR)\"? ' +\n    'Si tu API usa otro campo, añádelo a CAMPOS en este nodo.'\n  );\n}\nif (!/^https?:\\/\\//i.test(labelUrl)) {\n  throw new Error(`La URL de la etiqueta debe empezar por http(s):// y se recibió: ${labelUrl}`);\n}\n\nreturn [{\n  json: {\n    order_gid: pedido.order_gid,\n    order_name: pedido.name,\n    metafield_namespace: pedido.metafield_namespace,\n    metafield_key: pedido.metafield_key,\n    label_url: labelUrl,\n  },\n}];\n"
+      },
+      "id": "dbfc27f3-b041-48ca-9667-216dff18cbd3",
+      "name": "Extraer URL de la etiqueta",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://{{ $('Configuración').first().json.shop }}.myshopify.com/admin/api/{{ $('Configuración').first().json.api_version }}/graphql.json",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "shopifyAccessTokenApi",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"query\": \"mutation LabelBridgeGuardarEtiqueta($metafields: [MetafieldsSetInput!]!) { metafieldsSet(metafields: $metafields) { metafields { id key namespace } userErrors { field message code } } }\",\n  \"variables\": {\n    \"metafields\": [\n      {\n        \"ownerId\": \"{{ $json.order_gid }}\",\n        \"namespace\": \"{{ $json.metafield_namespace }}\",\n        \"key\": \"{{ $json.metafield_key }}\",\n        \"type\": \"url\",\n        \"value\": {{ JSON.stringify($json.label_url) }}\n      }\n    ]\n  }\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "45436036-e4a2-4d44-9ecb-e7926b4f80cc",
+      "name": "Guardar URL en metafield del pedido",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1320,
+        200
+      ],
+      "credentials": {
+        "shopifyAccessTokenApi": {
+          "id": "REEMPLAZAR_SHOPIFY",
+          "name": "Shopify Access Token"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Falla de forma visible si Shopify no guardó el metafield (errors / userErrors).\nconst datos = $('Extraer URL de la etiqueta').first().json;\nconst res = $input.first().json;\n\nif (Array.isArray(res.errors) && res.errors.length) {\n  throw new Error('Shopify GraphQL (metafieldsSet): ' + JSON.stringify(res.errors));\n}\n\nconst userErrors = res.data?.metafieldsSet?.userErrors ?? [];\nif (userErrors.length) {\n  const detalle = userErrors.map((e) => `${e.code ?? ''} ${e.message}`.trim()).join(' | ');\n  throw new Error(`Shopify no guardó la etiqueta en el pedido ${datos.order_name}: ${detalle}`);\n}\n\nconst metafield = res.data?.metafieldsSet?.metafields?.[0];\nreturn [{\n  json: {\n    ok: true,\n    order_name: datos.order_name,\n    label_url: datos.label_url,\n    metafield_id: metafield?.id ?? null,\n  },\n}];\n"
+      },
+      "id": "f818d820-abb9-43c6-a82d-3ed40f86b845",
+      "name": "Comprobar respuesta de Shopify",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## LabelBridge · Etiqueta de cualquier paquetería → metafield del pedido\n\nPensado para **n8n Cloud**: n8n se ejecuta **una sola vez por pedido** y **no hay sondeo**. La app de escritorio (conector **Shopify** con *Etiqueta desde metafield* activado, namespace `custom`, key `label_url`) consulta Shopify, descarga la etiqueta e imprime: **0 ejecuciones de sondeo en n8n**.\n\n**Puesta en marcha**\n1. **Configuración**: `shop` = subdominio de tu tienda (sin `.myshopify.com`). `metafield_namespace` / `metafield_key` deben coincidir con la app (`custom` / `label_url`).\n2. Credencial **Shopify Access Token API** en el trigger y en los 2 nodos HTTP de Shopify. Scopes: `read_orders` y **`write_orders`** (escribir metafields de pedidos requiere el scope de escritura de pedidos).\n3. Edita y **activa** el nodo **Crear etiqueta en tu paquetería (EDITAR)**.\n4. Opcional: crea la definición del metafield en Shopify (*Configuración → Datos personalizados → Pedidos*, tipo **URL**) para verlo en el admin. No es obligatoria; si ya existe con otro tipo, Shopify rechazará el valor.\n5. Activa / publica el workflow.\n\nSi Shopify reenvía el webhook y el pedido ya tiene `label_url`, **no se crea otra etiqueta**.",
+        "height": 560,
+        "width": 840
+      },
+      "id": "75760798-f374-423f-84c5-caa3ba4dbe0d",
+      "name": "Nota: configuración",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -60,
+        -400
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### EDITAR · Tu paquetería\n\nNodo de ejemplo **desactivado**: cambia URL, autenticación y cuerpo por los de la API de tu paquetería. Debe devolver la URL del PDF/ZPL, por ejemplo:\n`{ \"label_url\": \"https://.../etiqueta.pdf\" }`\n\nSi la URL viene en otro campo, añádelo en **Extraer URL de la etiqueta** (`CAMPOS`).\n\nSin reintentos automáticos: un reintento podría crear (y cobrar) dos etiquetas.\n\nPara probar sin paquetería: actívalo y fija (*Pin*) una salida de ejemplo con `label_url` (solo se usa en ejecuciones manuales).",
+        "height": 560,
+        "width": 440,
+        "color": 6
+      },
+      "id": "4ec8a811-6348-482c-8ab9-2a5fe298a228",
+      "name": "Nota: EDITAR paquetería",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        800,
+        -400
+      ]
+    }
+  ],
+  "connections": {
+    "Shopify: pedido pagado": {
+      "main": [
+        [
+          {
+            "node": "Configuración",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Configuración": {
+      "main": [
+        [
+          {
+            "node": "Consultar etiqueta actual",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar etiqueta actual": {
+      "main": [
+        [
+          {
+            "node": "Saltar si ya tiene etiqueta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Saltar si ya tiene etiqueta": {
+      "main": [
+        [
+          {
+            "node": "Crear etiqueta en tu paquetería (EDITAR)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Crear etiqueta en tu paquetería (EDITAR)": {
+      "main": [
+        [
+          {
+            "node": "Extraer URL de la etiqueta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraer URL de la etiqueta": {
+      "main": [
+        [
+          {
+            "node": "Guardar URL en metafield del pedido",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guardar URL en metafield del pedido": {
+      "main": [
+        [
+          {
+            "node": "Comprobar respuesta de Shopify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

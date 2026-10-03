@@ -1,0 +1,583 @@
+{
+  "name": "LabelBridge · Comprar etiqueta Shopify Shipping → imprimir",
+  "nodes": [
+    {
+      "parameters": {
+        "authentication": "accessToken",
+        "topic": "orders/paid"
+      },
+      "id": "f890068e-d6b7-4752-95fc-83399b517eb8",
+      "name": "Shopify: pedido pagado",
+      "type": "n8n-nodes-base.shopifyTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        140
+      ],
+      "webhookId": "959713cf-2adf-4338-8f48-ff850810ba67",
+      "credentials": {
+        "shopifyAccessTokenApi": {
+          "id": "REEMPLAZAR_SHOPIFY",
+          "name": "Shopify Access Token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "93f7bb0b-218a-435d-b777-a261b1c3304c",
+              "name": "shop",
+              "type": "string",
+              "value": "TU-TIENDA"
+            },
+            {
+              "id": "d5ca62e7-6851-4095-bd67-2b4afac72efb",
+              "name": "api_version",
+              "type": "string",
+              "value": "2026-10"
+            },
+            {
+              "id": "96b4ff8d-c5c8-4e1f-9bdd-35f3d504b6c2",
+              "name": "canal",
+              "type": "string",
+              "value": "pc-bodega"
+            },
+            {
+              "id": "8d874639-029a-4eaf-ad01-a568114cbaf6",
+              "name": "printer",
+              "type": "string",
+              "value": "etiquetas"
+            },
+            {
+              "id": "7dd2c9c7-30e8-4a19-aba4-c9512d82fdb4",
+              "name": "order_id",
+              "type": "string",
+              "value": "={{ String($json.id) }}"
+            },
+            {
+              "id": "51fe1ac0-327a-4ca0-8b9b-38b76217e18b",
+              "name": "order_name",
+              "type": "string",
+              "value": "={{ $json.name }}"
+            },
+            {
+              "id": "caad99b0-9b40-41c3-aee9-f6bd72797e0d",
+              "name": "order_gid",
+              "type": "string",
+              "value": "={{ $json.admin_graphql_api_id || ('gid://shopify/Order/' + $json.id) }}"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      },
+      "id": "5e013220-b4d9-486c-8cd7-228bd79dab12",
+      "name": "Configuración",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        220,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://{{ $('Configuración').first().json.shop }}.myshopify.com/admin/api/{{ $('Configuración').first().json.api_version }}/graphql.json",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "shopifyAccessTokenApi",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"query\": \"query LabelBridgeFulfillmentOrders($id: ID!) { order(id: $id) { id name fulfillmentOrders(first: 5) { nodes { id status deliveryMethod { methodType } } } } }\",\n  \"variables\": { \"id\": \"{{ $json.order_gid }}\" }\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "cf370d2c-8518-47c4-89f4-475691653588",
+      "name": "Consultar fulfillment orders",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        440,
+        140
+      ],
+      "credentials": {
+        "shopifyAccessTokenApi": {
+          "id": "REEMPLAZAR_SHOPIFY",
+          "name": "Shopify Access Token"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Comprueba la configuración y elige la primera fulfillment order ABIERTA\n// (status OPEN) que necesite envío. Si existen fulfillment orders pero\n// ninguna está abierta (pedido ya preparado, recogida en tienda, entrega\n// local...) devolvemos 0 items y el workflow termina SIN comprar nada.\n\nconst ctx = $('Configuración').first().json;\nconst res = $input.first().json;\n\n// Antes de comprar: el canal debe ser válido o la etiqueta no llegaría al PC.\nif (!/^[a-z0-9-]+$/.test(String(ctx.canal ?? ''))) {\n  throw new Error(`Canal inválido \"${ctx.canal}\" en \"Configuración\": usa solo minúsculas, números y guiones (el mismo canal que en la app).`);\n}\n\nif (Array.isArray(res.errors) && res.errors.length) {\n  throw new Error('Shopify GraphQL (fulfillment orders): ' + JSON.stringify(res.errors));\n}\n\nconst order = res.data?.order;\nif (!order) {\n  throw new Error(`No se pudo leer el pedido ${ctx.order_gid}. Revisa la credencial, el subdominio en \"Configuración\" y el scope read_orders.`);\n}\n\nconst nodes = order.fulfillmentOrders?.nodes ?? [];\nif (nodes.length === 0) {\n  throw new Error(`El pedido ${ctx.order_name} no tiene fulfillment orders visibles para la app. ` +\n    'Revisa el scope write_merchant_managed_fulfillment_orders (o reintenta la ejecución si el pedido se acaba de crear).');\n}\n\n// Métodos de entrega que no llevan etiqueta de transportista.\nconst SIN_ETIQUETA = ['PICK_UP', 'LOCAL', 'RETAIL', 'NONE'];\nconst fo = nodes.find((f) => f.status === 'OPEN' && !SIN_ETIQUETA.includes(f.deliveryMethod?.methodType));\n\nif (!fo) {\n  return [];   // nada que comprar\n}\n\n// shippingDatetime no puede estar en el pasado: usamos \"ahora + 5 minutos\".\nconst shippingDatetime = new Date(Date.now() + 5 * 60 * 1000).toISOString();\n\nreturn [{\n  json: {\n    ...ctx,\n    fulfillment_order_id: fo.id,\n    shipping_datetime: shippingDatetime,\n  },\n}];\n"
+      },
+      "id": "9d55d1ea-5533-49b1-b24c-e85da59c275f",
+      "name": "Elegir fulfillment order abierta",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "removeItemsSeenInPreviousExecutions",
+        "logic": "removeItemsWithAlreadySeenKeyValues",
+        "dedupeValue": "={{ $json.order_id }}",
+        "options": {}
+      },
+      "id": "af7e711c-1031-4c5a-af31-deaf7caccfcc",
+      "name": "Saltar si este pedido ya se compró",
+      "type": "n8n-nodes-base.removeDuplicates",
+      "typeVersion": 2,
+      "position": [
+        880,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://{{ $('Configuración').first().json.shop }}.myshopify.com/admin/api/{{ $('Configuración').first().json.api_version }}/graphql.json",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "shopifyAccessTokenApi",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"query\": \"mutation LabelBridgeComprarEtiqueta($foId: ID!, $shippingDatetime: DateTime!) { shippingLabelPurchase(shippingLabelPurchase: { fulfillmentOrderId: $foId, shippingDatetime: $shippingDatetime }) { shippingLabelPurchaseResult { id status } userErrors { field code message } } }\",\n  \"variables\": { \"foId\": \"{{ $json.fulfillment_order_id }}\", \"shippingDatetime\": \"{{ $json.shipping_datetime }}\" }\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "7bdc734b-08bc-48fc-9613-d1bfdc0229fe",
+      "name": "Comprar etiqueta (Shopify Shipping)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1100,
+        140
+      ],
+      "credentials": {
+        "shopifyAccessTokenApi": {
+          "id": "REEMPLAZAR_SHOPIFY",
+          "name": "Shopify Access Token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Revisa la respuesta de shippingLabelPurchase.\n// - userErrors = validación síncrona (dirección, paquete, peso, aduanas, sin tarifas,\n//   FedEx...). En ese caso Shopify NO compra nada y paramos con un error claro.\n// - Si se aceptó, guardamos el id del ShippingLabelPurchaseResult para consultarlo.\n\nconst ctx = $('Elegir fulfillment order abierta').first().json;\nconst res = $input.first().json;\n\nif (Array.isArray(res.errors) && res.errors.length) {\n  throw new Error('Shopify GraphQL (shippingLabelPurchase): ' + JSON.stringify(res.errors));\n}\n\nconst payload = res.data?.shippingLabelPurchase ?? {};\nconst userErrors = payload.userErrors ?? [];\nif (userErrors.length) {\n  const detalle = userErrors.map((e) => `${e.code ?? ''} ${e.message}`.trim()).join(' | ');\n  throw new Error(`Shopify no aceptó la compra de la etiqueta (${ctx.order_name}): ${detalle}`);\n}\n\nconst result = payload.shippingLabelPurchaseResult;\nif (!result?.id) {\n  throw new Error(`Shopify no devolvió shippingLabelPurchaseResult.id (${ctx.order_name}).`);\n}\n\nreturn [{ json: { ...ctx, result_id: result.id, status: result.status } }];\n"
+      },
+      "id": "b4bca93d-747c-4507-b944-b2ee6f99bdaf",
+      "name": "Preparar sondeo",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "resume": "timeInterval",
+        "amount": 5,
+        "unit": "seconds"
+      },
+      "id": "1c62f324-5f16-4c55-8709-1d3c350ce090",
+      "name": "Esperar 5 s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1540,
+        140
+      ],
+      "webhookId": "644b3bf4-cd7d-4c12-a949-e09130bfbc96"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://{{ $('Configuración').first().json.shop }}.myshopify.com/admin/api/{{ $('Configuración').first().json.api_version }}/graphql.json",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "shopifyAccessTokenApi",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"query\": \"query LabelBridgeEstadoCompra($id: ID!) { node(id: $id) { ... on ShippingLabelPurchaseResult { status errors { code message } shippingLabels { id trackingInfo { number company url } shippingDocuments { documentType format url } } } } }\",\n  \"variables\": { \"id\": \"{{ $json.result_id }}\" }\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "64cb9cee-7941-4076-a26e-9ecb4acf2470",
+      "name": "Consultar resultado de la compra",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1760,
+        140
+      ],
+      "credentials": {
+        "shopifyAccessTokenApi": {
+          "id": "REEMPLAZAR_SHOPIFY",
+          "name": "Shopify Access Token"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Decide el siguiente paso según el estado de la compra:\n//   PURCHASED        → \"imprimir\"\n//   PURCHASE_FAILED  → \"fallo\"\n//   PENDING_PURCHASE → \"esperar\" (vuelve a \"Esperar 5 s\") hasta MAX_INTENTOS\nconst MAX_INTENTOS = 12;   // 12 consultas × 5 s ≈ 1 minuto\n\nif (typeof $runIndex !== 'number') {\n  throw new Error('No se pudo leer $runIndex: se detiene el sondeo por seguridad.');\n}\n\nconst ctx = $('Preparar sondeo').first().json;\nconst res = $input.first().json;\nconst intento = $runIndex + 1;   // veces que se ha ejecutado este nodo en esta ejecución\n\n// Un error GraphQL puntual (p. ej. límite de peticiones) no detiene el sondeo.\nconst errorDeConsulta = Array.isArray(res.errors) && res.errors.length > 0;\nconst resultado = errorDeConsulta ? {} : (res.data?.node ?? {});\nconst status = errorDeConsulta ? 'ERROR_CONSULTA' : (resultado.status ?? 'DESCONOCIDO');\n\nlet siguiente = 'esperar';\nlet mensaje = '';\n\nif (status === 'PURCHASED') {\n  siguiente = 'imprimir';\n} else if (status === 'PURCHASE_FAILED') {\n  siguiente = 'fallo';\n  const detalle = (resultado.errors ?? []).map((e) => `${e.code}: ${e.message}`).join(' | ');\n  mensaje = `La compra de la etiqueta falló (${ctx.order_name}): ${detalle || 'sin detalle'}`;\n} else if (intento >= MAX_INTENTOS) {\n  siguiente = 'fallo';\n  mensaje = `La compra sigue en estado ${status} tras ${intento} consultas (~${intento * 5} s) ` +\n    `(${ctx.order_name}, ${ctx.result_id}). Revisa el pedido en Shopify ANTES de reintentar: ` +\n    'la etiqueta podría haberse comprado igualmente.';\n}\n\nreturn [{\n  json: {\n    ...ctx,\n    status,\n    intento,\n    siguiente,\n    mensaje,\n    shippingLabels: resultado.shippingLabels ?? [],\n  },\n}];\n"
+      },
+      "id": "c25e4184-39dc-42a3-a282-ad858cc73005",
+      "name": "Evaluar estado",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "d02202a9-0dbd-402e-bbf9-10d146ce470b",
+                    "leftValue": "={{ $json.siguiente }}",
+                    "rightValue": "imprimir",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Comprada"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "f5633688-c55d-479d-94f9-7c9211966f44",
+                    "leftValue": "={{ $json.siguiente }}",
+                    "rightValue": "esperar",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Pendiente"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "983bac70-8008-4c26-977c-219f3a828604",
+                    "leftValue": "={{ $json.siguiente }}",
+                    "rightValue": "fallo",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Fallida / sin respuesta"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "eebe05a4-6f29-489b-b2cc-5d76b727e3d8",
+      "name": "¿Qué sigue?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        2200,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Un trabajo de impresión (Job) por cada documento comprado: primero las\n// etiquetas (LABEL) y después los formularios de aduana (CUSTOMS_FORM).\n// Cada item de salida es el Job que se publica tal cual en MQTT.\nconst d = $input.first().json;\n\nconst docs = [];\nfor (const label of d.shippingLabels ?? []) {\n  for (const doc of label.shippingDocuments ?? []) {\n    if (doc?.url) docs.push({ doc, label });\n  }\n}\n\nconst ORDEN = { LABEL: 0, CUSTOMS_FORM: 1 };\ndocs.sort((a, b) => (ORDEN[a.doc.documentType] ?? 9) - (ORDEN[b.doc.documentType] ?? 9));\n\nif (docs.length === 0) {\n  throw new Error(`Etiqueta comprada pero sin documentos imprimibles (${d.order_name}). Descárgala desde Shopify.`);\n}\n\nreturn docs.map(({ doc, label }, i) => {\n  const esAduana = doc.documentType === 'CUSTOMS_FORM';\n  const job = {\n    id: `shopify-${d.order_id}-label-${i + 1}`,\n    title: `Pedido ${d.order_name} · ${esAduana ? 'Aduana' : 'Etiqueta'}`,\n    ...(d.printer ? { printer: d.printer } : {}),   // p. ej. otro alias para aduanas si van en A4\n    copies: 1,\n    format: String(doc.format ?? '').toUpperCase() === 'ZPL' ? 'zpl' : 'pdf',\n    url: doc.url,\n    meta: {\n      order_id: d.order_id,\n      order_name: d.order_name,\n      document_type: doc.documentType,\n      shipping_label_id: label.id,\n      tracking_number: label.trackingInfo?.number ?? null,\n      carrier: label.trackingInfo?.company ?? null,\n      tracking_url: label.trackingInfo?.url ?? null,\n    },\n  };\n  return { json: job };\n});\n"
+      },
+      "id": "b9ffb9d1-5199-45e1-838a-b649d2f7feee",
+      "name": "Construir trabajos de etiqueta",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2460,
+        20
+      ]
+    },
+    {
+      "parameters": {
+        "topic": "=labelbridge/{{ $('Configuración').first().json.canal }}/jobs/{{ $json.id.replace(/[^A-Za-z0-9_-]/g, '-') }}",
+        "sendInputData": true,
+        "options": {
+          "qos": 1,
+          "retain": true
+        }
+      },
+      "id": "1d97db5d-07b6-4283-b1e6-703f45657a68",
+      "name": "Publicar en MQTT (LabelBridge)",
+      "type": "n8n-nodes-base.mqtt",
+      "typeVersion": 1,
+      "position": [
+        2700,
+        20
+      ],
+      "credentials": {
+        "mqtt": {
+          "id": "REEMPLAZAR_MQTT",
+          "name": "LabelBridge MQTT"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "errorType": "errorMessage",
+        "errorMessage": "={{ $json.mensaje }}"
+      },
+      "id": "abcfd3f2-9a97-4ec5-a39b-d18a7509c429",
+      "name": "Detener: compra fallida",
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        2460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## ATENCIÓN · Este workflow COMPRA etiquetas reales\n\nCada pedido pagado dispara la compra de una etiqueta con **Shopify Shipping**: **se cobra a la tienda**.\n\n**No actives también «Comprar etiqueta» en la app de escritorio**: cada pedido se compraría dos veces.\n\n**Requisitos (Admin API 2026-07 o superior; aquí 2026-10)**\n- Scopes de la app: `read_orders`, `write_orders`, `write_merchant_managed_fulfillment_orders`.\n- La tienda aceptó los **Términos del servicio de Shopify Shipping**.\n- La app cumple los requisitos de **datos protegidos de clientes**.\n- **No sirve para FedEx**: la API no compra etiquetas de FedEx.\n- **Prueba primero en una tienda de desarrollo.** *Execute workflow* con un pedido real también compra.\n\n**Saltar si este pedido ya se compró** (Remove Duplicates, *seen in previous executions*) recuerda cada pedido justo antes de comprar: un webhook repetido no compra dos veces. Si la compra falla, la ejecución se detiene con el motivo: resuélvelo y compra desde Shopify (ese pedido no se reintenta solo).",
+        "height": 620,
+        "width": 920,
+        "color": 3
+      },
+      "id": "567989ad-15e6-477a-a167-b44f361ebbc3",
+      "name": "Nota: ATENCIÓN compra real",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -60,
+        -580
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Puesta en marcha\n\n1. **Configuración**: `shop` = subdominio de tu tienda (sin `.myshopify.com`); `canal` = el mismo canal que en la app; `printer` = alias de la impresora en la app.\n2. Credencial **Shopify Access Token API** en el trigger y en los 3 nodos HTTP (*Predefined Credential Type → Shopify Access Token API*). Si tu n8n no la ofrece, usa *Generic Credential Type → Header Auth* con Name `X-Shopify-Access-Token`.\n3. Credencial MQTT **LabelBridge MQTT** en **Publicar en MQTT (LabelBridge)**.\n4. Activa / publica el workflow.\n\n**Flujo** (1 sola ejecución por pedido): fulfillment order `OPEN` → `shippingLabelPurchase` → espera 5 s y consulta el resultado (máx. 12 veces, ~1 min) → publica un trabajo por documento (`LABEL` y luego `CUSTOMS_FORM`, `pdf` o `zpl`) en `labelbridge/<canal>/jobs/shopify-<id>-label-<n>` (QoS 1, retain).",
+        "height": 620,
+        "width": 840
+      },
+      "id": "e1082e1c-b38f-4f7c-ab1d-46b2a6128c31",
+      "name": "Nota: configuración",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        900,
+        -580
+      ]
+    }
+  ],
+  "connections": {
+    "Shopify: pedido pagado": {
+      "main": [
+        [
+          {
+            "node": "Configuración",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Configuración": {
+      "main": [
+        [
+          {
+            "node": "Consultar fulfillment orders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar fulfillment orders": {
+      "main": [
+        [
+          {
+            "node": "Elegir fulfillment order abierta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Elegir fulfillment order abierta": {
+      "main": [
+        [
+          {
+            "node": "Saltar si este pedido ya se compró",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Saltar si este pedido ya se compró": {
+      "main": [
+        [
+          {
+            "node": "Comprar etiqueta (Shopify Shipping)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Comprar etiqueta (Shopify Shipping)": {
+      "main": [
+        [
+          {
+            "node": "Preparar sondeo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar sondeo": {
+      "main": [
+        [
+          {
+            "node": "Esperar 5 s",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Esperar 5 s": {
+      "main": [
+        [
+          {
+            "node": "Consultar resultado de la compra",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar resultado de la compra": {
+      "main": [
+        [
+          {
+            "node": "Evaluar estado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluar estado": {
+      "main": [
+        [
+          {
+            "node": "¿Qué sigue?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Qué sigue?": {
+      "main": [
+        [
+          {
+            "node": "Construir trabajos de etiqueta",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Esperar 5 s",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Detener: compra fallida",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Construir trabajos de etiqueta": {
+      "main": [
+        [
+          {
+            "node": "Publicar en MQTT (LabelBridge)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

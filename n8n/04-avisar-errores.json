@@ -1,0 +1,112 @@
+{
+  "name": "LabelBridge · Avisar de errores de impresión",
+  "nodes": [
+    {
+      "parameters": {
+        "topics": "labelbridge/+/errors:1",
+        "options": {
+          "jsonParseBody": true
+        }
+      },
+      "id": "9b286c6b-4c6c-48fb-be6a-deda0d8ac80f",
+      "name": "MQTT: errores de impresión",
+      "type": "n8n-nodes-base.mqttTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        200
+      ],
+      "credentials": {
+        "mqtt": {
+          "id": "REEMPLAZAR_MQTT",
+          "name": "LabelBridge MQTT"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "language": "javaScript",
+        "jsCode": "// Convierte el error que publica la app en un aviso legible.\n// Tema: labelbridge/<canal>/errors\n// Mensaje: {\"id\",\"status\",\"error\",\"agent\",\"printer\",\"at\"}\nconst topic = String($json.topic ?? '');\nconst canal = topic.split('/')[1] || 'desconocido';\n\nlet m = $json.message;\nif (typeof m === 'string') {\n  try {\n    m = JSON.parse(m);\n  } catch (e) {\n    m = { error: m };\n  }\n}\nm = m || {};\n\nconst asunto = `LabelBridge: fallo de impresión en \"${canal}\"${m.id ? ` (${m.id})` : ''}`;\nconst texto = [\n  `Canal: ${canal}`,\n  `Trabajo: ${m.id ?? '-'}`,\n  `Estado: ${m.status ?? 'failed'}`,\n  `Error: ${m.error ?? '-'}`,\n  `Impresora: ${m.printer ?? '-'}`,\n  `Equipo: ${m.agent ?? '-'}`,\n  `Fecha: ${m.at ?? new Date().toISOString()}`,\n].join('\\n');\n\nreturn { json: { canal, asunto, texto, detalle: m } };\n"
+      },
+      "id": "c716a041-e8ab-4557-80aa-af1cef9e98b7",
+      "name": "Preparar aviso",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "fromEmail": "LabelBridge <labelbridge@tu-dominio.com>",
+        "toEmail": "tu-correo@tu-dominio.com",
+        "subject": "={{ $json.asunto }}",
+        "emailFormat": "text",
+        "text": "={{ $json.texto }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "82f08e79-c2fe-467a-8ba2-c95ef1c7e0a4",
+      "name": "Enviar aviso por email (EDITAR)",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        480,
+        200
+      ],
+      "credentials": {
+        "smtp": {
+          "id": "REEMPLAZAR_SMTP",
+          "name": "SMTP (EDITAR)"
+        }
+      },
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "content": "## LabelBridge · Avisar de errores de impresión (opcional)\n\nSe ejecuta **solo cuando una etiqueta falla**: la app publica el fallo en `labelbridge/<canal>/errors` y este trigger lo recibe (`labelbridge/+/errors` cubre todos los canales).\n\n**Puesta en marcha**\n1. **MQTT: errores de impresión** → credencial **LabelBridge MQTT** (el usuario de n8n necesita permiso para suscribirse). Deja vacío *Client ID* en la credencial.\n2. **Enviar aviso por email (EDITAR)** viene desactivado: elige tu credencial SMTP, pon remitente y destinatario y actívalo. Puedes cambiarlo por Slack, Telegram, Gmail…\n3. Activa / publica el workflow.\n\nEl trigger mantiene abierta una conexión con el broker, pero solo crea ejecuciones cuando llega un error.",
+        "height": 460,
+        "width": 700
+      },
+      "id": "c90164ed-69d2-4b7e-bcda-8f5993734c60",
+      "name": "Nota: configuración",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -60,
+        -320
+      ]
+    }
+  ],
+  "connections": {
+    "MQTT: errores de impresión": {
+      "main": [
+        [
+          {
+            "node": "Preparar aviso",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar aviso": {
+      "main": [
+        [
+          {
+            "node": "Enviar aviso por email (EDITAR)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
