@@ -38,13 +38,16 @@ class N8nPage(Page):
         )
         self.add(how)
 
-        conn = Card("Canal en tiempo real (MQTT)", "Usa un broker MQTT gratuito como HiveMQ Cloud. La guía explica cómo crearlo en 5 minutos.")
+        conn = Card(
+            "Canal en tiempo real (MQTT)",
+            "Usa un broker MQTT con TLS, por ejemplo EMQX Serverless (cuota gratuita mensual). La guía explica cómo crearlo.",
+        )
         self.enabled = SwitchRow("Recibir trabajos de n8n en tiempo real", "Conexión saliente: no hay que abrir puertos.", s.enabled)
         conn.add(self.enabled)
         form = QFormLayout()
         form.setSpacing(10)
         self.host = QLineEdit(s.host)
-        self.host.setPlaceholderText("xxxxxxxx.s1.eu.hivemq.cloud")
+        self.host.setPlaceholderText("xxxxxxxx.ala.us-east-1.emqxsl.com")
         form.addRow("Servidor (broker)", self.host)
         self.port = QSpinBox()
         self.port.setRange(1, 65535)

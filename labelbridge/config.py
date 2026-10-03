@@ -139,7 +139,7 @@ class MqttSettings:
     """Canal en tiempo real: n8n publica cuando ocurre un evento y este PC lo recibe al instante."""
 
     enabled: bool = False
-    host: str = ""  # p. ej. xxxxxxxx.s1.eu.hivemq.cloud
+    host: str = ""  # p. ej. xxxxxxxx.ala.us-east-1.emqxsl.com (EMQX Serverless)
     port: int = 8883
     tls: bool = True
     username: str = ""

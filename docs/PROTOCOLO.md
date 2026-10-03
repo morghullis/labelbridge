@@ -68,7 +68,7 @@ Para llamarla desde el navegador (tu web abierta en el mismo PC) agrega el orige
 
 ## Canal en tiempo real (MQTT) para n8n
 
-n8n se ejecuta solo cuando ocurre un evento y **publica** el trabajo; el PC mantiene una conexión saliente cifrada con el broker (por ejemplo HiveMQ Cloud) y lo recibe al instante. `canal` es el identificador del PC que configuras en la app (p. ej. `pc-bodega`).
+n8n se ejecuta solo cuando ocurre un evento y **publica** el trabajo; el PC mantiene una conexión saliente cifrada con el broker (por ejemplo EMQX Serverless) y lo recibe al instante. `canal` es el identificador del PC que configuras en la app (p. ej. `pc-bodega`).
 
 | Tema | Quién publica | Contenido |
 |---|---|---|
@@ -83,7 +83,7 @@ n8n se ejecuta solo cuando ocurre un evento y **publica** el trabajo; el PC mant
 - Prueba rápida con `mosquitto_pub`:
 
 ```bash
-mosquitto_pub -h TU-BROKER.hivemq.cloud -p 8883 -u n8n -P 'CLAVE' -q 1 -r -t labelbridge/pc-bodega/jobs/prueba-1 -m '{"id":"prueba-1","format":"zpl","content":"^XA^FO50,50^A0N,50,50^FDHola^FS^XZ"}'
+mosquitto_pub -h TU-BROKER.emqxsl.com -p 8883 -u n8n -P 'CLAVE' -q 1 -r -t labelbridge/pc-bodega/jobs/prueba-1 -m '{"id":"prueba-1","format":"zpl","content":"^XA^FO50,50^A0N,50,50^FDHola^FS^XZ"}'
 ```
 
 Las plantillas listas para importar y la guía del broker están en [`n8n/`](../n8n/README.md).

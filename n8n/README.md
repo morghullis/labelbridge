@@ -2,251 +2,231 @@
 
 Plantillas listas para importar en n8n (Cloud o self-hosted) que conectan **Shopify** con la app de escritorio **LabelBridge** (Windows).
 
-La app solo hace peticiones **salientes** (a n8n o a Shopify): no hace falta abrir puertos ni exponer el PC.
+**Solo eventos, sin sondeo**: n8n se ejecuta únicamente cuando ocurre algo (un pedido pagado, un error de impresión) y entrega el trabajo a la app **al instante** a través de un broker **MQTT**. La app solo abre conexiones salientes: no hay que abrir puertos en el PC.
 
 ## ¿Qué modo usar?
 
-| Situación | Modo | Ejecuciones en n8n |
-|---|---|---|
-| **Recomendado: sin n8n** | El **conector Shopify de la app** compra la etiqueta (Shopify Shipping) e imprime directo. | Ninguna |
-| **n8n Cloud**, cualquier paquetería | **04**: n8n crea la etiqueta y guarda su URL en el metafield `custom.label_url` del pedido; la app (conector Shopify con *Etiqueta desde metafield*) la lee de Shopify e imprime. | 1 por pedido · **0 de sondeo** |
-| **n8n self-hosted** (sin límite de ejecuciones) | **01** u **03** + **02**: cola en Data Table que la app consulta. | 1 por pedido + 1 por consulta |
-| **n8n en la misma red que el PC** | **01** con su nodo alternativo: envía el trabajo directo a la API local de la app (`http://IP-DEL-PC:7300/api/v1/jobs`, `Authorization: Bearer <API KEY>`). | 1 por pedido |
+| Modo | Cómo funciona | Ejecuciones de n8n | Cuándo |
+|---|---|---|---|
+| **A · Sin n8n** | El **conector Shopify de la app** consulta Shopify, compra (Shopify Shipping) e imprime directo. | **0** | La opción más simple si no necesitas n8n. |
+| **B · n8n + MQTT** *(recomendado con n8n)* | **01** o **02** publican el trabajo en el broker; la app, suscrita, imprime al momento. Si el PC está apagado, el trabajo queda **retenido** y se imprime al encenderlo. | **1 por pedido** | n8n Cloud o self-hosted. Necesita un broker MQTT. |
+| **C · Metafield** | **03** guarda la URL de la etiqueta en el pedido; la app la lee de Shopify (*Etiqueta desde metafield*). | **1 por pedido** | n8n Cloud sin broker, con cualquier paquetería. |
+| **D · HTTP directo (LAN)** | Nodo alternativo del **01**: `POST http://IP-DEL-PC:7300/api/v1/jobs` con `Authorization: Bearer <clave>`. | **1 por pedido** | n8n self-hosted en la misma red que el PC (si el PC está apagado, el envío falla). |
 
-**El coste del sondeo (02)**: cada `GET …/labelbridge/jobs` de la app cuenta como **1 ejecución**, haya trabajos o no. Consultando cada 30 s son ≈ **86 400 ejecuciones/mes**; cada 60 s, ≈ **43 200/mes**. Por eso el 02 es para n8n **self-hosted** (sin límite de ejecuciones). En **n8n Cloud** usa el **04**.
+Usa **un solo camino por pedido**: 01, 02, 03 o el conector de la app. Si combinas varios, cada pedido se imprimirá (o se comprará) más de una vez.
 
 ## Contenido
 
 | Archivo | Workflow | Qué hace |
 |---|---|---|
-| `01-shopify-pedidos-a-cola.json` | LabelBridge · Shopify → Cola de impresión | Por cada pedido **pagado** crea un trabajo `format: "order"` (la app dibuja la etiqueta con la dirección) y lo guarda como `pending`. Incluye una alternativa **desactivada** para enviar el trabajo directo a la API local del PC (n8n self-hosted en la misma red). |
-| `02-api-del-agente.json` | LabelBridge · API del agente (jobs + ack) | Los dos endpoints que usa la app: `GET …/webhook/labelbridge/jobs` (entrega pendientes) y `POST …/webhook/labelbridge/ack` (actualiza el estado). **Necesario en modo cola** (01/03). |
-| `03-comprar-etiqueta-shopify-shipping.json` | LabelBridge · Comprar etiqueta Shopify Shipping → Cola | **Compra** la etiqueta del transportista con Shopify Shipping (Admin API `2026-10`) y encola el PDF/ZPL (etiqueta y, si hay, formulario de aduana). **Genera cargos reales.** |
-| `04-etiqueta-a-metafield.json` | LabelBridge · Etiqueta de cualquier paquetería → metafield del pedido | Crea la etiqueta en tu paquetería (nodo de ejemplo que debes editar) y guarda su URL en el metafield `custom.label_url` del pedido. La app la lee de Shopify: **sin sondeo en n8n**. |
+| `01-pedido-a-labelbridge.json` | LabelBridge · Pedido pagado → imprimir al instante | Pedido pagado → trabajo `format: "order"` (la app dibuja la etiqueta) con solo los datos necesarios del pedido → MQTT. Incluye la alternativa LAN desactivada. |
+| `02-comprar-etiqueta-shopify-shipping.json` | LabelBridge · Comprar etiqueta Shopify Shipping → imprimir | **Compra** la etiqueta con Shopify Shipping (Admin API `2026-10`) y publica el PDF/ZPL (etiqueta y aduana) por MQTT. **Genera cargos reales.** |
+| `03-etiqueta-a-metafield.json` | LabelBridge · Etiqueta de cualquier paquetería → metafield del pedido | Crea la etiqueta en tu paquetería (nodo de ejemplo a editar) y guarda su URL en el metafield `custom.label_url`. Sin broker. |
+| `04-avisar-errores.json` *(opcional)* | LabelBridge · Avisar de errores de impresión | Trigger MQTT en `labelbridge/+/errors` → aviso por email (desactivado, a configurar). Solo se ejecuta cuando una etiqueta falla. |
 
-Activa **un solo camino** por pedido: **04**, o **02** + (**01** o **03**). Si combinas varios, cada pedido imprimirá más de una etiqueta.
-
-## Cómo encaja todo
+## Cómo funciona
 
 ```mermaid
 flowchart LR
-    SH["Shopify<br/>pedido pagado"] -->|"orders/paid"| W1["01 · Shopify → Cola"]
-    SH -->|"orders/paid"| W3["03 · Comprar etiqueta<br/>Shopify Shipping"]
-    W3 -->|"GraphQL Admin API 2026-10"| SA[("Shopify<br/>Admin API")]
-    W1 -->|"insert pending"| DT[("Data Table<br/>labelbridge_jobs")]
-    W3 -->|"insert pending"| DT
-    APP["App LabelBridge<br/>PC Windows"] -->|"GET /webhook/labelbridge/jobs"| W2["02 · API del agente"]
-    APP -->|"POST /webhook/labelbridge/ack"| W2
-    W2 -->|"lee pending / actualiza status"| DT
-    APP --> PR["Impresora de etiquetas"]
-    SH -->|"orders/paid"| W4["04 · Paquetería → metafield"]
-    W4 -->|"crea etiqueta"| CA["API de tu paquetería"]
-    W4 -->|"metafieldsSet custom.label_url"| SA
-    APP -.->|"conector Shopify: lee label_url"| SA
+    SH["Shopify<br/>pedido pagado"] -->|"webhook orders/paid"| N1["n8n · 01 o 02<br/>1 ejecución por pedido"]
+    N1 -->|"labelbridge/canal/jobs/id<br/>QoS 1 + retain"| BR[("Broker MQTT<br/>TLS 8883")]
+    BR -->|"suscripción"| APP["App LabelBridge<br/>PC Windows"]
+    APP --> PR["Impresora"]
+    APP -->|"acks · errors · status"| BR
+    BR -->|"labelbridge/+/errors"| N4["n8n · 04<br/>aviso opcional"]
+    SH -->|"orders/paid"| N3["n8n · 03<br/>paquetería → metafield"]
+    N3 -->|"metafieldsSet"| SA[("Shopify Admin API")]
+    APP -.->|"modo C: lee label_url"| SA
 ```
-
-Ciclo de vida de un trabajo en modo cola (01/03 + 02):
 
 ```mermaid
 sequenceDiagram
     participant S as Shopify
-    participant N as n8n (Data Table)
+    participant N as n8n
+    participant B as Broker MQTT
     participant A as App LabelBridge
-    participant P as Impresora
     S->>N: webhook orders/paid
-    N->>N: guarda el trabajo con status pending
-    loop cada pocos segundos
-        A->>N: GET /webhook/labelbridge/jobs
-        N-->>A: jobs pendientes (los más antiguos primero)
-    end
-    A->>N: POST /webhook/labelbridge/ack (received)
-    Note over N: status received: ya no se vuelve a entregar
-    A->>P: imprime
-    A->>N: POST /webhook/labelbridge/ack (printed o failed)
+    N->>B: publica jobs/id (QoS 1, retain)
+    Note over B: si el PC está apagado, el trabajo espera retenido
+    B->>A: entrega el trabajo
+    A->>B: borra el retenido (mensaje vacío con retain)
+    A->>A: imprime
+    A->>B: acks/id (printed o failed) y, si falla, errors
 ```
 
-## 1. Crear la Data Table `labelbridge_jobs`
+## 1. Broker MQTT
 
-Solo para el modo cola (01/03 + 02); el 04 no la usa. En n8n: **Overview → Data tables → Create data table** (o *Create → Data table*), en el mismo proyecto donde importarás los workflows.
+> **HiveMQ Cloud Serverless (el plan gratuito) se ha retirado**: desde el 2026-09-30 no se pueden crear clusters nuevos y los existentes dejan de funcionar el 2026-12-31 (documentación de HiveMQ). Si ya tienes uno, planifica el cambio.
 
-- Nombre **exacto**: `labelbridge_jobs` (los workflows la buscan por nombre).
-- Crea estas columnas, todas de tipo **String**. `id`, `createdAt` y `updatedAt` las crea n8n solo: no las añadas.
+Sirve cualquier broker MQTT con **TLS**, **usuario y contraseña**, **mensajes retenidos** y **QoS 1**:
 
-| Columna | Contenido |
-|---|---|
-| `job_id` | Id del trabajo: `shopify-<id>-order`, `shopify-<id>-label-1`… (clave del ack) |
-| `status` | `pending` → `received` → `printed` / `failed` |
-| `title` | Texto para el historial de la app (`Pedido #1001`) |
-| `printer` | Impresora pedida (alias); tras el ack, la que reporta la app |
-| `order_id` | Id numérico del pedido de Shopify |
-| `payload` | El trabajo completo en JSON (`JSON.stringify(job)`); es lo que recibe la app |
-| `error` | Mensaje de error de un ack `failed` |
-| `agent` | PC que confirmó el trabajo (p. ej. `PC-BODEGA`) |
+| Broker | Coste | Notas |
+|---|---|---|
+| **EMQX Platform · Serverless** | Cuota gratuita mensual: 1 000 000 minutos de sesión y 1 GB de tráfico | TLS en `8883`, mensajes de hasta 1 MB. Un cliente conectado todo el mes ≈ 43 200 minutos. |
+| **HiveMQ Cloud · Starter** | Prueba de 15 días sin tarjeta; después, de pago | TLS en `8883`. |
+| **Mosquitto u otro propio** | Gratis (lo mantienes tú) | Con n8n Cloud debe ser accesible desde Internet con TLS. |
 
-## 2. Crear las credenciales
+Crea **dos usuarios**: `n8n` (publica trabajos y escucha errores) y `labelbridge-pc` (el de la app). Así puedes cambiar la contraseña de uno sin tocar el otro.
 
-### 2.1 Clave del agente (modo cola, 02)
+**EMQX Serverless**
+1. Consola de EMQX Cloud → **New Deployment** → plan **Serverless**. Define el **Spend Limit** (con 0 solo usas la cuota gratuita), el nombre y pulsa **Deploy**.
+2. **Access Control → Authentication → Add**: crea `n8n` y `labelbridge-pc` con contraseñas largas.
+3. En **Overview** copia la dirección del broker (el host). Puerto **8883** (MQTT sobre TLS).
 
-**Credentials → Create credential → Header Auth**
+**HiveMQ Cloud (Starter)**
+1. Crea el cluster en la consola de HiveMQ Cloud.
+2. **Access Management → Credentials → Edit → Add Credentials**: `n8n` y `labelbridge-pc`, cada uno con un rol que permita publicar y suscribirse.
+3. Copia la *TLS MQTT URL* del cluster (host `….hivemq.cloud`). Puerto **8883**.
+
+## 2. Credenciales en n8n
+
+**MQTT** (Credentials → Create credential → **MQTT**), nombre `LabelBridge MQTT`:
 
 | Campo | Valor |
 |---|---|
-| Nombre de la credencial | `LabelBridge Agent Key` |
-| Name | `X-Agent-Key` |
-| Value | Una clave larga y aleatoria (la **misma** que pondrás en la app) |
+| Protocol | **Mqtts** |
+| Host | El host del broker, sin `mqtts://` ni puerto |
+| Port | **8883** |
+| Username / Password | Usuario `n8n` del broker |
+| Client ID | **Vacío** (n8n genera uno; dos conexiones con el mismo ID se expulsan entre sí) |
+| SSL | Desactivado: con *Mqtts* la conexión ya va cifrada y los brokers gestionados no necesitan certificados propios |
 
-Para generar la clave:
+**Shopify** (01, 02 y 03): credencial **Shopify Access Token API** (`Shopify Access Token`) con *Shop Subdomain* (`mi-tienda`), *Access Token* (`shpat_…`) y *APP Secret Key* (n8n la usa para verificar la firma de los webhooks).
 
-```bash
-# macOS / Linux
-openssl rand -hex 32
-```
+| Workflow | Scopes de la app de Shopify |
+|---|---|
+| 01 | `read_orders` + acceso a **datos protegidos de clientes** (nombre y dirección) |
+| 02 | `read_orders`, `write_orders`, `write_merchant_managed_fulfillment_orders` + Términos de Shopify Shipping aceptados |
+| 03 | `read_orders`, `write_orders` |
 
-```powershell
-# Windows PowerShell
-$b = New-Object byte[] 32; [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b); -join ($b | ForEach-Object { $_.ToString('x2') })
-```
+Shopify ya no permite crear apps personalizadas desde el admin (las existentes siguen funcionando). Si creas la app en el **Dev Dashboard**, usa la credencial **Shopify OAuth2 API** (registra en la app la *OAuth Redirect URL* que muestra n8n), cambia el trigger a *Authentication → OAuth2* y, en los nodos HTTP de Shopify, la credencial predefinida a *Shopify OAuth2 API*. No uses tokens del *client credentials grant*: caducan a las 24 h.
 
-### 2.2 Shopify
+**Opcionales**: SMTP para el aviso del 04; *Header Auth* (`Authorization` = `Bearer <clave>`) para la alternativa LAN del 01; la credencial de tu paquetería en el 03.
 
-Los workflows 01, 03 y 04 usan la credencial **Shopify Access Token API** (nombre sugerido `Shopify Access Token`):
+## 3. Importar y activar
+
+1. En n8n: **Create workflow** → menú **⋯** → **Import from File…** (o pega el JSON en el lienzo con Ctrl/Cmd + V).
+2. Abre los nodos con aviso de credencial y elige la tuya (las plantillas traen ids de ejemplo).
+3. Edita el nodo **Configuración**: `canal` y `printer` (01 y 02), `shop` (02 y 03).
+4. Activa el workflow (interruptor **Active** o botón **Publish**, según tu versión). Al activar el 01, 02 o 03, n8n registra el webhook `orders/paid` en Shopify; el 04 se conecta al broker.
+
+## 4. Configurar la app LabelBridge
+
+En la pantalla **n8n** de la app:
 
 | Campo | Valor |
 |---|---|
-| Shop Subdomain | `mi-tienda` (sin `.myshopify.com`) |
-| Access Token | Admin API access token (`shpat_…`) |
-| APP Secret Key | API secret key de la app; n8n la usa para verificar la firma (HMAC) de los webhooks |
+| Host | El mismo host del broker |
+| Puerto | `8883` |
+| TLS | Activado |
+| Usuario / Contraseña | `labelbridge-pc` |
+| Canal | Igual que `canal` en los workflows, p. ej. `pc-bodega` (solo `a-z`, `0-9`, `-`) |
 
-- **Scopes de la app**: 01 → `read_orders`. 03 → `read_orders`, `write_orders`, `write_merchant_managed_fulfillment_orders`. 04 → `read_orders`, `write_orders` (escribir metafields de un pedido requiere el scope de escritura de pedidos).
-- **Datos protegidos de clientes**: solicita acceso a nombre y dirección en la configuración de la app. Sin él, Shopify entrega los pedidos sin dirección (y puede impedir la suscripción a webhooks de pedidos).
-- **Apps nuevas**: Shopify ya no permite crear apps personalizadas desde el admin (las existentes siguen funcionando). Si creas la app en el **Dev Dashboard**, usa la credencial **Shopify OAuth2 API** de n8n (registra en la app la *OAuth Redirect URL* que muestra n8n) y cambia en el trigger *Authentication → OAuth2* y, en los nodos HTTP de Shopify del 03 y el 04, la credencial predefinida a *Shopify OAuth2 API*. No pegues en *Access Token* un token del *client credentials grant*: caduca a las 24 h.
+Cada PC usa su propio canal. Para enviar a otro PC, duplica el workflow y cambia `canal`.
 
-### 2.3 API local del PC (opcional, solo nodo alternativo del 01)
+## 5. Temas y mensajes
 
-**Header Auth** con Name `Authorization` y Value `Bearer <API KEY de la app>`.
+| Tema | Publica | QoS · retain | Contenido |
+|---|---|---|---|
+| `labelbridge/<canal>/jobs/<jobId>` | n8n | 1 · **retain** | Un trabajo. La app borra el retenido al guardarlo. |
+| `labelbridge/<canal>/jobs` | n8n u otros | 1 · sin retain | Un trabajo o `{"jobs":[...]}` |
+| `labelbridge/<canal>/acks/<jobId>` | App | 1 | Resultado `printed` / `failed` |
+| `labelbridge/<canal>/errors` | App | 1 | Solo los fallos |
+| `labelbridge/<canal>/status` | App (last will) | retain | `{"online":true\|false,…}` |
 
-## 3. Importar los workflows
+`<jobId>` = `id` del trabajo con todo lo que no sea `A-Z a-z 0-9 _ -` cambiado por `-`.
 
-Importa solo lo que vayas a usar (ver *¿Qué modo usar?*); en modo cola, primero el **02**:
-
-1. En n8n crea un workflow vacío (**Create workflow**), abre el menú **⋯** (arriba a la derecha) → **Import from File…** y elige el `.json`. También puedes pegar el contenido del archivo en el lienzo con Ctrl/Cmd + V.
-2. Abre cada nodo marcado con aviso de credencial y selecciona la que creaste (las plantillas traen un id de ejemplo que no existe en tu instancia):
-   - 02: los **dos** webhooks → `LabelBridge Agent Key`.
-   - 01, 03 y 04: trigger de Shopify y los nodos HTTP que llaman a Shopify → credencial de Shopify.
-3. En el 03 y el 04 edita el nodo **Configuración**: `shop` = subdominio de tu tienda (en el 03, además, `printer` = alias de la impresora en la app).
-4. En el 04 edita y **activa** el nodo **Crear etiqueta en tu paquetería (EDITAR)** (ver sección 8).
-5. Guarda.
-
-## 4. Activar
-
-Activa cada workflow con el interruptor **Active** (en versiones nuevas: botón **Publish**).
-
-- Las URLs **de producción** (`/webhook/...`) solo responden con el workflow activo.
-- Las URLs de prueba (`/webhook-test/...`) solo funcionan mientras pulsas *Listen for test event* en el editor.
-- Al activar el 01, el 03 o el 04, n8n registra el webhook `orders/paid` en Shopify.
-
-## 5. Configurar la app LabelBridge
-
-**Con el 04** no hay URLs de n8n que configurar: en el conector Shopify de la app activa **Etiqueta desde metafield** con namespace `custom` y key `label_url`.
-
-**En modo cola (02)**, en la conexión con n8n de la app pega las **Production URL** de los webhooks del 02 (ábrelos → pestaña *Production URL*):
-
-| Dato | Valor |
-|---|---|
-| URL de trabajos | `https://TU-INSTANCIA.app.n8n.cloud/webhook/labelbridge/jobs` |
-| URL de ack | `https://TU-INSTANCIA.app.n8n.cloud/webhook/labelbridge/ack` |
-| Agent Key | El *Value* de la credencial `LabelBridge Agent Key` |
-| Id de agente | Nombre del PC, p. ej. `PC-BODEGA` |
-
-En n8n self-hosted, sustituye el dominio por el de tu instancia.
-
-## 6. Probar el modo cola (02)
-
-**Fila de prueba**: abre la Data Table y añade una fila con `job_id` = `prueba-001`, `status` = `pending`, `title` = `Prueba ZPL`, `printer` = `etiquetas` y este `payload`:
+Trabajo del **01** (pedido minimizado):
 
 ```json
-{"id":"prueba-001","title":"Prueba ZPL","printer":"etiquetas","copies":1,"format":"zpl","content":"^XA^FO50,50^A0N,40,40^FDHola LabelBridge^FS^XZ"}
+{
+  "id": "pedido-5612345678901",
+  "title": "Pedido #1001",
+  "printer": "etiquetas",
+  "copies": 1,
+  "format": "order",
+  "order": {
+    "id": 5612345678901, "name": "#1001", "order_number": 1001, "created_at": "2026-10-03T10:00:00Z",
+    "shipping_address": { "name": "Ana Pérez", "address1": "C/ Mayor 1", "city": "Madrid", "zip": "28001", "country_code": "ES" },
+    "shipping_lines": [{ "title": "Envío estándar" }],
+    "line_items": [{ "quantity": 2, "name": "Camiseta - M", "title": "Camiseta", "variant_title": "M", "sku": "CAM-M" }],
+    "note": null, "total_price": "24.95", "currency": "EUR"
+  },
+  "meta": { "order_id": "5612345678901", "order_name": "#1001" }
+}
 ```
 
-**curl** (macOS / Linux / Git Bash):
+Trabajo del **02** (uno por documento):
+
+```json
+{"id":"shopify-5612345678901-label-1","title":"Pedido #1001 · Etiqueta","printer":"etiquetas","copies":1,"format":"pdf","url":"https://…/label.pdf","meta":{"order_id":"5612345678901","document_type":"LABEL","tracking_number":"1Z…","carrier":"UPS"}}
+```
+
+Ack y estado (los publica la app):
+
+```json
+{"id":"pedido-5612345678901","status":"failed","error":"Impresora sin papel","agent":"PC-BODEGA","printer":"Zebra ZD421","at":"2026-10-03T12:00:05Z"}
+{"online":true,"agent":"PC-BODEGA","version":"1.0.0","at":"2026-10-03T12:00:00Z"}
+```
+
+## 6. Probar
+
+Con la app conectada (canal `pc-bodega`), publica un trabajo ZPL retenido. Puedes usar un cliente gráfico como **MQTTX**, el *Web Client* de la consola de HiveMQ Cloud o `mosquitto_pub`:
 
 ```bash
-N8N="https://TU-INSTANCIA.app.n8n.cloud"
-KEY="tu-clave-larga"
+H="tu-host-del-broker"; U="n8n"; P="tu-contraseña"
+TLS="--cafile /etc/ssl/cert.pem"   # macOS · en Linux: --capath /etc/ssl/certs
 
-# Trabajos pendientes → {"jobs":[...]}  (o {"jobs":[]} si no hay)
-curl -s "$N8N/webhook/labelbridge/jobs?agent=PC-BODEGA&limit=10" -H "X-Agent-Key: $KEY"
+# Ver todo lo que pasa en el canal (trabajos, acks, errores, estado)
+mosquitto_sub -h "$H" -p 8883 $TLS -u "$U" -P "$P" -t 'labelbridge/pc-bodega/#' -v
 
-# Confirmar → {"ok":true}
-curl -s -X POST "$N8N/webhook/labelbridge/ack" \
-  -H "X-Agent-Key: $KEY" -H "Content-Type: application/json" \
-  -d '{"id":"prueba-001","status":"printed","error":null,"agent":"PC-BODEGA","printer":"etiquetas","at":"2026-10-03T12:00:00Z"}'
+# Enviar un trabajo de prueba: QoS 1 y retenido, como hace n8n
+mosquitto_pub -h "$H" -p 8883 $TLS -u "$U" -P "$P" -q 1 -r \
+  -t 'labelbridge/pc-bodega/jobs/prueba-001' \
+  -m '{"id":"prueba-001","title":"Prueba ZPL","printer":"etiquetas","copies":1,"format":"zpl","content":"^XA^FO50,50^A0N,40,40^FDHola LabelBridge^FS^XZ"}'
 
-# Sin clave → 403 "Authorization data is wrong!"
-curl -s -i "$N8N/webhook/labelbridge/jobs"
+# Borrar a mano un retenido (la app lo hace sola tras guardar el trabajo)
+mosquitto_pub -h "$H" -p 8883 $TLS -u "$U" -P "$P" -r -n -t 'labelbridge/pc-bodega/jobs/prueba-001'
 ```
 
-**PowerShell** (en Windows PowerShell 5.1, `curl` es un alias de `Invoke-WebRequest`; usa `curl.exe` o estos comandos):
+Deberías ver la etiqueta impresa y un mensaje en `labelbridge/pc-bodega/acks/prueba-001`. Prueba también con la app cerrada: al abrirla, imprime el trabajo retenido.
 
-```powershell
-$N8N = "https://TU-INSTANCIA.app.n8n.cloud"
-$H = @{ "X-Agent-Key" = "tu-clave-larga" }
-Invoke-RestMethod "$N8N/webhook/labelbridge/jobs?agent=PC-BODEGA&limit=10" -Headers $H
-Invoke-RestMethod "$N8N/webhook/labelbridge/ack" -Method Post -Headers $H -ContentType "application/json" `
-  -Body '{"id":"prueba-001","status":"printed","error":null,"agent":"PC-BODEGA","printer":"etiquetas","at":"2026-10-03T12:00:00Z"}'
-```
+## 7. Workflow 02: compra real de etiquetas
 
-Después del ack, la fila `prueba-001` debe tener `status = printed` y ya no aparece en `GET jobs`.
+- Requisitos: Admin API 2026-07 o superior, los scopes de la tabla, **Términos de Shopify Shipping** aceptados y **datos protegidos de clientes**. **FedEx no está soportado.** Prueba primero en una **tienda de desarrollo**.
+- **No actives también «Comprar etiqueta» en la app**: cada pedido se compraría dos veces.
+- Flujo en **una sola ejecución**: fulfillment order `OPEN` → *Saltar si este pedido ya se compró* (Remove Duplicates, recuerda el id del pedido justo antes de comprar) → `shippingLabelPurchase` → consulta cada 5 s (máx. 12) → publica un trabajo por documento (`LABEL` y luego `CUSTOMS_FORM`).
+- Si la compra falla o no termina en ~1 min, la ejecución se detiene con el motivo. Ese pedido **no se reintenta solo**: revisa Shopify y, si hace falta, compra la etiqueta desde allí.
 
-## 7. Workflow 03: compra real de etiquetas
-
-Antes de activarlo:
-
-- Admin API **2026-07 o superior** (la plantilla usa `2026-10`).
-- Scopes `read_orders`, `write_orders`, `write_merchant_managed_fulfillment_orders`, **Términos de Shopify Shipping aceptados** y acceso a **datos protegidos de clientes**.
-- **FedEx no está soportado** por la API de compra.
-- **Prueba primero en una tienda de desarrollo.** Ejecutarlo a mano con un pedido real también compra.
-
-Qué hace: elige la primera *fulfillment order* `OPEN` que necesite envío → `shippingLabelPurchase` → consulta el resultado cada 5 s (máx. 12 veces, ~1 min) → con `PURCHASED` crea un trabajo por documento (`LABEL` primero, luego `CUSTOMS_FORM`), `format` `pdf` o `zpl`, id `shopify-<id>-label-<n>`.
-
-- Sin fulfillment order abierta (ya preparado, recogida en tienda…) → termina **sin comprar**.
-- `userErrors`, `PURCHASE_FAILED` o sin respuesta tras ~1 min → la ejecución **falla con el motivo**. Revisa el pedido en Shopify **antes de reintentar** para no comprar dos veces.
-- Si la fila `shopify-<id>-label-1` ya existe, no vuelve a comprar.
-
-## 8. Workflow 04: cualquier paquetería → metafield
+## 8. Workflow 03: cualquier paquetería → metafield
 
 1. **Configuración**: `shop`; `metafield_namespace` / `metafield_key` iguales que en la app (`custom` / `label_url`).
-2. **Crear etiqueta en tu paquetería (EDITAR)** viene **desactivado**: pon la URL, la autenticación y el cuerpo de la API de tu paquetería (el ejemplo ya mapea la dirección del pedido). Debe devolver la URL del PDF/ZPL, p. ej. `{"label_url":"https://…/etiqueta.pdf"}`. Después **actívalo**. Si la URL llega en otro campo, añádelo a `CAMPOS` en **Extraer URL de la etiqueta**.
-3. Scopes `read_orders` y `write_orders`. La definición del metafield (*Configuración → Datos personalizados → Pedidos*, tipo **URL**) es opcional; si ya existe, debe ser de tipo URL.
+2. Edita y **activa** el nodo **Crear etiqueta en tu paquetería (EDITAR)**. Debe devolver la URL del PDF/ZPL, p. ej. `{"label_url":"https://…"}`; si viene en otro campo, añádelo a `CAMPOS` en **Extraer URL de la etiqueta**.
+3. La definición del metafield (tipo **URL**) es opcional; si ya existe, debe ser de tipo URL.
 4. En la app: conector Shopify con **Etiqueta desde metafield** (namespace `custom`, key `label_url`).
-
-Si el pedido ya tiene `label_url` (webhook reenviado), no se crea otra etiqueta. Puedes ver el valor en el pedido, en el admin de Shopify (sección *Metafields*).
 
 ## 9. Solución de problemas
 
 | Síntoma | Causa probable / solución |
 |---|---|
-| `404 … webhook "GET labelbridge/jobs" is not registered` | El 02 no está activo, usas `/webhook-test/` sin *Listen for test event*, o la ruta está mal escrita. |
-| `403 Authorization data is wrong!` | Falta la cabecera `X-Agent-Key` o no coincide. La credencial debe tener Name exactamente `X-Agent-Key`. |
-| `500 No authentication data defined on node!` | No seleccionaste la credencial en uno de los webhooks tras importar. |
-| Siempre `{"jobs":[]}` | No hay filas con `status` exactamente `pending`, o la tabla no se llama `labelbridge_jobs`. |
-| Error *data table not found* | Crea la tabla con ese nombre en el **mismo proyecto** que el workflow, o elígela en los nodos *Data table*. |
-| La app recibe el mismo trabajo una y otra vez | El ack `received` no llega: revisa URL de ack y clave; en la tabla el `status` debe cambiar. |
-| `400` en el ack | Falta `id` o el `status` no es `received`, `printed` o `failed`; envía `Content-Type: application/json`. |
-| No llegan pedidos de Shopify | Workflow 01/03 inactivo, credencial o *APP Secret Key* incorrectos, falta `read_orders` o el acceso a datos protegidos. Mira *Executions* del workflow. |
-| La etiqueta `order` sale sin dirección | La app no tiene acceso a datos protegidos de clientes (nombre/dirección). |
-| 03: *Shopify no aceptó la compra…* | Validación de Shopify: dirección, paquete/peso, aduanas, sin tarifas o FedEx. El mensaje trae el código. |
-| 03: *no tiene fulfillment orders visibles* | Falta `write_merchant_managed_fulfillment_orders`, o el pedido se acaba de crear: reintenta la ejecución. |
-| 03: el nodo HTTP no ofrece *Shopify Access Token API* | Usa *Generic Credential Type → Header Auth* con Name `X-Shopify-Access-Token` y el token como Value. |
-| 03: la app no puede descargar el PDF/ZPL | Abre la URL del `payload` en un navegador; si exige autenticación, descarga el archivo en n8n y envíalo como `content_base64`. |
-| No veo ejecuciones del 02 | Es intencionado: no guarda las ejecuciones correctas. Cámbialo en *Settings → Save successful production executions* mientras depuras. |
-| 04: *No se encontró la URL de la etiqueta…* | El nodo de la paquetería sigue desactivado, o tu API devuelve la URL en otro campo (añádelo a `CAMPOS`). |
-| 04: *Shopify no guardó la etiqueta…* | Falta `write_orders`, o ya existe una definición `custom.label_url` de un tipo distinto de URL. |
-| 04: la app no imprime | Comprueba que el pedido tiene el metafield y que la app tiene *Etiqueta desde metafield* activado con el mismo namespace y key. |
+| n8n: *Not authorized* / *Bad username or password* | Usuario o contraseña del broker; en HiveMQ, que el rol permita publicar y suscribirse. |
+| n8n: *timeout*, *ECONNREFUSED*, *ENOTFOUND* | Host sin `mqtts://`, puerto `8883` y Protocol **Mqtts**. |
+| Error de certificado | Desactiva **SSL** en la credencial de n8n o deja vacíos sus certificados: con *Mqtts* no hacen falta. |
+| Conexiones que se cortan entre sí | Dos clientes con el mismo **Client ID**: déjalo vacío en n8n y usa un usuario distinto en la app. |
+| La app no recibe nada | `canal` distinto en n8n y en la app. Mira el tema en la ejecución de n8n y escucha `labelbridge/#` con `mosquitto_sub`. |
+| Un trabajo antiguo reaparece | Retenido sin borrar: la app lo borra al guardarlo; bórralo a mano con `-r -n`. La app ignora ids repetidos. |
+| Un pedido se imprime o se compra dos veces | Hay dos caminos activos (p. ej. 01 y 02, o 02 y «Comprar etiqueta» en la app). |
+| El broker rechaza el mensaje | Supera el tamaño máximo (1 MB en EMQX Serverless): usa `url` en vez de `content_base64`. |
+| No llegan pedidos de Shopify | Workflow inactivo, *APP Secret Key* incorrecta, falta `read_orders` o el acceso a datos protegidos. Revisa *Executions*. |
+| La etiqueta `order` sale sin dirección | Falta el acceso a datos protegidos de clientes (nombre y dirección). |
+| 02: *Shopify no aceptó la compra…* | Validación de Shopify: dirección, paquete o peso, aduanas, sin tarifas o FedEx. El mensaje incluye el código. |
+| 02: el nodo HTTP no ofrece *Shopify Access Token API* | *Generic Credential Type → Header Auth* con Name `X-Shopify-Access-Token`. |
+| 03: *No se encontró la URL de la etiqueta…* | El nodo de la paquetería sigue desactivado o la URL viene en otro campo (`CAMPOS`). |
+| 03: *Shopify no guardó la etiqueta…* | Falta `write_orders` o la definición `custom.label_url` existe con otro tipo. |
+| 04 no avisa | Workflow activo, nodo de email activado y con SMTP, y el usuario `n8n` con permiso para suscribirse. |
 
-## 10. Límites y buenas prácticas
+## 10. Seguridad
 
-- **Ejecuciones (n8n Cloud)**: con el 02, cada consulta de la app es una ejecución (cifras en *¿Qué modo usar?*). Revisa el límite de tu plan; en n8n Cloud usa el 04.
-- **Tamaño de la tabla**: n8n limita el espacio total de las Data Tables (por defecto unos 50 MB) y cada trabajo `order` guarda el pedido completo. Borra de vez en cuando las filas `printed` antiguas.
-- **Varios PCs**: todos los agentes ven los mismos pendientes; el primero que confirma `received` se queda el trabajo. Si dos consultan a la vez pueden recibir el mismo; la app de cada PC solo evita duplicados en ese PC.
-- **Seguridad**: trata la Agent Key como una contraseña. Para rotarla, cambia el *Value* de la credencial y la clave en la app.
+- Solo TLS (puerto 8883) y una contraseña distinta para n8n y para cada PC.
+- El 01 envía solo los datos del pedido necesarios para la etiqueta; no publiques pedidos completos.
+- Los mensajes retenidos se guardan en el broker hasta que la app los borra: usa un broker de confianza.
