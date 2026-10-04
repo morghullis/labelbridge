@@ -1,0 +1,101 @@
+# Diagnóstico manual de la actualización automática en Windows real (no publica nada).
+name: Diagnose update
+
+on:
+  workflow_dispatch:
+    inputs:
+      from_version:
+        description: "Versión instalada antes de actualizar"
+        default: "1.2.0"
+      to_version:
+        description: "Versión a la que se actualiza"
+        default: "1.3.0"
+
+permissions:
+  contents: read
+
+jobs:
+  update:
+    runs-on: windows-latest
+    env:
+      QT_QPA_PLATFORM: offscreen
+      GH_TOKEN: ${{ github.token }}
+      FROM_VERSION: ${{ inputs.from_version }}
+      TO_VERSION: ${{ inputs.to_version }}
+      APPKEY: HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{8B5C6F1E-3C2A-4E7B-9C1D-2F4A6B8C0D1E}_is1
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Dependencias del diagnóstico
+        run: pip install -r requirements.txt
+
+      - name: Descargar instaladores
+        shell: pwsh
+        run: |
+          gh release download "v$env:FROM_VERSION" -p "*.exe" -D old
+          gh release download "v$env:TO_VERSION" -p "*.exe" -D new
+          Get-ChildItem old, new
+
+      - name: Instalar la versión anterior (como un usuario)
+        shell: pwsh
+        run: |
+          $setup = (Get-ChildItem old\*.exe)[0].FullName
+          Start-Process $setup -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/LOG=old-install.log' -Wait
+          Start-Sleep 20
+          (Get-ItemProperty $env:APPKEY).DisplayVersion
+          Get-Process LabelBridge -ErrorAction SilentlyContinue | Format-Table Id, Path, StartTime -AutoSize
+          Get-Process LabelBridge -ErrorAction SilentlyContinue | Stop-Process -Force
+          Start-Sleep 3
+
+      - name: "Prueba A: la app se cierra al momento"
+        shell: pwsh
+        run: |
+          $setup = (Get-ChildItem new\*.exe)[0].FullName
+          python devtools/diagnose_update.py $setup 0
+          Start-Sleep 90
+          "Versión instalada: " + (Get-ItemProperty $env:APPKEY).DisplayVersion
+          Get-Process LabelBridge -ErrorAction SilentlyContinue | Format-Table Id, Path, StartTime -AutoSize
+          Get-Process powershell -ErrorAction SilentlyContinue | Format-Table Id, StartTime -AutoSize
+
+      - name: Registro de la app tras la prueba A
+        if: always()
+        shell: pwsh
+        run: |
+          $log = Join-Path $env:LOCALAPPDATA "LabelBridge\logs\labelbridge.log"
+          if (Test-Path $log) { Get-Content $log -Tail 60 } else { "No hay registro" }
+          Get-ChildItem (Join-Path $env:LOCALAPPDATA "LabelBridge") -ErrorAction SilentlyContinue
+
+      - name: "Prueba B: la app tarda 75 s en cerrarse (más que la espera de 60 s)"
+        if: always()
+        shell: pwsh
+        run: |
+          Get-Process LabelBridge -ErrorAction SilentlyContinue | Stop-Process -Force
+          Start-Sleep 3
+          Start-Process (Get-ChildItem old\*.exe)[0].FullName -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait
+          Start-Sleep 15
+          Get-Process LabelBridge -ErrorAction SilentlyContinue | Stop-Process -Force
+          "Antes: " + (Get-ItemProperty $env:APPKEY).DisplayVersion
+          $setup = (Get-ChildItem new\*.exe)[0].FullName
+          python devtools/diagnose_update.py $setup 75
+          Start-Sleep 60
+          "Después: " + (Get-ItemProperty $env:APPKEY).DisplayVersion
+          Get-Process LabelBridge -ErrorAction SilentlyContinue | Format-Table Id, Path, StartTime -AutoSize
+
+      - name: "Prueba C: instalador con la app abierta (registro de Inno Setup)"
+        if: always()
+        shell: pwsh
+        run: |
+          Get-Process LabelBridge -ErrorAction SilentlyContinue | Stop-Process -Force
+          $holder = Start-Process python -ArgumentList 'devtools/diagnose_update.py','--hold','60' -PassThru
+          Start-Sleep 3
+          $setup = (Get-ChildItem new\*.exe)[0].FullName
+          $p = Start-Process $setup -ArgumentList '/SILENT','/SUPPRESSMSGBOXES','/NORESTART','/NOCANCEL','/LOG=busy.log' -PassThru
+          if (-not $p.WaitForExit(45000)) { "El instalador sigue esperando después de 45 s"; $p.Kill() }
+          else { "El instalador terminó con código $($p.ExitCode)" }
+          if (Test-Path busy.log) { Get-Content busy.log -Tail 25 }
+          $holder | Stop-Process -Force -ErrorAction SilentlyContinue
