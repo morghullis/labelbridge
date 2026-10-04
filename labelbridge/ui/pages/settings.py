@@ -7,6 +7,7 @@ from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QCheckBox, QFormLayout, QHBoxLayout, QLineEdit, QPlainTextEdit, QSpinBox
 
 from ... import APP_NAME, __version__
+from ...events import CONFIG_EXTERNAL
 from ...paths import data_dir, logs_dir, output_dir
 from ...system import autostart
 from ...updater import UPDATES_PAGE
@@ -123,6 +124,30 @@ class SettingsPage(Page):
         data.add(layout=row)
         self.add(data)
         self.finish()
+        ctx.bridge.event.connect(self._on_event)
+
+    def _on_event(self, kind: str, data) -> None:
+        if kind == CONFIG_EXTERNAL and data in ("general", "all"):
+            self.load_from_config()
+
+    def load_from_config(self) -> None:
+        """Muestra lo guardado (p. ej. después de que el asistente cambió la configuración)."""
+        g = self.ctx.cfg.data.general
+        lb = self.ctx.cfg.data.labels
+        self.agent.setText(g.agent_name)
+        self.autostart.setChecked(g.start_with_windows)
+        self.minimized.setChecked(g.start_minimized)
+        self.auto_discover.setChecked(g.auto_discover)
+        self.notify_errors.setChecked(g.notify_errors)
+        self.notify_printed.setChecked(g.notify_printed)
+        self.retries.setValue(g.max_retries)
+        self.retention.setValue(g.retention_days)
+        self.auto_update.setChecked(g.auto_update_check)
+        self.store_name.setText(lb.store_name)
+        self.sender.setPlainText(lb.sender_address)
+        self.show_items.setChecked(lb.show_items)
+        self.show_qr.setChecked(lb.show_qr)
+        self.show_price.setChecked(lb.show_price)
 
     def _save(self) -> None:
         g = self.ctx.cfg.data.general

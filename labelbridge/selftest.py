@@ -111,6 +111,81 @@ def run(argv: list[str]) -> int:
         store.close()
         return f"{len(NAV)} pantallas"
 
+    def assistant() -> str:
+        """Una conversación completa con el SDK de Anthropic empaquetado (API simulada, sin red)."""
+        import json
+        import threading
+
+        import anthropic
+        import httpx2
+
+        from . import paths
+        from .assistant.agent import MODEL, Conversation, default_client
+        from .assistant.secrets_guard import SecretsGuard
+        from .assistant.tools import Toolbox
+        from .config import ConfigManager
+        from .events import Events
+        from .jobstore import JobStore
+        from .printing.engine import PrintEngine
+        from .secret_store import ANTHROPIC_API_KEY, SecretStore
+        from .services import Services
+        from .ui.context import AppContext, QtBridge
+
+        cfg = ConfigManager(paths.config_path())
+        cfg.data.local_api.enabled = False
+        secrets = SecretStore(paths.data_dir() / "secrets.json", backend="file")
+        secrets.set(ANTHROPIC_API_KEY, "sk-ant-autoprueba")
+        store = JobStore(paths.db_path(), paths.spool_dir())
+        events = Events()
+        engine = PrintEngine(store, cfg, events)
+        ctx = AppContext(cfg, secrets, store, engine, Services(cfg, secrets, store, engine, events), events, QtBridge(events, cfg))
+
+        class SilentUI:
+            def confirm(self, *_args) -> bool:
+                return False
+
+            def ask_secret(self, *_args):
+                return None
+
+            def open_url(self, _url) -> None:
+                pass
+
+            def copy_text(self, _text) -> None:
+                pass
+
+            def config_changed(self, _section) -> None:
+                pass
+
+        def message(content: list, stop_reason: str) -> dict:
+            return {"id": "msg_autoprueba", "type": "message", "role": "assistant", "model": MODEL, "content": content,
+                    "stop_reason": stop_reason, "stop_sequence": None, "usage": {"input_tokens": 1, "output_tokens": 1}}
+
+        replies = [
+            message([{"type": "thinking", "thinking": "", "signature": "s"},
+                     {"type": "tool_use", "id": "toolu_1", "name": "add_printer",
+                      "input": {"connection": "network", "ip": "127.0.0.1", "alias": "autoprueba"}}], "tool_use"),
+            message([{"type": "text", "text": "Listo."}], "end_turn"),
+        ]
+        sent: list[dict] = []
+
+        def handler(request):
+            sent.append(json.loads(request.content))
+            return httpx2.Response(200, json=replies.pop(0))
+
+        def factory(api_key: str):
+            transport = httpx2.MockTransport(handler)
+            return anthropic.Anthropic(api_key=api_key, max_retries=0, http_client=anthropic.DefaultHttpxClient(transport=transport))
+
+        conversation = Conversation(Toolbox(ctx, SilentUI(), SecretsGuard(secrets)), secrets, client_factory=factory)
+        kinds: list[str] = []
+        conversation.send("hola", lambda kind, _data: kinds.append(kind), threading.Event())
+        assert kinds[-1] == "reply", f"la conversación terminó con {kinds}"
+        assert cfg.find_printer("autoprueba") is not None, "la herramienta no se ejecutó"
+        assert sent[1]["messages"][2]["content"][0]["tool_use_id"] == "toolu_1"
+        default_client("sk-ant-autoprueba").close()  # TLS con el almacén de certificados del sistema
+        store.close()
+        return f"{len(conversation.tools)} herramientas · SDK anthropic {anthropic.__version__}"
+
     def guide_and_updates() -> str:
         from . import updater
         from .paths import resource_path
@@ -125,6 +200,7 @@ def run(argv: list[str]) -> int:
     check("impresión de Windows", windows_printing)
     check("etiqueta → PDF → ZPL", label_pipeline)
     check("interfaz", interface)
+    check("asistente", assistant)
     lines.append("RESULTADO: " + ("OK" if ok else "FALLO"))
     report_path.write_text("\n".join(lines), encoding="utf-8")
     return 0 if ok else 1

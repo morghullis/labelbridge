@@ -115,6 +115,14 @@ mutation LabelBridgeTagsAdd($id: ID!, $tags: [String!]!) {
 """
 
 
+# App de LabelBridge en el Dev Dashboard de Shopify: permisos para leer pedidos y para comprar guías.
+DEV_DASHBOARD_URL = "https://dev.shopify.com/dashboard"
+SCOPES_BASIC = "read_orders"
+SCOPES_LABELS = (
+    "read_orders,write_orders,read_merchant_managed_fulfillment_orders,write_merchant_managed_fulfillment_orders"
+)
+
+
 class ShopifyError(Exception):
     """uncertain=True: no se sabe si Shopify ejecutó la operación (error 5xx, corte a mitad...)."""
 
@@ -135,6 +143,15 @@ def normalize_shop(shop: str) -> str:
     if not re.fullmatch(r"[a-z0-9][a-z0-9\-]*\.myshopify\.com", value):
         raise ShopifyError("Usa el dominio interno de la tienda: mi-tienda.myshopify.com")
     return value
+
+
+def admin_url(shop: str, path: str = "") -> str:
+    """Página del admin de Shopify de la tienda (o el admin genérico si la tienda no es válida)."""
+    try:
+        handle = normalize_shop(shop).split(".")[0]
+    except ShopifyError:
+        return "https://admin.shopify.com"
+    return f"https://admin.shopify.com/store/{handle}" + (f"/{path}" if path else "")
 
 
 def _iso_to_ts(value: str) -> float:

@@ -21,11 +21,12 @@ from PySide6.QtWidgets import (
 
 from ...config import LANGUAGES, MEDIA_PRESETS, PRINTER_KINDS, PrinterProfile
 from ...discovery import DiscoveredPrinter, discover
+from ...printing.hints import looks_like_label_printer, looks_like_zpl, suggest_alias
 from ...printing.outputs import list_system_printers
 from ...system import windows_printers
 from .. import icons
 from ..context import AppContext
-from ..printer_dialog import PrinterDialog, looks_like_label_printer, looks_like_zpl, suggest_alias
+from ..printer_dialog import PrinterDialog
 from ..widgets import Card, Page, button, confirm, error, info, label, run_async
 
 

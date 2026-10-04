@@ -232,7 +232,7 @@ def sketch_dev_dashboard() -> None:
     x = right.left() + 22
     x += 18
     k.text(x, right.top() + 8, "Access scopes", 13, bold=True)
-    scopes = k.field(QRectF(x, right.top() + 46, right.width() - 62, 32), "read_orders")
+    scopes = k.field(QRectF(x, right.top() + 46, right.width() - 62, 32), "read_orders,write_orders,read_merchant_…")
     k.text(x, right.top() + 100, "Protected customer data", 13, bold=True)
     rows = [k.checkbox(x + 4, right.top() + 140 + i * 26, value) for i, value in enumerate(("Name", "Address", "Phone"))]
     release = k.button(QRectF(x, right.top() + 236, 100, 34), "Release", primary=True)
@@ -338,7 +338,7 @@ def demo_context():
     from labelbridge.labels.order import sample_order
     from labelbridge.models import parse_job
     from labelbridge.printing.engine import PrintEngine
-    from labelbridge.secret_store import SHOPIFY_CLIENT_SECRET, SecretStore
+    from labelbridge.secret_store import ANTHROPIC_API_KEY, SHOPIFY_CLIENT_SECRET, SecretStore
     from labelbridge.services import Services
     from labelbridge.ui.context import AppContext, QtBridge
 
@@ -356,9 +356,11 @@ def demo_context():
     cfg.data.labels.sender_address = "2401 NW 7th St\nMiami, FL 33125\n+1 305 555 0123"
     shopify = cfg.data.shopify
     shopify.enabled, shopify.shop, shopify.client_id = True, "pedroyorubajewelry.myshopify.com", "a1b2c3d4e5f6a7b8c9d0e1f2"
+    shopify.buy_shipping_label, shopify.shipping_label_printer = True, "etiquetas"
     cfg.data.mqtt.channel = "pc-bodega"
     secrets = SecretStore(paths.data_dir() / "secrets.json", backend="file")
     secrets.set(SHOPIFY_CLIENT_SECRET, "shpss_ejemplo_no_real")
+    secrets.set(ANTHROPIC_API_KEY, "sk-ant-ejemplo-no-real")
     store = JobStore(paths.db_path(), paths.spool_dir())
     for number in (1004, 1005, 1006):
         job, _ = store.add(parse_job({"id": f"pedido-{number}", "order": {**sample_order(), "name": f"#{number}"}}), "shopify")
@@ -371,6 +373,29 @@ def demo_context():
     services.shopify.state = "ok"
     services.shopify.message = "Conectado a pedroyorubajewelry.myshopify.com · revisado a las 10:24"
     return AppContext(cfg, secrets, store, engine, services, events, QtBridge(events, cfg))
+
+
+def demo_conversation(page) -> None:
+    """Conversación de ejemplo para la captura (no llama a la API)."""
+    from labelbridge.ui.pages.assistant import ActivityRow, bubble
+
+    page._add(
+        bubble(
+            "Tengo una Zebra ZD421 por USB y quiero que se impriman solas las guías de Shopify Shipping de "
+            "pedroyorubajewelry",
+            "user",
+        )
+    )
+    for text in ("Leyendo las impresoras de Windows", "Agregando la impresora", "Configurando la conexión con Shopify"):
+        page._add(ActivityRow(text)).finish(True)
+    page._add(
+        bubble(
+            "Listo: agregué la **Zebra ZD421** como «etiquetas» (ZPL, 4 × 6 in) y conecté "
+            "**pedroyorubajewelry.myshopify.com**.\n\nAhora te abro una ventana segura para pegar el **Client secret** "
+            "de tu app de Shopify.",
+            "assistant",
+        )
+    )
 
 
 def fake_system_printers() -> list[dict]:
@@ -436,7 +461,15 @@ def main() -> None:
     page = window.pages["shopify"]
     pump(300)
     capture(window, [page.enabled, page.shop, [page.client_id, page.client_secret], page.test_btn], "shopify-connect.png")
-    capture(window, [page.print_order, page.buy_label, page.metafield], "shopify-what.png", context=[page.buy_warning])
+    capture(window, [page.buy_label, page.label_printer, page.print_order], "shopify-what.png", context=[page.buy_warning])
+
+    window.resize(1180, 760)
+    window.navigate("assistant")
+    page = window.pages["assistant"]
+    demo_conversation(page)
+    pump(500)
+    capture(window, [window.nav_buttons["assistant"], page.composer, page.secret_btn], "assistant.png", context=[page])
+    window.resize(1180, 1700)
 
     sketch_dev_dashboard()
     sketch_draft_order()

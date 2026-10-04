@@ -2,6 +2,10 @@
 
 LabelBridge habla directo con la **GraphQL Admin API** de Shopify (versión `2026-10`). No necesitas n8n para el caso normal.
 
+La etiqueta que se imprime es la **guía de envío de Shopify Shipping**: LabelBridge la compra por la API para cada pedido pagado y la imprime en tu impresora de etiquetas. Las guías compradas a mano en el admin de Shopify no se pueden descargar por la API, por eso la compra la hace LabelBridge.
+
+> ¿Prefieres no hacerlo a mano? Abre **Asistente** en la app y escríbele tus datos: hace estos pasos por ti, pide los secretos en una ventana segura y te pide confirmación antes de activar la compra de guías.
+
 ## 1. Crear la app en el Dev Dashboard
 
 Desde 2026 Shopify **ya no permite crear apps personalizadas desde el admin** (las que ya existen siguen funcionando). Las apps nuevas se crean en el **Dev Dashboard**:
@@ -12,9 +16,11 @@ Desde 2026 Shopify **ya no permite crear apps personalizadas desde el admin** (l
 
    | Para… | Scopes |
    |---|---|
-   | Leer pedidos (siempre) | `read_orders` |
-   | Comprar etiquetas de Shopify Shipping | `write_orders`, `read_merchant_managed_fulfillment_orders`, `write_merchant_managed_fulfillment_orders` |
+   | Comprar e imprimir las guías de Shopify Shipping (recomendado) | `read_orders`, `write_orders`, `read_merchant_managed_fulfillment_orders`, `write_merchant_managed_fulfillment_orders` |
+   | Solo leer pedidos (etiqueta interna de LabelBridge) | `read_orders` |
    | Agregar un tag al pedido al imprimir | `write_orders` |
+
+   El botón **Copiar permisos** de la guía copia la primera fila completa.
 
 4. **Datos protegidos del cliente**: la etiqueta necesita nombre, dirección y teléfono. En la configuración de la app, en *Protected customer data*, selecciona los datos de clientes y los campos **Name, Address y Phone**. Para apps personalizadas (no publicadas en la App Store) no hace falta revisión de Shopify; en las apps antiguas creadas desde el admin, el acceso a estos campos depende del plan de la tienda. Sin esto, Shopify devuelve la dirección vacía o un error de acceso.
 5. **Release** la versión e **instálala** en tu tienda.
@@ -38,13 +44,14 @@ El secreto y los tokens se guardan en el **Administrador de credenciales de Wind
 
 | Opción | Qué hace | Cuándo usarla |
 |---|---|---|
-| **Etiqueta de pedido de LabelBridge** | Genera una etiqueta 4×6 con remitente, destinatario, productos, código de barras y QR del pedido. | Picking/empaque, o si la paquetería pone su propia guía. **No lleva franqueo.** |
-| **Comprar etiqueta con Shopify Shipping** | Por cada pedido nuevo, pagado y pendiente de envío llama a `shippingLabelPurchase`, espera el resultado y descarga la etiqueta (PDF o ZPL) y, si existe, el formulario de aduana. | Si envías con Shopify Shipping (UPS, USPS, DHL, Canada Post…). **Genera cargos reales.** |
+| **Guía de envío de Shopify Shipping** (recomendado) | Por cada pedido nuevo, pagado y pendiente de envío llama a `shippingLabelPurchase`, espera el resultado y descarga la guía (PDF o ZPL) y, si existe, el formulario de aduana. | La etiqueta con franqueo que va en el paquete (UPS, USPS, DHL, Canada Post…). **Shopify cobra cada guía.** Se activa con confirmación. |
+| **Etiqueta de pedido de LabelBridge** (opcional) | Genera una etiqueta 4×6 con remitente, destinatario, productos, código de barras y QR del pedido. | Picking/empaque, o si la paquetería pone su propia guía. **No lleva franqueo.** Desactivada por defecto desde la versión 1.2.0. |
 | **Etiqueta desde metafield** | Imprime la URL que otro sistema guardó en el metafield del pedido (por defecto `custom.label_url`). Acepta una URL, una lista JSON de URLs o `{"url": "…"}`. | Etiquetas de otra paquetería creadas por n8n (plantilla 03), tu web o un ERP. |
 
 Detalles de la compra automática:
 
-- Usa el **paquete y la tarifa predeterminados** de *Configuración → Envío y entrega* en Shopify. Configúralos antes de activarla.
+- Usa el **paquete y la tarifa predeterminados** de *Configuración → Envío y entrega* en Shopify. Configúralos antes de activarla, junto con la dirección completa de la ubicación de envío y un método de pago para las guías.
+- Si haces un pedido de prueba con la compra activa, se compra una guía real: si no la usas, anúlala desde el pedido en Shopify.
 - Solo compra para *fulfillment orders* en estado `OPEN`/`IN_PROGRESS` con método de envío. **Nunca compra dos veces** para el mismo fulfillment order, aunque reinicies el PC.
 - Tiene un **límite diario** configurable y te avisa si se alcanza.
 - Shopify no permite comprar etiquetas de **FedEx** por API.

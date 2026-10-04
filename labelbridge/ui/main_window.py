@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
@@ -28,10 +30,13 @@ from .pages.n8n import N8nPage
 from .pages.printers import PrintersPage
 from .pages.settings import SettingsPage
 from .pages.shopify import ShopifyPage
-from .widgets import label
+from .widgets import Page, label
+
+log = logging.getLogger(__name__)
 
 NAV = (
     ("guide", "Guía paso a paso", "book"),
+    ("assistant", "Asistente", "chat"),
     ("home", "Inicio", "home"),
     ("printers", "Impresoras", "printer"),
     ("shopify", "Shopify", "shop"),
@@ -41,6 +46,19 @@ NAV = (
     ("settings", "Ajustes", "sliders"),
     ("logs", "Registro", "activity"),
 )
+
+
+def _assistant_page(ctx: AppContext) -> QWidget:
+    """El asistente es opcional: si no carga, el resto de la app sigue funcionando igual."""
+    try:
+        from .pages.assistant import AssistantPage
+
+        return AssistantPage(ctx)
+    except Exception:
+        log.exception("No se pudo cargar el asistente")
+        page = Page("Asistente", "No se pudo cargar el asistente en este equipo. El resto de LabelBridge funciona con normalidad.")
+        page.finish()
+        return page
 
 
 class MainWindow(QMainWindow):
@@ -69,6 +87,7 @@ class MainWindow(QMainWindow):
 
         self.pages = {
             "guide": GuidePage(ctx, self.navigate),
+            "assistant": _assistant_page(ctx),
             "home": DashboardPage(ctx, self.navigate),
             "printers": PrintersPage(ctx),
             "shopify": ShopifyPage(ctx),

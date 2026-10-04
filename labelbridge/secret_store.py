@@ -22,6 +22,7 @@ SHOPIFY_CLIENT_SECRET = "shopify_client_secret"
 SHOPIFY_ACCESS_TOKEN = "shopify_access_token"
 MQTT_PASSWORD = "mqtt_password"
 LOCAL_API_KEY = "local_api_key"
+ANTHROPIC_API_KEY = "anthropic_api_key"  # asistente de configuración (Claude)
 
 
 class SecretStore:

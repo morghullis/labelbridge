@@ -115,7 +115,9 @@ class ShopifySettings:
     only_paid: bool = True
     only_unfulfilled: bool = True
     required_tag: str = ""
-    print_order_label: bool = True
+    # La etiqueta principal es la guía de Shopify Shipping (cuesta dinero: se activa a mano, con confirmación).
+    # La etiqueta de pedido de LabelBridge es opcional y no lleva franqueo.
+    print_order_label: bool = False
     order_label_printer: str = ""  # alias; vacío = predeterminada
     buy_shipping_label: bool = False
     shipping_label_printer: str = ""

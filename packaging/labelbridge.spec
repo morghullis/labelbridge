@@ -5,6 +5,8 @@
 import re
 from pathlib import Path
 
+from PyInstaller.utils.hooks import copy_metadata
+
 ROOT = Path(SPECPATH).parent
 VERSION = re.search(r'__version__ = "([^"]+)"', (ROOT / "labelbridge" / "__init__.py").read_text()).group(1)
 parts = (VERSION.split(".") + ["0", "0", "0"])[:4]
@@ -39,6 +41,10 @@ a = Analysis(
         (str(ROOT / "assets"), "assets"),
         (str(ROOT / "n8n"), "n8n"),
         (str(ROOT / "docs"), "docs"),
+        # El cliente HTTP del SDK de Anthropic lee su versión de los metadatos del paquete al importarse.
+        *copy_metadata("httpx2"),
+        *copy_metadata("httpcore2"),
+        *copy_metadata("anthropic"),
     ],
     hiddenimports=[
         "keyring.backends.Windows",

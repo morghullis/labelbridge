@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...connectors.shopify import ShopifyError, normalize_shop
+from ...events import CONFIG_EXTERNAL
 from ...paths import resource_path
 from ...secret_store import SHOPIFY_ACCESS_TOKEN, SHOPIFY_CLIENT_SECRET
 from ..context import AppContext
@@ -110,23 +111,15 @@ class ShopifyPage(Page):
         grid.setHorizontalSpacing(16)
         grid.setVerticalSpacing(14)
 
-        self.print_order = SwitchRow(
-            "Etiqueta de pedido de LabelBridge",
-            "Dirección, productos y código de barras del pedido (no incluye franqueo de paquetería).",
-            s.print_order_label,
-        )
-        self.order_printer = printer_combo(ctx, s.order_label_printer)
-        grid.addWidget(self.print_order, 0, 0)
-        grid.addWidget(self.order_printer, 0, 1)
-
         self.buy_label = SwitchRow(
-            "Comprar etiqueta de envío con Shopify Shipping e imprimirla",
-            "Usa el paquete y la tarifa predeterminados de tu tienda. Genera cargos reales en tu factura de Shopify.",
+            "Guía de envío de Shopify Shipping (recomendado)",
+            "La etiqueta con franqueo que va en el paquete: LabelBridge la compra con el paquete y la tarifa "
+            "predeterminados de tu tienda y la imprime. Shopify cobra cada guía en tu factura.",
             s.buy_shipping_label,
         )
         self.label_printer = printer_combo(ctx, s.shipping_label_printer)
-        grid.addWidget(self.buy_label, 1, 0)
-        grid.addWidget(self.label_printer, 1, 1)
+        grid.addWidget(self.buy_label, 0, 0)
+        grid.addWidget(self.label_printer, 0, 1)
 
         buy_opts = QHBoxLayout()
         buy_opts.setContentsMargins(56, 0, 0, 0)
@@ -140,15 +133,24 @@ class ShopifyPage(Page):
         self.max_per_day.setValue(s.max_labels_per_day)
         buy_opts.addWidget(self.max_per_day)
         buy_opts.addStretch(1)
-        grid.addLayout(buy_opts, 2, 0, 1, 2)
+        grid.addLayout(buy_opts, 1, 0, 1, 2)
         self.buy_warning = label(
             "⚠ Actívala solo en un equipo y no la combines con la plantilla 02 de n8n (comprarías dos "
-            "etiquetas por pedido). Requiere los permisos write_orders y write_merchant_managed_fulfillment_orders "
-            "y haber aceptado los términos de Shopify Shipping. No disponible para FedEx.",
+            "guías por pedido). Requiere los permisos write_orders y write_merchant_managed_fulfillment_orders, "
+            "Shopify Shipping activo y un paquete predeterminado en Shopify. No disponible para FedEx.",
             "Warning",
             wrap=True,
         )
-        grid.addWidget(self.buy_warning, 3, 0, 1, 2)
+        grid.addWidget(self.buy_warning, 2, 0, 1, 2)
+
+        self.print_order = SwitchRow(
+            "Etiqueta de pedido de LabelBridge (opcional)",
+            "Etiqueta interna sin franqueo: dirección, productos y código del pedido. Útil para empacar.",
+            s.print_order_label,
+        )
+        self.order_printer = printer_combo(ctx, s.order_label_printer)
+        grid.addWidget(self.print_order, 3, 0)
+        grid.addWidget(self.order_printer, 3, 1)
 
         self.metafield = SwitchRow(
             "Etiqueta desde un metafield del pedido (URL de PDF/ZPL)",
@@ -240,6 +242,40 @@ class ShopifyPage(Page):
     def _on_event(self, kind: str, data) -> None:
         if kind == "connector" and isinstance(data, dict) and data.get("name") == "shopify":
             self.refresh()
+        elif kind == CONFIG_EXTERNAL and data in ("shopify", "all"):
+            self.load_from_config()
+
+    def load_from_config(self) -> None:
+        """Muestra lo guardado (p. ej. después de que el asistente cambió la configuración)."""
+        s = self.ctx.cfg.data.shopify
+        self.enabled.setChecked(s.enabled)
+        self.shop.setText(s.shop)
+        (self.mode_token if s.auth_mode == "token" else self.mode_cc).setChecked(True)
+        self.client_id.setText(s.client_id)
+        self.client_secret.setText(self.ctx.secrets.get(SHOPIFY_CLIENT_SECRET))
+        self.token.setText(self.ctx.secrets.get(SHOPIFY_ACCESS_TOKEN))
+        self.api_version.setCurrentText(s.api_version)
+        self.buy_label.setChecked(s.buy_shipping_label)
+        self.notify_customer.setChecked(s.notify_customer)
+        self.max_per_day.setValue(s.max_labels_per_day)
+        self.print_order.setChecked(s.print_order_label)
+        self.metafield.setChecked(s.metafield_label)
+        self.mf_namespace.setText(s.metafield_namespace)
+        self.mf_key.setText(s.metafield_key)
+        for combo, alias in (
+            (self.label_printer, s.shipping_label_printer),
+            (self.order_printer, s.order_label_printer),
+            (self.metafield_printer, s.metafield_printer),
+        ):
+            if alias and combo.findData(alias) < 0:
+                combo.addItem(alias, alias)
+            combo.setCurrentIndex(max(0, combo.findData(alias)))
+        self.only_paid.setChecked(s.only_paid)
+        self.only_unfulfilled.setChecked(s.only_unfulfilled)
+        self.required_tag.setText(s.required_tag)
+        self.tag_after.setText(s.tag_after_print)
+        self.poll.setValue(s.poll_seconds)
+        self.refresh()
 
     def _on_config(self, section: str) -> None:
         if section in ("printers", "all"):

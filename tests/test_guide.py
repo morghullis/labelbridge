@@ -38,6 +38,8 @@ def test_guide_progress_follows_real_state(core):
     page._run_action("ack:what", page.cards[0].toggle)
     job, _ = core.store.add(parse_job({"id": "pedido-1", "content": "^XA^XZ"}), "shopify")
     core.store.set_done(job["id"], "archivo")
+    assert progress(ctx)[0] == 6  # «Entendido» no basta: no hay nada elegido para imprimir
+    s.buy_shipping_label = True  # la guía de Shopify Shipping
     assert progress(ctx)[0] == 7
 
     page._run_action("ack:daily", page.cards[0].toggle)

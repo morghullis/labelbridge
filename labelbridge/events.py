@@ -15,6 +15,7 @@ JOB = "job"  # dict del trabajo (creado/actualizado)
 CONNECTOR = "connector"  # {"name", "state", "message"}
 NOTIFY = "notify"  # {"title", "message", "level"}
 PAUSED = "paused"  # bool
+CONFIG_EXTERNAL = "config_external"  # sección que cambió el asistente: las pantallas recargan sus campos
 
 
 class Events:

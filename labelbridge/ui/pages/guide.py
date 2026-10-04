@@ -22,19 +22,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ...connectors.shopify import ShopifyError, normalize_shop
-from ...secret_store import SHOPIFY_ACCESS_TOKEN, SHOPIFY_CLIENT_SECRET
+from ...connectors.shopify import DEV_DASHBOARD_URL, SCOPES_BASIC, SCOPES_LABELS, ShopifyError, admin_url
+from ...secret_store import ANTHROPIC_API_KEY, SHOPIFY_ACCESS_TOKEN, SHOPIFY_CLIENT_SECRET
 from ...updater import UPDATES_PAGE
 from ..actions import enqueue_test_label
 from ..context import AppContext
 from ..widgets import Card, Page, Pill, button, copy_to_clipboard, label
-
-DEV_DASHBOARD_URL = "https://dev.shopify.com/dashboard"
-SCOPES_BASIC = "read_orders"
-SCOPES_LABELS = (
-    "read_orders,write_orders,read_merchant_managed_fulfillment_orders,write_merchant_managed_fulfillment_orders"
-)
-
 
 @dataclass
 class Step:
@@ -107,14 +100,32 @@ def _n8n(ctx: AppContext) -> bool:
 
 
 def admin_draft_order_url(ctx: AppContext) -> str:
-    try:
-        handle = normalize_shop(ctx.cfg.data.shopify.shop).split(".")[0]
-    except ShopifyError:
-        return "https://admin.shopify.com"
-    return f"https://admin.shopify.com/store/{handle}/draft_orders/new"
+    return admin_url(ctx.cfg.data.shopify.shop, "draft_orders/new")
+
+
+def _assistant_ready(ctx: AppContext) -> bool:
+    return bool(ctx.secrets.get(ANTHROPIC_API_KEY))
 
 
 STEPS: list[Step] = [
+    Step(
+        "assistant",
+        "¿Prefieres conversar? El asistente lo configura por ti",
+        "Escríbele tus datos (impresora, tienda…) y él hace los pasos de esta guía. Opcional.",
+        "<ol>"
+        "<li>Abre ① <b>Asistente</b> en el menú de la izquierda. La primera vez pega una <b>clave de API de "
+        "Anthropic</b> (platform.claude.com → API Keys) y pulsa <b>Guardar y probar</b>. Se paga por uso: configurar "
+        "todo suele costar menos de un dólar.</li>"
+        "<li>② Escríbele con tus palabras, por ejemplo: <i>«Tengo una Zebra por USB y quiero imprimir las guías de "
+        "Shopify Shipping de pedroyorubajewelry»</i>. Él agrega la impresora, conecta la tienda y te dice qué falta.</li>"
+        "<li>Las claves se piden en una ventana segura (o con ③ <b>Dato secreto</b>) y se quedan en este PC. Antes de "
+        "comprar guías siempre te pide confirmación.</li>"
+        "</ol>",
+        _assistant_ready,
+        [("Abrir el asistente", "chat", "nav:assistant")],
+        optional=True,
+        images=[("assistant.png", "Pantalla Asistente")],
+    ),
     Step(
         "printer",
         "Conecta tu impresora de etiquetas",
@@ -169,8 +180,9 @@ STEPS: list[Step] = [
         "<ol>"
         "<li>Pulsa <b>Abrir Dev Dashboard</b> e inicia sesión con la cuenta dueña de la tienda.</li>"
         "<li>② <b>Apps → Create app → Start from Dev Dashboard</b>. Nombre: <code>LabelBridge</code>.</li>"
-        "<li>③ En <b>Access scopes</b> pega los permisos con <b>Copiar permisos</b> (<code>read_orders</code>). Si vas a "
-        "comprar guías con Shopify Shipping usa <b>Copiar permisos + guías</b>.</li>"
+        "<li>③ En <b>Access scopes</b> pega los permisos con <b>Copiar permisos</b>: incluyen los de comprar las guías "
+        "de Shopify Shipping. (Si solo vas a imprimir la etiqueta interna basta <b>Solo lectura</b>: "
+        "<code>read_orders</code>).</li>"
         "<li>④ En <b>Protected customer data</b> marca <b>Name</b>, <b>Address</b> y <b>Phone</b>: la etiqueta "
         "necesita nombre, dirección y teléfono.</li>"
         "<li>⑤ <b>Release</b> (publica la versión) e <b>Install app</b> en tu tienda.</li>"
@@ -182,8 +194,8 @@ STEPS: list[Step] = [
         _shopify_credentials,
         [
             ("Abrir Dev Dashboard", "link", f"url:{DEV_DASHBOARD_URL}"),
-            ("Copiar permisos", "copy", f"copy:{SCOPES_BASIC}"),
-            ("Copiar permisos + guías", "copy", f"copy:{SCOPES_LABELS}"),
+            ("Copiar permisos", "copy", f"copy:{SCOPES_LABELS}"),
+            ("Solo lectura", "copy", f"copy:{SCOPES_BASIC}"),
             ("Ir a Shopify", "shop", "nav:shopify"),
         ],
         images=[("devdashboard.png", "Dev Dashboard de Shopify (ilustración)")],
@@ -207,18 +219,19 @@ STEPS: list[Step] = [
     ),
     Step(
         "what",
-        "Elige qué se imprime en cada pedido",
-        "Etiqueta de pedido, guía de envío con franqueo, o ambas.",
-        "<ul>"
-        "<li>① <b>Etiqueta de pedido de LabelBridge</b> (activada por defecto): dirección, productos, código de barras "
-        "y QR. Sirve para empacar e identificar el paquete. <b>No lleva franqueo.</b></li>"
-        "<li>② <b>Comprar etiqueta con Shopify Shipping</b>: compra la guía y la imprime. <b>Shopify cobra cada "
-        "guía.</b> Antes configura en Shopify el paquete y la tarifa predeterminados, y actívala en un solo PC.</li>"
-        "<li>③ <b>Etiqueta desde un metafield</b>: para guías de otra paquetería que n8n o tu web guardan en el "
-        "pedido.</li>"
-        "</ul>"
-        "<p>A la derecha de cada opción eliges la impresora. Pulsa <b>Guardar cambios</b> y después <b>Entendido</b> "
-        "aquí.</p>",
+        "Activa la guía de envío de Shopify Shipping",
+        "La etiqueta con franqueo que va en el paquete: LabelBridge la compra y la imprime sola.",
+        "<ol>"
+        "<li>En Shopify deja listo Shopify Shipping (<b>Configuración → Envío y entrega</b>): un <b>paquete "
+        "predeterminado</b>, la dirección de envío completa y un método de pago para las guías.</li>"
+        "<li>En la pantalla <b>Shopify</b> de LabelBridge activa ① <b>Guía de envío de Shopify Shipping</b> y elige a "
+        "la derecha ② la impresora de etiquetas. <b>Shopify cobra cada guía</b>; actívala en un solo PC.</li>"
+        "<li>③ La <b>Etiqueta de pedido de LabelBridge</b> es opcional (sin franqueo, para empacar). Déjala apagada si "
+        "solo quieres la guía, así no gastas dos etiquetas por pedido.</li>"
+        "<li>Pulsa <b>Guardar cambios</b>.</li>"
+        "</ol>"
+        "<p>¿Envías con otra paquetería? Usa la etiqueta desde un metafield o n8n, o la etiqueta de pedido, y pulsa "
+        "<b>Entendido</b>.</p>",
         _what_to_print,
         [("Ir a Shopify", "shop", "nav:shopify"), ("Entendido", "check", "ack:what")],
         images=[("shopify-what.png", "Pantalla Shopify → Qué imprimir en cada pedido")],
@@ -231,8 +244,9 @@ STEPS: list[Step] = [
         "<li>Pulsa <b>Crear pedido de prueba</b>: se abre ① <i>Pedidos preliminares</i> en Shopify.</li>"
         "<li>② Agrega un producto y un cliente con dirección de envío.</li>"
         "<li>③ Pulsa <b>Cobrar → Marcar como pagado</b> (no se le cobra a nadie).</li>"
-        "<li>En menos de un minuto sale la etiqueta y aparece en <b>Historial</b> con origen <i>Shopify</i>. Después "
-        "cancela o archiva ese pedido en Shopify.</li>"
+        "<li>En menos de un minuto sale la etiqueta y aparece en <b>Historial</b> con origen <i>Shopify</i>. Con la "
+        "compra de guías activa, ese pedido compra una guía real: si no la usas, anúlala desde el pedido en Shopify. "
+        "Después cancela o archiva el pedido.</li>"
         "</ol>",
         _test_order,
         [("Crear pedido de prueba", "link", "url:draft"), ("Ver historial", "clock", "nav:history")],

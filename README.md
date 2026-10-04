@@ -17,12 +17,13 @@ flowchart LR
 
 ## Qué hace
 
+- **Asistente con IA**: escribes tus datos con tus palabras («tengo una Zebra por USB y mi tienda es pedroyorubajewelry») y el asistente (Claude Opus 5.5 de Anthropic) configura la app con las mismas acciones de las pantallas: agrega la impresora, conecta la tienda, prueba la conexión y activa la impresión de las guías. Los secretos se piden en una ventana segura y nunca se envían al modelo; comprar guías siempre pide confirmación.
 - **Guía paso a paso integrada**: al instalar, la app abre una guía que lleva de la mano por toda la configuración (impresora, prueba, remitente, app de Shopify, pedido de prueba) y marca cada paso solo cuando comprueba que quedó listo.
 - **Impresoras**: lista las instaladas en Windows y **busca en la red** (puertos 9100/631/515 y Bonjour) automáticamente cada vez que el PC se conecta a una red Wi‑Fi/LAN, avisando si aparece una impresora nueva. Imprime por driver, por **IP directa sin driver** (RAW 9100 o IPP) y puede **instalar en Windows** una impresora de red encontrada.
 - **Formatos**: PDF, PNG/JPG, **ZPL**, RAW (EPL/TSPL/ESC‑POS). Convierte PDF a ZPL para cualquier Zebra, **rota** etiquetas apaisadas y **recorta** una 4×6 dentro de una hoja carta/A4.
 - **Shopify directo** (sin n8n):
-  - etiqueta de pedido generada (dirección, productos, código de barras Code 128 y QR al pedido);
-  - **compra de etiquetas con Shopify Shipping** por API (`shippingLabelPurchase`, nueva en 2026‑07) e impresión del PDF/ZPL, con límite diario y sin compras duplicadas;
+  - **guía de envío de Shopify Shipping** (la etiqueta principal): la compra por API (`shippingLabelPurchase`, nueva en 2026‑07) para cada pedido pagado y la imprime en PDF/ZPL, con límite diario y sin compras duplicadas;
+  - etiqueta interna de pedido opcional (dirección, productos, código de barras Code 128 y QR al pedido, sin franqueo);
   - impresión de la URL guardada en un **metafield** del pedido (etiquetas de cualquier paquetería creadas por n8n o tu web).
 - **n8n por eventos**: n8n se ejecuta **solo cuando ocurre algo** (pedido pagado) y envía la etiqueta al PC al instante por un canal MQTT cifrado. Si el PC está apagado, la etiqueta espera y se imprime al encenderlo. 1 ejecución por pedido, sin consultas periódicas.
 - **API local** HTTP con clave, para n8n en tu red, tu web, scripts o un ERP.
@@ -128,6 +129,7 @@ labelbridge/
   printing/            motor: driver, RAW 9100, IPP, ZPL, PDF, código de barras
   labels/              etiqueta de pedido (Qt y ZPL nativo)
   connectors/          API local, n8n y Shopify
+  assistant/           asistente: herramientas, conversación con Claude y filtro de secretos
   system/              inicio con Windows, instancia única, instalar impresoras
   ui/                  interfaz (PySide6)
 n8n/                   plantillas de flujos + guía
@@ -141,6 +143,7 @@ Los datos de la app (configuración, cola, registros) se guardan en `%LOCALAPPDA
 ## Seguridad
 
 - Client secret, tokens y claves en el **Administrador de credenciales de Windows** (Llavero en macOS), nunca en `config.json`.
+- Asistente: lo que parece una clave en el chat (`shpss_…`, `shpat_…`, `sk-ant-…` o lo que va tras «contraseña», «secret», «token»…) se guarda en este PC o se aparta antes de enviar el mensaje; el modelo solo ve una referencia. Activar la compra de guías, reprocesar pedidos con compra o eliminar una impresora siempre abre una ventana de confirmación fuera del chat.
 - La API local escucha solo en `127.0.0.1` salvo que actives el acceso desde la red, y siempre exige clave (comparación en tiempo constante).
 - IPPS: el certificado de la impresora se fija en el primer uso y se rechaza si cambia.
 - Todas las conexiones salen del PC (HTTPS con Shopify, MQTT con TLS con el broker): no hay que abrir puertos.

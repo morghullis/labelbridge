@@ -8,6 +8,7 @@ from PySide6.QtWidgets import QCheckBox, QFormLayout, QHBoxLayout, QLineEdit, QS
 
 from ...config import slugify
 from ...connectors.mqtt import topics
+from ...events import CONFIG_EXTERNAL
 from ...paths import resource_path
 from ...secret_store import MQTT_PASSWORD
 from ..context import AppContext
@@ -131,6 +132,20 @@ class N8nPage(Page):
     def _on_event(self, kind: str, data) -> None:
         if kind == "connector" and isinstance(data, dict) and data.get("name") == "mqtt":
             self.refresh()
+        elif kind == CONFIG_EXTERNAL and data in ("mqtt", "all"):
+            self.load_from_config()
+
+    def load_from_config(self) -> None:
+        """Muestra lo guardado (p. ej. después de que el asistente cambió la configuración)."""
+        s = self.ctx.cfg.data.mqtt
+        self.enabled.setChecked(s.enabled)
+        self.host.setText(s.host)
+        self.port.setValue(s.port)
+        self.tls.setChecked(s.tls)
+        self.username.setText(s.username)
+        self.password.setText(self.ctx.secrets.get(MQTT_PASSWORD))
+        self.channel.setText(s.channel)
+        self.refresh()
 
     def refresh(self) -> None:
         svc = self.ctx.services.mqtt

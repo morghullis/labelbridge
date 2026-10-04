@@ -73,6 +73,11 @@ QPushButton[variant="danger"] {{ color: #B91C1C; border-color: #FCA5A5; }}
 QPushButton[variant="danger"]:hover {{ background: #FEF2F2; }}
 QPushButton[variant="ghost"] {{ border: none; background: transparent; padding: 6px 8px; }}
 QPushButton[variant="ghost"]:hover {{ background: #F1F5F9; }}
+QPushButton[variant="chip"] {{
+    background: #EEF2FF; color: #3730A3; border: 1px solid #C7D2FE; border-radius: 12px; padding: 6px 13px;
+}}
+QPushButton[variant="chip"]:hover {{ background: #E0E7FF; border-color: #A5B4FC; }}
+QPushButton[variant="chip"]:disabled {{ color: #94A3B8; background: #F8FAFC; border-color: {BORDER}; }}
 
 QLineEdit, QSpinBox, QComboBox, QPlainTextEdit, QTextEdit {{
     background: white; color: {TEXT}; border: 1px solid #CBD5E1; border-radius: 8px;
@@ -112,6 +117,10 @@ QTabBar::tab:selected {{ color: {ACCENT}; border-bottom: 2px solid {ACCENT}; }}
 QProgressBar {{ background: #E2E8F0; border: none; border-radius: 4px; height: 8px; text-align: center; color: transparent; }}
 QProgressBar::chunk {{ background: {ACCENT}; border-radius: 4px; }}
 QScrollArea {{ border: none; background: transparent; }}
+QFrame#ChatPanel {{ background: white; border: 1px solid {BORDER}; border-radius: 14px; }}
+QWidget#ChatArea {{ background: white; }}
+QFrame#Composer {{ background: white; border: 1px solid #CBD5E1; border-radius: 14px; }}
+QFrame#Composer QPlainTextEdit {{ border: none; background: transparent; padding: 4px 2px; font-size: 14px; }}
 QScrollBar:vertical {{ background: transparent; width: 10px; margin: 2px; }}
 QScrollBar::handle:vertical {{ background: #CBD5E1; border-radius: 4px; min-height: 30px; }}
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
