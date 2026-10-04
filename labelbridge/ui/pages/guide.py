@@ -22,8 +22,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ...assistant.providers import resolve
 from ...connectors.shopify import DEV_DASHBOARD_URL, SCOPES_BASIC, SCOPES_LABELS, ShopifyError, admin_url
-from ...secret_store import ANTHROPIC_API_KEY, SHOPIFY_ACCESS_TOKEN, SHOPIFY_CLIENT_SECRET
+from ...secret_store import SHOPIFY_ACCESS_TOKEN, SHOPIFY_CLIENT_SECRET
 from ...updater import UPDATES_PAGE
 from ..actions import enqueue_test_label
 from ..context import AppContext
@@ -104,7 +105,8 @@ def admin_draft_order_url(ctx: AppContext) -> str:
 
 
 def _assistant_ready(ctx: AppContext) -> bool:
-    return bool(ctx.secrets.get(ANTHROPIC_API_KEY))
+    endpoint = resolve(ctx.cfg.data.assistant)
+    return not endpoint.needs_key or bool(ctx.secrets.get(endpoint.key_name))
 
 
 STEPS: list[Step] = [
@@ -113,9 +115,10 @@ STEPS: list[Step] = [
         "¿Prefieres conversar? El asistente lo configura por ti",
         "Escríbele tus datos (impresora, tienda…) y él hace los pasos de esta guía. Opcional.",
         "<ol>"
-        "<li>Abre ① <b>Asistente</b> en el menú de la izquierda. La primera vez pega una <b>clave de API de "
-        "Anthropic</b> (platform.claude.com → API Keys) y pulsa <b>Guardar y probar</b>. Se paga por uso: configurar "
-        "todo suele costar menos de un dólar.</li>"
+        "<li>Abre ① <b>Asistente</b> en el menú de la izquierda. La primera vez, en <b>Conecta tu IA</b>, elige tu "
+        "proveedor (<b>Claude, ChatGPT de OpenAI, Gemini</b>, otro compatible o un modelo en tu equipo con Ollama), "
+        "pega tu <b>clave de API</b> y pulsa <b>Guardar y probar</b> (primera captura). Se paga por uso a tu "
+        "proveedor: configurar todo suele costar menos de un dólar.</li>"
         "<li>② Escríbele con tus palabras, por ejemplo: <i>«Tengo una Zebra por USB y quiero imprimir las guías de "
         "Shopify Shipping de mi tienda»</i>. Él agrega la impresora, conecta la tienda y te dice qué falta.</li>"
         "<li>Antes de cada cambio te pide permiso. Las claves se piden en una ventana segura (o con ③ <b>Dato "
@@ -124,7 +127,7 @@ STEPS: list[Step] = [
         _assistant_ready,
         [("Abrir el asistente", "chat", "nav:assistant")],
         optional=True,
-        images=[("assistant.png", "Pantalla Asistente")],
+        images=[("assistant-connect.png", "Asistente → Conecta tu IA"), ("assistant.png", "Pantalla Asistente")],
     ),
     Step(
         "printer",

@@ -68,7 +68,8 @@ Si algo no se imprimió: diagnose_setup y get_recent_jobs(only_errors=true); rep
 - Secretos: nunca pidas que los escriban en el chat; usa ask_user_for_secret (ventana segura). Si aun así los \
 escriben, la app los aparta antes de que los veas: verás «[🔒 dato guardado de forma segura en este PC: …]» (ya \
 está guardado) o una referencia [SECRETO_n] que guardas con save_secret. Nunca repitas ni vuelvas a pedir un \
-secreto guardado.
+secreto guardado. Las claves de la IA de este asistente (Anthropic, OpenAI, Gemini, Mistral…) no se guardan con \
+save_secret: dile al usuario que las ponga en **Conectar IA**, arriba en esta pantalla.
 - Dinero: activa la compra de guías, o reprocesa pedidos con la compra activa, solo si el usuario lo pidió \
 claramente; la app le pide confirmación aparte.
 - Ahorra pasos y tokens: llama a la vez a las herramientas que no dependan entre sí, no repitas get_status si nada \

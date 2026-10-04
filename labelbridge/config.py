@@ -176,22 +176,24 @@ class SecuritySettings:
     max_message_mb: int = 30  # tamaño máximo de un mensaje de n8n (MQTT)
 
 
-ASSISTANT_MODELS = {
-    "claude-opus-5-5": "Claude Opus 5.5 · el más preciso",
-    "claude-sonnet-5-5": "Claude Sonnet 5.5 · más económico",
-}
 ASSISTANT_EFFORTS = {"low": "Rápido (menos tokens)", "medium": "Equilibrado", "high": "Profundo (más tokens)"}
 
 
 @dataclass
 class AssistantSettings:
-    """Asistente de configuración (Ajustes → Asistente)."""
+    """Asistente de configuración (Ajustes → Asistente). Funciona con cualquier proveedor de IA: los límites y
+    permisos de abajo se aplican igual a todos."""
 
     enabled: bool = True
+    provider: str = "anthropic"  # ver assistant/providers/catalog.py
     model: str = "claude-opus-5-5"
+    base_url: str = ""  # "" = la dirección oficial del proveedor
     # low | medium | high: cuánto razona (y cuántos tokens gasta). Con las pruebas reales (devtools/assistant_eval.py)
     # «low» acertó igual que «medium» con ~25 % menos tokens.
     effort: str = "low"
+    # USD por millón de tokens para el límite diario; negativo = automático (precio público del modelo).
+    price_input: float = -1.0
+    price_output: float = -1.0
     approval: str = "changes"  # changes: pide permiso para cualquier cambio · critical: solo compras y borrados
     daily_budget_usd: float = 2.0  # gasto estimado máximo por día (0 = sin límite)
     messages_per_hour: int = 40

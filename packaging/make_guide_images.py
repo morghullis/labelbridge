@@ -469,6 +469,11 @@ def main() -> None:
     demo_conversation(page)
     pump(500)
     capture(window, [window.nav_buttons["assistant"], page.composer, page.secret_btn], "assistant.png", context=[page])
+    page.show_connect()
+    page.provider_combo.setCurrentIndex(page.provider_combo.findData("openai"))
+    pump(300)
+    capture(window, [page.provider_combo, page.key_field, page.key_save], "assistant-connect.png",
+            context=[page.key_card])
     window.resize(1180, 1700)
 
     sketch_dev_dashboard()

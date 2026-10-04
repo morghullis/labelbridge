@@ -1,123 +1,114 @@
-"""Conversación con Claude: el modelo pide herramientas, la app las ejecuta y le devuelve el resultado.
+"""Conversación con el modelo de IA elegido: el modelo pide herramientas, la app las ejecuta y le devuelve el resultado.
 
-Se ejecuta en un hilo de trabajo (nunca en el de la interfaz). El historial solo crece al final:
-el prompt del sistema y las herramientas no cambian, y lo ya enviado no se modifica, así el prefijo
-se reutiliza de la caché y los bloques de razonamiento del modelo siguen siendo válidos.
+Funciona igual con cualquier proveedor (Claude, OpenAI, Gemini o una API compatible con OpenAI): los límites, los
+permisos y el filtro de secretos están aquí, no en los adaptadores. Se ejecuta en un hilo de trabajo (nunca en el
+de la interfaz). El historial solo crece al final: el prompt del sistema y las herramientas no cambian y lo ya
+enviado no se modifica, así el prefijo se reutiliza de la caché del proveedor y el razonamiento sigue siendo válido.
 """
 
 from __future__ import annotations
 
 import logging
 import threading
+import uuid
 from typing import Any, Callable
 
-import anthropic
-from anthropic.types.beta import BetaTextBlock
-
-from ..config import ASSISTANT_EFFORTS, ASSISTANT_MODELS, AssistantSettings
-from ..secret_store import ANTHROPIC_API_KEY
+from ..config import AssistantSettings
 from .permissions import ToolPermissions
+from .pricing import cost_of, price_for
 from .prompt import SYSTEM_PROMPT
+from .providers import Endpoint, Entry, ProviderError, Reply, ToolResult, UserText, connect, resolve
 from .tools import Toolbox
 from .usage import UsageMeter
 
 log = logging.getLogger(__name__)
 
 DEFAULTS = AssistantSettings()
-MAX_TOKENS = 16000  # incluye el razonamiento del modelo
 MAX_STEPS = 24  # llamadas al modelo por cada mensaje del usuario
-# Si un filtro de seguridad rechaza una petición legítima, la API la repite con otro modelo recomendado.
-FALLBACK_BETA = "server-side-fallback-2026-07-01"
-API_KEYS_URL = "https://platform.claude.com/settings/keys"
-BILLING_URL = "https://platform.claude.com/settings/billing"
+UNANSWERED = "(Mensaje anterior sin respuesta) "
 
 Emit = Callable[[str, dict], None]
+Connector = Callable[..., Any]
 
 
 class AssistantError(Exception):
     """Problema que se muestra tal cual en el chat."""
 
 
-def model_name(model: str) -> str:
-    return ASSISTANT_MODELS.get(model, model).split(" · ")[0]
-
-
-def chosen_model(settings: AssistantSettings) -> str:
-    return settings.model if settings.model in ASSISTANT_MODELS else DEFAULTS.model
-
-
-def chosen_effort(settings: AssistantSettings) -> str:
-    return settings.effort if settings.effort in ASSISTANT_EFFORTS else DEFAULTS.effort
-
-
-def friendly_error(exc: BaseException, model: str = DEFAULTS.model) -> str:
+def friendly_error(exc: BaseException, endpoint: Endpoint | None = None) -> str:
     if isinstance(exc, AssistantError):
         return str(exc)
-    if isinstance(exc, anthropic.AuthenticationError):
-        return "La clave de API del asistente no es válida o fue revocada. Cámbiala con el botón «Clave de API»."
-    if isinstance(exc, anthropic.PermissionDeniedError):
-        return f"Tu clave de API no tiene permiso para usar {model_name(model)}. Revisa tu cuenta en platform.claude.com."
-    if isinstance(exc, anthropic.NotFoundError):
-        return f"{model_name(model)} no está disponible para tu cuenta de Anthropic."
-    if isinstance(exc, anthropic.RateLimitError):
-        return "Tu cuenta de Anthropic llegó a su límite de uso por ahora. Espera un minuto y vuelve a intentarlo."
-    if isinstance(exc, anthropic.APIStatusError):
-        if exc.status_code == 402:
-            return "Tu cuenta de Anthropic no tiene saldo. Agrega créditos en platform.claude.com → Billing."
-        if exc.status_code >= 500:
-            return "El servicio de Claude no responde ahora mismo (está saturado). Inténtalo de nuevo en un minuto."
-        if exc.status_code == 400:
-            return f"La solicitud no fue aceptada ({exc.message}). Empieza una conversación nueva."
-        return f"Error de la API de Claude ({exc.status_code}): {exc.message}"
-    if isinstance(exc, anthropic.APIConnectionError):
-        return "No hay conexión con el servicio de Claude (api.anthropic.com). Revisa internet o el firewall."
-    return f"Error inesperado: {exc}"
-
-
-def default_client(api_key: str) -> anthropic.Anthropic:
-    return anthropic.Anthropic(api_key=api_key, max_retries=2, timeout=anthropic.Timeout(600.0, connect=15.0))
-
-
-def validate_key(api_key: str, client_factory: Callable[[str], Any] = default_client, model: str = DEFAULTS.model) -> str:
-    """Comprueba la clave sin gastar tokens. Devuelve el nombre del modelo."""
-    info = client_factory(api_key).models.retrieve(model)
-    return getattr(info, "display_name", "") or model_name(model)
-
-
-def _kept_after_fallback(content: list) -> list:
-    """Tras un cambio de modelo a mitad de respuesta, lo anterior al último bloque «fallback» no se reenvía."""
-    last = max((i for i, block in enumerate(content) if block.type == "fallback"), default=-1)
-    if last < 0:
-        return list(content)
-    dropped = {"thinking", "redacted_thinking", "tool_use", "server_tool_use"}
-    return [block for i, block in enumerate(content) if i > last or block.type not in dropped]
+    if not isinstance(exc, ProviderError):
+        return f"Error inesperado: {exc}"
+    name = endpoint.provider.short if endpoint else "el proveedor de IA"
+    model = endpoint.provider.model_label(endpoint.model) if endpoint else "el modelo"
+    where = "Asistente → Conectar IA"
+    detail = " ".join(exc.detail.split())[:240]
+    local = bool(endpoint and endpoint.provider.local)
+    messages = {
+        "auth": f"La clave de API de {name} no es válida o fue revocada. Cámbiala en {where}.",
+        "permission": f"Tu clave de {name} no tiene permiso para usar {model}. Revisa tu cuenta o elige otro modelo.",
+        "not_found": f"{model} no existe o no está disponible en tu cuenta de {name}. Elige otro modelo en Ajustes → "
+        "Asistente (o revisa la dirección del servidor).",
+        "quota": f"Tu cuenta de {name} no tiene saldo o agotó su cuota. Revisa la facturación de tu cuenta.",
+        "rate_limit": f"Tu cuenta de {name} llegó a su límite de uso por ahora. Espera un minuto y vuelve a intentarlo.",
+        "overloaded": f"El servicio de {name} no responde ahora mismo (está saturado). Inténtalo de nuevo en un minuto.",
+        "too_large": "La conversación es demasiado larga para este modelo. Pulsa «Nueva conversación».",
+        "no_tools": f"{model} no puede usar herramientas (function calling) y el asistente las necesita. Elige otro "
+        "modelo en Ajustes → Asistente.",
+        "network": (
+            f"No se pudo conectar con {name} en este PC. ¿Está abierto y con el servidor activo?"
+            if local
+            else f"No hay conexión con {name}. Revisa internet o el firewall."
+        ),
+        "timeout": f"{name} tardó demasiado en responder. Inténtalo de nuevo.",
+        "redirect": f"La dirección de {name} redirige a otro servidor. Revisa la dirección en Ajustes → Asistente.",
+        "policy": f"La dirección del servidor no está permitida: {detail}",
+        "invalid_response": f"{name} respondió algo que no se entiende ({detail or 'sin detalles'}).",
+    }
+    if exc.kind == "bad_request":
+        return f"{name} no aceptó la solicitud ({detail or 'sin detalles'}). Empieza una conversación nueva."
+    return messages.get(exc.kind, f"Error de {name}: {detail or exc.kind}")
 
 
 class Conversation:
-    """Una conversación. El modelo y el nivel de razonamiento se fijan al empezarla (cambiarlos a mitad
-    invalidaría la caché del prompt); los límites se leen de Ajustes en cada mensaje."""
+    """Una conversación. El proveedor, el modelo y el nivel de razonamiento se fijan con el primer mensaje
+    (cambiarlos a mitad invalidaría la caché del prompt); los límites se leen de Ajustes en cada mensaje."""
 
-    def __init__(self, toolbox: Toolbox, secrets, client_factory: Callable[[str], Any] = default_client) -> None:
+    def __init__(self, toolbox: Toolbox, secrets, connector: Connector = connect) -> None:
         self.toolbox = toolbox
         self.secrets = secrets
-        self.client_factory = client_factory
-        settings = toolbox.ctx.cfg.data.assistant
-        self.model = chosen_model(settings)
-        self.effort = chosen_effort(settings)
-        self.messages: list[dict] = []
-        self.carry: list[dict] = []  # bloques de un turno interrumpido que acompañan al siguiente mensaje
+        self.connector = connector
+        self.history: list[Entry] = []
         self.turns = 0
-        self.use_fallbacks = True
-        self.system = [{"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}]
         self.tools = toolbox.definitions()
         self.permissions = ToolPermissions(toolbox.ctx, toolbox.ui)
         self.meter = UsageMeter(toolbox.ctx.store)
+        self.session = f"lb-{uuid.uuid4().hex[:16]}"  # agrupa las llamadas en la caché del proveedor
+        self._endpoint: Endpoint | None = None
         self._client = None
-        self._client_key = ""
+        self._client_id: tuple | None = None
 
     @property
     def settings(self) -> AssistantSettings:
         return self.toolbox.ctx.cfg.data.assistant
+
+    @property
+    def started(self) -> bool:
+        """¿El modelo ya respondió? Desde entonces el historial lleva datos propios de su API (razonamiento,
+        firmas) y la conversación sigue con el mismo proveedor y modelo."""
+        return any(isinstance(entry, Reply) for entry in self.history)
+
+    @property
+    def endpoint(self) -> Endpoint:
+        """El de Ajustes hasta que el modelo responde; después, el de la conversación."""
+        if self._endpoint is None or not self.started:
+            return resolve(self.settings)
+        return self._endpoint
+
+    @property
+    def model(self) -> str:
+        return self.endpoint.model
 
     def admit(self, text: str) -> str:
         """Middleware de entrada: "" si el mensaje puede enviarse; si no, el motivo (no se gasta nada)."""
@@ -132,19 +123,23 @@ class Conversation:
 
     # --- estado ------------------------------------------------------------------------------
     def reset(self) -> None:
-        self.messages = []
-        self.carry = []
+        self.history = []
 
     def has_key(self) -> bool:
-        return bool(self.secrets.get(ANTHROPIC_API_KEY))
+        endpoint = self.endpoint
+        return not endpoint.needs_key or bool(self.secrets.get(endpoint.key_name))
 
     def client(self):
-        key = self.secrets.get(ANTHROPIC_API_KEY)
-        if not key:
-            raise AssistantError("Falta la clave de API del asistente. Agrégala con el botón «Clave de API».")
-        if self._client is None or key != self._client_key:
-            self._client = self.client_factory(key)
-            self._client_key = key
+        endpoint = self._endpoint or self.endpoint
+        if not endpoint.model:
+            raise AssistantError("Falta elegir el modelo de IA en Ajustes → Asistente.")
+        key = self.secrets.get(endpoint.key_name)
+        if endpoint.needs_key and not key:
+            raise AssistantError(f"Falta la clave de API de {endpoint.provider.short}. Agrégala en Asistente → Conectar IA.")
+        identity = (endpoint, key)
+        if self._client is None or identity != self._client_id:
+            self._client = self.connector(endpoint, key, system=SYSTEM_PROMPT, tools=self.tools, session=self.session)
+            self._client_id = identity
         return self._client
 
     # --- turno -------------------------------------------------------------------------------
@@ -160,105 +155,102 @@ class Conversation:
             self.toolbox.ctx.engine.policy.audit.record("asistente", "mensaje", "deny", detail=problem)
             emit("error", {"message": problem})
             return
+        if not self.started:  # p. ej. el primer intento falló y el usuario cambió de proveedor
+            self._endpoint = resolve(self.settings)
         self.turns += 1
         self.toolbox.cancel = cancel
-        self.messages.append({"role": "user", "content": [*self.carry, {"type": "text", "text": text}]})
-        self.carry = []
-        refused = False
+        self.history.append(UserText(text))
+        outcome = "error"
         try:
-            refused = self._loop(emit, cancel)
+            outcome = self._loop(emit, cancel)
         except Exception as exc:
-            if not isinstance(exc, (AssistantError, anthropic.APIError)):
-                log.exception("Asistente: error inesperado")
-            else:
+            if isinstance(exc, (AssistantError, ProviderError)):
                 log.warning("Asistente: %s", exc)
-            emit("error", {"message": friendly_error(exc, self.model)})
+            else:
+                log.exception("Asistente: error inesperado")
+            emit("error", {"message": friendly_error(exc, self._endpoint)})
         finally:
-            self._settle(keep_text=not refused)
+            self._settle(outcome)
 
-    def _loop(self, emit: Emit, cancel: threading.Event) -> bool:
-        """Devuelve True si el modelo rechazó la petición."""
+    def _loop(self, emit: Emit, cancel: threading.Event) -> str:
+        """Devuelve cómo terminó el turno: reply | stopped | refused."""
         for _ in range(MAX_STEPS):
-            response = self._create_cancellable(cancel)
-            if response is None:
+            reply = self._complete_cancellable(cancel)
+            if reply is None:
                 emit("stopped", {})
-                return False
-            if response.stop_reason == "refusal":
+                return "stopped"
+            if reply.stop == "refusal":
                 emit(
                     "refusal",
                     {"message": "No puedo ayudar con eso. Reformula la petición o configura esa parte desde las pantallas."},
                 )
-                return True
-            content = _kept_after_fallback(response.content) or [BetaTextBlock(type="text", text="Listo.")]
-            tool_uses = [block for block in content if block.type == "tool_use"]
-            if response.stop_reason == "max_tokens" and tool_uses:
+                return "refused"
+            if reply.stop == "max_tokens" and reply.tool_calls:
                 raise AssistantError("La respuesta quedó incompleta. Vuelve a intentarlo con una petición más corta.")
-            self.messages.append({"role": "assistant", "content": content})
-            text = "\n\n".join(block.text.strip() for block in content if block.type == "text" and block.text.strip())
-            if not tool_uses:
-                if response.stop_reason == "pause_turn":
+            self.history.append(reply)
+            text = reply.text.strip()
+            if not reply.tool_calls:
+                if reply.stop == "pause":
                     continue
                 emit("reply", {"text": text or "Listo."})
-                return False
+                return "reply"
             if text:
                 emit("note", {"text": text})
-            results = []
-            for block in tool_uses:
+            for call in reply.tool_calls:
                 if cancel.is_set():
                     output, is_error = "El usuario detuvo el asistente antes de ejecutar esta herramienta.", True
                 else:
-                    emit("tool", {"id": block.id, "name": block.name, "activity": self.toolbox.activity(block.name)})
-                    output, is_error = self.toolbox.run(block.name, block.input, self.permissions)
-                    emit("tool_done", {"id": block.id, "name": block.name, "ok": not is_error, "detail": output if is_error else ""})
-                result = {"type": "tool_result", "tool_use_id": block.id, "content": output}
-                if is_error:
-                    result["is_error"] = True
-                results.append(result)
-            self.messages.append({"role": "user", "content": results})
+                    emit("tool", {"id": call.id, "name": call.name, "activity": self.toolbox.activity(call.name)})
+                    if isinstance(call.args, dict):
+                        output, is_error = self.toolbox.run(call.name, call.args, self.permissions)
+                    else:
+                        output, is_error = "Los argumentos no son un JSON válido. Vuelve a intentarlo.", True
+                    emit("tool_done", {"id": call.id, "name": call.name, "ok": not is_error, "detail": output if is_error else ""})
+                self.history.append(ToolResult(call.id, call.name, output, is_error, call.native_id))
             if cancel.is_set():
                 emit("stopped", {})
-                return False
+                return "stopped"
             budget = float(self.settings.daily_budget_usd or 0)
             if budget > 0 and self.meter.today()["cost"] >= budget:
                 raise AssistantError("Se alcanzó el límite diario de gasto del asistente (Ajustes → Asistente).")
         raise AssistantError("El asistente dio demasiados pasos seguidos. Dime cómo quieres seguir.")
 
-    def _settle(self, keep_text: bool) -> None:
-        """El historial siempre termina en una respuesta del asistente.
+    def _settle(self, outcome: str) -> None:
+        """Deja el historial listo para el siguiente mensaje.
 
-        Si el turno se cortó (error, botón Detener, rechazo), el último mensaje del usuario no tuvo respuesta:
-        se quita del historial y sus bloques acompañan al próximo mensaje (los resultados de herramientas
-        son obligatorios después de una llamada a herramienta).
+        - Cada llamada a herramienta necesita su resultado (lo exigen todas las API).
+        - Si el turno se cortó (error o «Detener»), el mensaje del usuario se marca como sin respuesta y se envía
+          junto al siguiente; si el modelo lo rechazó, se quita para no repetirlo.
         """
-        if not self.messages:
+        last = max((i for i, entry in enumerate(self.history) if isinstance(entry, Reply)), default=-1)
+        if last >= 0:
+            answered = {e.call_id for e in self.history[last + 1 :] if isinstance(e, ToolResult)}
+            for call in self.history[last].tool_calls:
+                if call.id not in answered:
+                    self.history.append(ToolResult(call.id, call.name, "Interrumpido.", True, call.native_id))
+        if outcome == "reply":
             return
-        if self.messages[-1]["role"] == "assistant":
-            # Cortado justo después de pedir herramientas: cada llamada necesita su resultado.
-            self.carry = [
-                {"type": "tool_result", "tool_use_id": block.id, "content": "Interrumpido.", "is_error": True}
-                for block in self.messages[-1]["content"]
-                if block.type == "tool_use"
-            ]
-            return
-        pending = self.messages.pop()["content"]
-        for block in pending:
-            if block.get("type") == "tool_result":
-                self.carry.append(block)
-            elif block.get("type") == "text" and keep_text:
-                text = block["text"]
-                if not text.startswith("(Mensaje anterior sin respuesta)"):
-                    text = f"(Mensaje anterior sin respuesta) {text}"
-                self.carry.append({"type": "text", "text": text})
+        tail = self.history[last + 1 :]
+        if outcome == "refused":
+            tail = [entry for entry in tail if not isinstance(entry, UserText)]
+        else:
+            for entry in tail:
+                if isinstance(entry, UserText) and not entry.text.startswith(UNANSWERED):
+                    entry.text = UNANSWERED + entry.text
+        self.history[last + 1 :] = tail
 
     # --- API ---------------------------------------------------------------------------------
-    def _create_cancellable(self, cancel: threading.Event):
+    def _complete_cancellable(self, cancel: threading.Event) -> Reply | None:
         """La llamada corre en su propio hilo: «Detener» responde al instante y la respuesta tardía se descarta."""
-        messages = list(self.messages)
+        history = list(self.history)
+        client = self.client()
         outcome: dict[str, Any] = {}
 
         def call() -> None:
             try:
-                outcome["response"] = self._create(messages)
+                reply = client.complete(history)
+                self._record(reply)  # aunque se haya pulsado «Detener»: la llamada se paga igual
+                outcome["reply"] = reply
             except BaseException as exc:  # se relanza en el hilo del turno
                 outcome["error"] = exc
 
@@ -272,41 +264,22 @@ class Conversation:
             return None
         if "error" in outcome:
             raise outcome["error"]
-        return outcome["response"]
+        return outcome["reply"]
 
-    def _create(self, messages: list[dict]):
-        client = self.client()
-        params = dict(
-            model=self.model,
-            max_tokens=MAX_TOKENS,
-            system=self.system,
-            tools=self.tools,
-            messages=messages,
-            thinking={"type": "adaptive"},
-            output_config={"effort": self.effort},
-            cache_control={"type": "ephemeral"},
+    def _record(self, reply: Reply) -> None:
+        if reply.usage is None:
+            return
+        endpoint = self._endpoint or self.endpoint
+        cost = cost_of(price_for(endpoint, self.settings), reply.usage)
+        self.meter.record(reply.usage, cost)
+        log.info(
+            "Asistente: %s · %s · %s · entrada %s (caché leída %s, escrita %s) · salida %s · ≈ %.4f USD",
+            endpoint.provider.id,
+            endpoint.model,
+            reply.stop,
+            reply.usage.input,
+            reply.usage.cache_read,
+            reply.usage.cache_write,
+            reply.usage.output,
+            cost,
         )
-        if self.use_fallbacks:
-            try:
-                return self._log_usage(client.beta.messages.create(betas=[FALLBACK_BETA], fallbacks="default", **params))
-            except anthropic.BadRequestError as exc:
-                if "fallback" not in str(exc).lower() and "anthropic-beta" not in str(exc).lower():
-                    raise
-                log.warning("Asistente: la cuenta no admite fallbacks del servidor; se sigue sin ellos (%s)", exc)
-                self.use_fallbacks = False
-        return self._log_usage(client.beta.messages.create(**params))
-
-    def _log_usage(self, response):
-        usage = getattr(response, "usage", None)
-        if usage is not None:
-            cost = self.meter.record(self.model, usage)
-            log.info(
-                "Asistente: %s · entrada %s (caché leída %s, escrita %s) · salida %s · ≈ %.4f USD",
-                response.stop_reason,
-                usage.input_tokens,
-                usage.cache_read_input_tokens,
-                usage.cache_creation_input_tokens,
-                usage.output_tokens,
-                cost,
-            )
-        return response

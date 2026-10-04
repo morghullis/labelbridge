@@ -1,4 +1,7 @@
-"""Consumo del asistente: tokens y gasto estimado por día, con límite diario y de mensajes por hora."""
+"""Consumo del asistente: tokens y gasto estimado por día, con límite diario y de mensajes por hora.
+
+Es igual para todos los proveedores de IA: el costo de cada llamada lo calcula pricing.py.
+"""
 
 from __future__ import annotations
 
@@ -7,26 +10,11 @@ import threading
 import time
 from collections import deque
 from datetime import date
-from typing import Any, Callable
+from typing import Callable
 
-# Precio público por millón de tokens (USD): entrada, salida, escritura de caché (5 min), lectura de caché.
-# Es una estimación para el límite diario; la factura real está en platform.claude.com → Usage.
-PRICES: dict[str, tuple[float, float, float, float]] = {
-    "claude-opus-5-5": (4.0, 20.0, 5.0, 0.20),
-    "claude-sonnet-5-5": (2.0, 10.0, 2.50, 0.20),
-}
+from .providers import Usage
+
 FIELDS = ("input", "output", "cache_write", "cache_read", "calls", "cost")
-
-
-def cost_of(model: str, usage: Any) -> float:
-    prices = PRICES.get(model, PRICES["claude-opus-5-5"])
-    tokens = (
-        getattr(usage, "input_tokens", 0) or 0,
-        getattr(usage, "output_tokens", 0) or 0,
-        getattr(usage, "cache_creation_input_tokens", 0) or 0,
-        getattr(usage, "cache_read_input_tokens", 0) or 0,
-    )
-    return sum(count * price for count, price in zip(tokens, prices)) / 1_000_000
 
 
 class UsageMeter:
@@ -48,14 +36,13 @@ class UsageMeter:
             data = {}
         return {field: float(data.get(field, 0)) for field in FIELDS}
 
-    def record(self, model: str, usage: Any) -> float:
-        cost = cost_of(model, usage)
+    def record(self, usage: Usage, cost: float) -> float:
         with self._lock:
             data = self.today()
-            data["input"] += getattr(usage, "input_tokens", 0) or 0
-            data["output"] += getattr(usage, "output_tokens", 0) or 0
-            data["cache_write"] += getattr(usage, "cache_creation_input_tokens", 0) or 0
-            data["cache_read"] += getattr(usage, "cache_read_input_tokens", 0) or 0
+            data["input"] += usage.input
+            data["output"] += usage.output
+            data["cache_write"] += usage.cache_write
+            data["cache_read"] += usage.cache_read
             data["calls"] += 1
             data["cost"] = round(data["cost"] + cost, 6)
             self.store.kv_set(self._key(), json.dumps(data))

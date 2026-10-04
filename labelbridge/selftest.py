@@ -112,15 +112,19 @@ def run(argv: list[str]) -> int:
         return f"{len(NAV)} pantallas"
 
     def assistant() -> str:
-        """Una conversación completa con el SDK de Anthropic empaquetado (API simulada, sin red)."""
+        """Una conversación completa con cada formato de API (Claude con el SDK empaquetado, OpenAI Responses, Chat
+        Completions y Gemini), con servidores simulados: sin red y sin gastar nada."""
         import json
         import threading
+        from functools import partial
 
         import anthropic
         import httpx2
 
         from . import paths
-        from .assistant.agent import DEFAULTS, Conversation, default_client
+        from .assistant.agent import DEFAULTS, Conversation
+        from .assistant.providers import connect, resolve
+        from .assistant.providers.claude import default_sdk_client
         from .assistant.secrets_guard import SecretsGuard
         from .assistant.tools import Toolbox
         from .config import ConfigManager
@@ -175,19 +179,54 @@ def run(argv: list[str]) -> int:
             sent.append(json.loads(request.content))
             return httpx2.Response(200, json=replies.pop(0))
 
-        def factory(api_key: str):
+        def factory(api_key: str, base_url: str = ""):
             transport = httpx2.MockTransport(handler)
             return anthropic.Anthropic(api_key=api_key, max_retries=0, http_client=anthropic.DefaultHttpxClient(transport=transport))
 
-        conversation = Conversation(Toolbox(ctx, SilentUI(), SecretsGuard(secrets)), secrets, client_factory=factory)
+        conversation = Conversation(Toolbox(ctx, SilentUI(), SecretsGuard(secrets)), secrets, partial(connect, sdk_factory=factory))
         kinds: list[str] = []
         conversation.send("hola", lambda kind, _data: kinds.append(kind), threading.Event())
         assert kinds[-1] == "reply", f"la conversación terminó con {kinds}"
         assert cfg.find_printer("autoprueba") is not None, "la herramienta no se ejecutó"
         assert sent[1]["messages"][2]["content"][0]["tool_use_id"] == "toolu_1"
-        default_client("sk-ant-autoprueba").close()  # TLS con el almacén de certificados del sistema
+        default_sdk_client("sk-ant-autoprueba").close()  # TLS con el almacén de certificados del sistema
+
+        # Los demás formatos, con la misma herramienta y la misma respuesta final.
+        args = json.dumps({"connection": "network", "ip": "127.0.0.1", "alias": "autoprueba"})
+        scripted = {
+            "openai": [
+                {"status": "completed", "output": [{"type": "function_call", "id": "fc_1", "call_id": "call_1",
+                                                    "name": "set_default_printer", "arguments": json.dumps({"alias": "autoprueba"})}]},
+                {"status": "completed", "output": [{"type": "message", "role": "assistant",
+                                                    "content": [{"type": "output_text", "text": "Listo."}]}]},
+            ],
+            "deepseek": [
+                {"choices": [{"message": {"role": "assistant", "content": None, "tool_calls": [{"id": "c1", "type": "function",
+                              "function": {"name": "add_printer", "arguments": args}}]}, "finish_reason": "tool_calls"}]},
+                {"choices": [{"message": {"role": "assistant", "content": "Listo."}, "finish_reason": "stop"}]},
+            ],
+            "gemini": [
+                {"candidates": [{"content": {"role": "model", "parts": [{"functionCall": {"name": "get_status", "args": {}},
+                                                                         "thoughtSignature": "c2ln"}]}, "finishReason": "STOP"}]},
+                {"candidates": [{"content": {"role": "model", "parts": [{"text": "Listo."}]}, "finishReason": "STOP"}]},
+            ],
+        }
+        for provider_id, replies in scripted.items():
+            cfg.data.assistant.provider, cfg.data.assistant.model = provider_id, ""
+            secrets.set(resolve(cfg.data.assistant).key_name, "clave-autoprueba")
+            requests: list[dict] = []
+
+            def fake(method, url, headers, body, timeout, replies=replies, requests=requests):
+                requests.append(json.loads(body))
+                return 200, {}, json.dumps(replies.pop(0)).encode("utf-8")
+
+            other = Conversation(Toolbox(ctx, SilentUI(), SecretsGuard(secrets)), secrets, partial(connect, transport=fake))
+            kinds = []
+            other.send("hola", lambda kind, _data: kinds.append(kind), threading.Event())
+            assert kinds[-1] == "reply" and "tool_done" in kinds, f"{provider_id}: la conversación terminó con {kinds}"
+            assert len(requests) == 2, f"{provider_id}: {len(requests)} llamadas"
         store.close()
-        return f"{len(conversation.tools)} herramientas · SDK anthropic {anthropic.__version__}"
+        return f"{len(conversation.tools)} herramientas · Claude, OpenAI, compatibles y Gemini · SDK anthropic {anthropic.__version__}"
 
     def security() -> str:
         """Cifrado de datos (AES-256-GCM) y política de descargas en el ejecutable empaquetado."""

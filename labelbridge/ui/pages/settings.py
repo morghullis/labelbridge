@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from PySide6.QtCore import QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
@@ -16,13 +18,24 @@ from PySide6.QtWidgets import (
 )
 
 from ... import APP_NAME, __version__
-from ...config import ASSISTANT_EFFORTS, ASSISTANT_MODELS
+from ...assistant.pricing import price_for
+from ...assistant.providers import (
+    PROVIDERS,
+    Endpoint,
+    ProviderError,
+    check_base_url,
+    connect,
+    is_plain_http,
+    resolve,
+    valid_model,
+)
+from ...config import ASSISTANT_EFFORTS
 from ...events import CONFIG_EXTERNAL
 from ...paths import data_dir, logs_dir, output_dir
 from ...system import autostart
 from ...updater import UPDATES_PAGE
 from ..context import AppContext
-from ..widgets import Card, Page, button, label
+from ..widgets import Card, Page, button, label, run_async
 
 
 def _combo(options: dict[str, str]) -> QComboBox:
@@ -40,6 +53,17 @@ def _spin(low: int, high: int, suffix: str) -> QSpinBox:
     spin = QSpinBox()
     spin.setRange(low, high)
     spin.setSuffix(suffix)
+    return spin
+
+
+def _price_spin() -> QDoubleSpinBox:
+    """USD por millón de tokens; el mínimo (-1) significa «automático» (precio público del modelo)."""
+    spin = QDoubleSpinBox()
+    spin.setRange(-1, 1000)
+    spin.setDecimals(3)
+    spin.setSingleStep(0.25)
+    spin.setSuffix(" USD")
+    spin.setSpecialValueText("Automático")
     return spin
 
 
@@ -119,17 +143,53 @@ class SettingsPage(Page):
 
         assistant = Card(
             "Asistente",
-            "Usa Claude de Anthropic con tu clave de API (se paga por uso). El modelo y el nivel se aplican a las "
-            "conversaciones nuevas.",
+            "Funciona con Claude, OpenAI (ChatGPT), Gemini o cualquier API compatible con OpenAI, con tu propia clave "
+            "(pagas por uso a tu proveedor). Los permisos y límites valen igual para cualquier modelo. Proveedor, modelo "
+            "y nivel se aplican a las conversaciones nuevas.",
         )
         form = QFormLayout()
         form.setSpacing(10)
+        self.assistant_form = form
         self.assistant_on = QCheckBox("Asistente activado")
         form.addRow("", self.assistant_on)
-        self.assistant_model = _combo(ASSISTANT_MODELS)
-        form.addRow("Modelo", self.assistant_model)
+        self.assistant_provider = _combo({p.id: p.name for p in PROVIDERS.values()})
+        self.assistant_provider.currentIndexChanged.connect(lambda _i: self._provider_changed(user=True))
+        form.addRow("Proveedor de IA", self.assistant_provider)
+        model_row = QHBoxLayout()
+        self.assistant_model = QComboBox()
+        self.assistant_model.setEditable(True)
+        self.assistant_model.currentTextChanged.connect(lambda _t: self._show_price())
+        model_row.addWidget(self.assistant_model, 1)
+        self.load_models = button("Cargar modelos de mi cuenta", "refresh", "ghost")
+        self.load_models.clicked.connect(self._load_models)
+        model_row.addWidget(self.load_models)
+        form.addRow("Modelo", model_row)
+        self.assistant_url = QLineEdit()
+        self.assistant_url.textChanged.connect(lambda _t: self._check_url())
+        form.addRow("Dirección del servidor", self.assistant_url)
+        self.url_hint = label("", "Small", wrap=True)
+        form.addRow("", self.url_hint)
         self.assistant_effort = _combo(ASSISTANT_EFFORTS)
         form.addRow("Nivel de razonamiento", self.assistant_effort)
+        prices = QHBoxLayout()
+        self.price_in = _price_spin()
+        self.price_in.valueChanged.connect(lambda _v: self._show_price())
+        self.price_out = _price_spin()
+        self.price_out.valueChanged.connect(lambda _v: self._show_price())
+        prices.addWidget(label("entrada"))
+        prices.addWidget(self.price_in, 1)
+        prices.addWidget(label("salida"))
+        prices.addWidget(self.price_out, 1)
+        form.addRow("Precio por millón de tokens", prices)
+        self.price_hint = label("", "Small", wrap=True)
+        form.addRow("", self.price_hint)
+        self.key_status = label("", "Small", wrap=True)
+        key_row = QHBoxLayout()
+        key_row.addWidget(self.key_status, 1)
+        connect_btn = button("Conectar IA", "key", "ghost")
+        connect_btn.clicked.connect(self._open_connect)
+        key_row.addWidget(connect_btn)
+        form.addRow("Clave de API", key_row)
         self.assistant_approval = _combo(
             {"changes": "Pedir permiso para cada cambio (recomendado)", "critical": "Solo para compras y borrados"}
         )
@@ -230,6 +290,124 @@ class SettingsPage(Page):
     def _on_event(self, kind: str, data) -> None:
         if kind == CONFIG_EXTERNAL and data in ("general", "all"):
             self.load_from_config()
+        if kind == CONFIG_EXTERNAL and data in ("assistant", "all"):
+            self._load_protection()
+
+    # --- asistente ---------------------------------------------------------------------------------
+    def _form_endpoint(self) -> Endpoint:
+        """Lo que hay escrito en la tarjeta del asistente (aún sin guardar)."""
+        provider = PROVIDERS.get(self.assistant_provider.currentData()) or resolve(self.ctx.cfg.data.assistant).provider
+        base_url = (self.assistant_url.text().strip() or provider.base_url).rstrip("/")
+        return Endpoint(provider, base_url, self._model_text(), self.assistant_effort.currentData() or "low")
+
+    def _model_text(self) -> str:
+        index = self.assistant_model.currentIndex()
+        text = self.assistant_model.currentText().strip()
+        if index >= 0 and text == self.assistant_model.itemText(index):
+            return str(self.assistant_model.itemData(index) or text)
+        return text
+
+    def _set_models(self, provider, current: str, extra: list[str] = ()) -> None:
+        self.assistant_model.blockSignals(True)
+        self.assistant_model.clear()
+        known = {key for key, _ in provider.models}
+        for key, text in provider.models:
+            self.assistant_model.addItem(text, key)
+        for name in extra:
+            if name not in known:
+                self.assistant_model.addItem(name, name)
+        index = self.assistant_model.findData(current)
+        if index >= 0:
+            self.assistant_model.setCurrentIndex(index)
+        else:
+            self.assistant_model.setEditText(current)
+        self.assistant_model.blockSignals(False)
+
+    def _provider_changed(self, user: bool = False) -> None:
+        provider = PROVIDERS.get(self.assistant_provider.currentData())
+        if provider is None:
+            return
+        settings = self.ctx.cfg.data.assistant
+        same = provider.id == resolve(settings).provider.id
+        if user:
+            self.assistant_url.setText(settings.base_url if same else "")
+            self._set_models(provider, resolve(settings).model if same else provider.default_model)
+        self.assistant_url.setPlaceholderText(provider.base_url or "https://mi-servidor.com/v1 (obligatoria)")
+        self.assistant_url.setToolTip("Déjala vacía para usar la dirección oficial del proveedor.")
+        self._check_url()
+        self._show_price()
+
+    def _check_url(self) -> bool:
+        """Avisa al momento si la dirección no se puede usar (o si va sin cifrar). True si se puede guardar."""
+        url = self.assistant_url.text().strip()
+        if not url:
+            provider = PROVIDERS.get(self.assistant_provider.currentData())
+            missing = provider is not None and not provider.base_url
+            self._url_hint("✗ Escribe la dirección de tu servidor." if missing else "")
+            return not missing
+        try:
+            check_base_url(url)
+        except ProviderError as exc:
+            self._url_hint(f"✗ {exc.detail}")
+            return False
+        self._url_hint("⚠ Conexión sin cifrar (http): úsala solo en tu red local." if is_plain_http(url) else "")
+        return True
+
+    def _url_hint(self, text: str) -> None:
+        self.url_hint.setText(text)
+        self.assistant_form.setRowVisible(self.url_hint, bool(text))
+
+    def _show_price(self) -> None:
+        if not hasattr(self, "price_hint"):
+            return
+        endpoint = self._form_endpoint()
+        prices = SimpleNamespace(price_input=self.price_in.value(), price_output=self.price_out.value())
+        self.price_hint.setText(price_for(endpoint, prices).text())
+        if not endpoint.base_url:
+            self.key_status.setText("Falta la dirección del servidor.")
+        elif not endpoint.needs_key:
+            self.key_status.setText("No hace falta clave para este proveedor.")
+        elif self.ctx.secrets.get(endpoint.key_name):
+            self.key_status.setText(f"✓ Guardada para {endpoint.provider.short} (en el almacén seguro de Windows).")
+        else:
+            self.key_status.setText(f"Falta la clave de {endpoint.provider.short}: pégala en Asistente → Conectar IA.")
+
+    def _open_connect(self) -> None:
+        """Abre «Conecta tu IA» con el proveedor elegido aquí (sin guardar nada de esta pantalla)."""
+        window = self.window()
+        window.navigate("assistant")
+        page = getattr(window, "pages", {}).get("assistant")
+        if hasattr(page, "show_connect"):
+            page.show_connect(self.assistant_provider.currentData())
+
+    def _load_models(self) -> None:
+        endpoint = self._form_endpoint()
+        key = self.ctx.secrets.get(endpoint.key_name) if endpoint.base_url else ""
+        if endpoint.needs_key and not key:
+            self.price_hint.setText("Primero guarda la clave en Asistente → Conectar IA.")
+            return
+        self.load_models.setEnabled(False)
+        self.load_models.setText("Cargando…")
+
+        def fetch() -> list[str]:
+            try:
+                check_base_url(endpoint.base_url)
+                return connect(endpoint, key).models()
+            except ProviderError as exc:
+                raise RuntimeError(exc.detail or exc.kind) from None
+
+        def done(names: list[str]) -> None:
+            self.load_models.setEnabled(True)
+            self.load_models.setText("Cargar modelos de mi cuenta")
+            self._set_models(endpoint.provider, self._model_text(), names)
+            self.price_hint.setText(f"{len(names)} modelos disponibles en tu cuenta. Elige uno y pulsa «Guardar ajustes».")
+
+        def failed(message: str) -> None:
+            self.load_models.setEnabled(True)
+            self.load_models.setText("Cargar modelos de mi cuenta")
+            self.price_hint.setText(f"No se pudo cargar la lista: {message}")
+
+        run_async(fetch, done, failed)
 
     def load_from_config(self) -> None:
         """Muestra lo guardado (p. ej. después de que el asistente cambió la configuración)."""
@@ -253,8 +431,16 @@ class SettingsPage(Page):
     def _load_protection(self) -> None:
         a = self.ctx.cfg.data.assistant
         s = self.ctx.cfg.data.security
+        endpoint = resolve(a)
         self.assistant_on.setChecked(a.enabled)
-        _select(self.assistant_model, a.model)
+        self.assistant_provider.blockSignals(True)
+        _select(self.assistant_provider, endpoint.provider.id)
+        self.assistant_provider.blockSignals(False)
+        self._set_models(endpoint.provider, endpoint.model)
+        self.assistant_url.setText(a.base_url)
+        self.price_in.setValue(a.price_input if a.price_input >= 0 else -1)
+        self.price_out.setValue(a.price_output if a.price_output >= 0 else -1)
+        self._provider_changed()
         _select(self.assistant_effort, a.effort)
         _select(self.assistant_approval, a.approval)
         self.assistant_budget.setValue(float(a.daily_budget_usd))
@@ -272,7 +458,18 @@ class SettingsPage(Page):
         s = self.ctx.cfg.data.security
         before = (vars(a).copy(), vars(s).copy())
         a.enabled = self.assistant_on.isChecked()
-        a.model = self.assistant_model.currentData()
+        endpoint = self._form_endpoint()
+        url = self.assistant_url.text().strip()
+        # Proveedor, modelo y dirección van juntos: con una dirección no permitida no se cambia ninguno (queda
+        # escrita con el motivo debajo para corregirla) y la clave nunca se manda a un servidor a medio configurar.
+        if self._check_url():
+            url = check_base_url(url) if url else ""
+            a.provider = endpoint.provider.id
+            model = self._model_text()
+            a.model = model if valid_model(model) else endpoint.provider.default_model
+            a.base_url = "" if url == endpoint.provider.base_url.rstrip("/") else url
+        a.price_input = round(self.price_in.value(), 3) if self.price_in.value() >= 0 else -1.0
+        a.price_output = round(self.price_out.value(), 3) if self.price_out.value() >= 0 else -1.0
         a.effort = self.assistant_effort.currentData()
         a.approval = self.assistant_approval.currentData()
         a.daily_budget_usd = round(self.assistant_budget.value(), 2)

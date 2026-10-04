@@ -1,15 +1,18 @@
-"""Pruebas reales del asistente contra la API de Anthropic («entrenarlo»: medir y ajustar instrucciones).
+"""Pruebas reales del asistente contra la API de cualquier proveedor («entrenarlo»: medir y ajustar instrucciones).
 
-GASTA TOKENS: se ejecuta a mano, nunca en la compilación. Usa la clave del asistente guardada en el almacén
-seguro del sistema (la misma que la app) y nunca la imprime ni la escribe en disco.
+GASTA TOKENS: se ejecuta a mano, nunca en la compilación. Usa la clave del proveedor guardada en el almacén
+seguro del sistema (la misma que la app) o la variable de entorno habitual (OPENAI_API_KEY, GEMINI_API_KEY…), y
+nunca la imprime ni la escribe en disco.
 
 Cada escenario corre aislado (carpeta temporal) con impresoras, tienda y ventanas simuladas: no imprime nada,
 no toca tu tienda de Shopify y no escanea tu red. Mide si el asistente hizo bien la tarea, cuántas llamadas y
 tokens usó y el costo estimado.
 
 Uso:
-  .venv/bin/python devtools/assistant_eval.py                         # todas, modelo y nivel por defecto
+  .venv/bin/python devtools/assistant_eval.py                         # todas, proveedor y modelo por defecto
   .venv/bin/python devtools/assistant_eval.py --model claude-sonnet-5-5 --effort low
+  .venv/bin/python devtools/assistant_eval.py --provider openai --model gpt-6.1-sol
+  .venv/bin/python devtools/assistant_eval.py --provider ollama --model qwen3.6:27b
   .venv/bin/python devtools/assistant_eval.py --only fuera_de_tema --repeat 3 --budget 2
 """
 
@@ -116,7 +119,7 @@ class Scenario:
 
 # --- entorno aislado -------------------------------------------------------------------------------
 
-def sandbox(scenario: Scenario, api_key: str, model: str, effort: str):
+def sandbox(scenario: Scenario, api_key: str, model: str, effort: str, provider: str = "anthropic", base_url: str = ""):
     home = Path(tempfile.mkdtemp(prefix="lb-eval-"))
     os.environ["LABELBRIDGE_HOME"] = str(home)
     from labelbridge import paths
@@ -130,7 +133,8 @@ def sandbox(scenario: Scenario, api_key: str, model: str, effort: str):
     from labelbridge.events import Events
     from labelbridge.jobstore import JobStore
     from labelbridge.printing.engine import PrintEngine
-    from labelbridge.secret_store import ANTHROPIC_API_KEY, SHOPIFY_CLIENT_SECRET, SecretStore
+    from labelbridge.assistant.providers import resolve
+    from labelbridge.secret_store import SHOPIFY_CLIENT_SECRET, SecretStore
     from labelbridge.services import Services
     from labelbridge.ui.context import AppContext, QtBridge
 
@@ -138,9 +142,11 @@ def sandbox(scenario: Scenario, api_key: str, model: str, effort: str):
     cfg.data.general.auto_discover = False
     cfg.data.general.auto_update_check = False
     cfg.data.local_api.enabled = False
-    cfg.data.assistant.model, cfg.data.assistant.effort, cfg.data.assistant.daily_budget_usd = model, effort, 0
+    assistant = cfg.data.assistant
+    assistant.provider, assistant.model, assistant.base_url = provider, model, base_url
+    assistant.effort, assistant.daily_budget_usd = effort, 0
     secrets = SecretStore(home / "secrets.json", backend="file")
-    secrets._cache[ANTHROPIC_API_KEY] = api_key  # solo en memoria: la clave no se escribe en disco
+    secrets._cache[resolve(assistant).key_name] = api_key  # solo en memoria: la clave no se escribe en disco
     store = JobStore(paths.db_path(), paths.spool_dir())
     events = Events()
     engine = PrintEngine(store, cfg, events)
@@ -360,8 +366,9 @@ SCENARIOS = [
 
 # --- ejecución ------------------------------------------------------------------------------------
 
-def run_scenario(scenario: Scenario, api_key: str, model: str, effort: str) -> dict:
-    run, conversation, home = sandbox(scenario, api_key, model, effort)
+def run_scenario(scenario: Scenario, api_key: str, model: str, effort: str, provider: str = "anthropic",
+                 base_url: str = "") -> dict:
+    run, conversation, home = sandbox(scenario, api_key, model, effort, provider, base_url)
     started = time.time()
     try:
         for message in scenario.messages:
@@ -396,6 +403,8 @@ def run_scenario(scenario: Scenario, api_key: str, model: str, effort: str) -> d
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--provider", default=None, help="anthropic, openai, gemini, openrouter, deepseek, ollama…")
+    parser.add_argument("--base-url", default="", help="dirección del servidor (solo si no es la oficial)")
     parser.add_argument("--model", default=None)
     parser.add_argument("--effort", default=None)
     parser.add_argument("--only", action="append", default=[])
@@ -406,26 +415,32 @@ def main() -> int:
 
     from PySide6.QtWidgets import QApplication
 
+    from labelbridge.assistant.providers import Endpoint, check_base_url, provider_of
     from labelbridge.config import AssistantSettings
 
     QApplication.instance() or QApplication([sys.argv[0]])
     import keyring
 
-    api_key = keyring.get_password("LabelBridge", "anthropic_api_key") or os.environ.get("ANTHROPIC_API_KEY", "")
-    if not api_key:
-        print("No hay clave del asistente guardada (Asistente → Clave de API).")
-        return 2
     defaults = AssistantSettings()
-    model, effort = args.model or defaults.model, args.effort or defaults.effort
+    provider = provider_of(args.provider or defaults.provider)
+    model = args.model or (defaults.model if provider.id == defaults.provider else provider.default_model)
+    effort = args.effort or defaults.effort
+    base_url = check_base_url(args.base_url or provider.base_url)
+    endpoint = Endpoint(provider, base_url, model, effort)
+    env = {"anthropic": "ANTHROPIC_API_KEY", "gemini": "GEMINI_API_KEY"}.get(provider.id, f"{provider.id.upper()}_API_KEY")
+    api_key = keyring.get_password("LabelBridge", endpoint.key_name) or os.environ.get(env, "")
+    if provider.needs_key and not api_key:
+        print(f"No hay clave de {provider.name} (Asistente → Conectar IA, o la variable {env}).")
+        return 2
     chosen = [s for s in SCENARIOS if not args.only or s.name in args.only]
-    print(f"Modelo {model} · nivel {effort} · {len(chosen)} escenario(s) × {args.repeat}\n")
+    print(f"{provider.name} · modelo {model} · nivel {effort} · {len(chosen)} escenario(s) × {args.repeat}\n")
     results, spent = [], 0.0
     for _ in range(args.repeat):
         for scenario in chosen:
             if spent >= args.budget:
                 print(f"Se alcanzó el presupuesto de {args.budget} USD; se detiene la tanda.")
                 break
-            result = run_scenario(scenario, api_key, model, effort)
+            result = run_scenario(scenario, api_key, model, effort, provider.id, args.base_url)
             spent += result["cost"]
             results.append(result)
             mark = "✓" if result["passed"] else "✗"
@@ -438,8 +453,8 @@ def main() -> int:
     passed = sum(r["passed"] for r in results)
     print(f"\nResultado: {passed}/{len(results)} correctos · ≈ {spent:.3f} USD en total")
     if args.out:
-        Path(args.out).write_text(json.dumps({"model": model, "effort": effort, "results": results}, ensure_ascii=False,
-                                             indent=2), encoding="utf-8")
+        Path(args.out).write_text(json.dumps({"provider": provider.id, "model": model, "effort": effort,
+                                              "results": results}, ensure_ascii=False, indent=2), encoding="utf-8")
     return 0 if passed == len(results) else 1
 
 

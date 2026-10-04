@@ -8,6 +8,9 @@ import re
 _RULES: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\bshp(?:ss|at|ca|pa)_[A-Za-z0-9]{6,}"), "shp_•••"),
     (re.compile(r"\bsk-ant-[A-Za-z0-9_\-]{6,}"), "sk-ant-•••"),
+    (re.compile(r"\bsk-[A-Za-z0-9_\-]{12,}"), "sk-•••"),  # OpenAI, OpenRouter, DeepSeek…
+    (re.compile(r"\bAIza[0-9A-Za-z_\-]{20,}"), "AIza•••"),  # Google (Gemini)
+    (re.compile(r"\b(gsk|xai|hf)[_\-][A-Za-z0-9]{16,}"), r"\1_•••"),  # Groq, xAI, Hugging Face
     (re.compile(r"\blb_[A-Za-z0-9_\-]{16,}"), "lb_•••"),
     (re.compile(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=\-]{8,}"), r"\1 •••"),
     (

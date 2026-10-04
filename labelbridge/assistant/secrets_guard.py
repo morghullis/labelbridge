@@ -1,7 +1,9 @@
 """Los datos secretos que se escriben en el chat no salen de este PC.
 
 Antes de enviar un mensaje al asistente se buscan claves y tokens:
-- los de formato conocido (shpss_…, shpat_…, sk-ant-…) se guardan directamente en el almacén seguro;
+- los de Shopify (shpss_…, shpat_…) se guardan directamente en el almacén seguro;
+- las claves de proveedores de IA (sk-…, AIza…, gsk_…) se quitan del mensaje pero no se guardan: se configuran
+  en Asistente → Conectar IA, donde se prueban antes de usarlas;
 - el resto (lo que va después de «contraseña», «secret», «token»…) se aparta en una caja local y el
   asistente solo ve una referencia ([SECRETO_1]) que puede asignar con la herramienta save_secret.
 """
@@ -12,13 +14,24 @@ import ipaddress
 import re
 from dataclasses import dataclass, field
 
-from ..secret_store import ANTHROPIC_API_KEY, SHOPIFY_ACCESS_TOKEN, SHOPIFY_CLIENT_SECRET
+from ..secret_store import SHOPIFY_ACCESS_TOKEN, SHOPIFY_CLIENT_SECRET
 
 # (nombre en el almacén seguro, descripción, patrón)
 KNOWN_SECRETS = (
     (SHOPIFY_CLIENT_SECRET, "Client secret de Shopify", re.compile(r"\bshpss_[A-Za-z0-9]{16,}")),
     (SHOPIFY_ACCESS_TOKEN, "token de acceso de Shopify", re.compile(r"\bshp(?:at|ca|pa)_[A-Za-z0-9]{16,}")),
-    (ANTHROPIC_API_KEY, "clave de API de Anthropic", re.compile(r"\bsk-ant-[A-Za-z0-9_\-]{16,}")),
+)
+# Claves de proveedores de IA (en este orden: las más específicas primero).
+AI_KEYS = (
+    re.compile(r"\bsk-ant-[A-Za-z0-9_\-]{16,}"),
+    re.compile(r"\bsk-or-[A-Za-z0-9_\-]{16,}"),
+    re.compile(r"\bsk-[A-Za-z0-9_\-]{20,}"),
+    re.compile(r"\bAIza[0-9A-Za-z_\-]{30,}"),
+    re.compile(r"\b(?:gsk|xai|hf)[_\-][A-Za-z0-9]{20,}"),
+)
+AI_KEY_NOTE = (
+    "[🔒 clave de API de IA quitada del mensaje: no la ves ni se guarda desde el chat; se configura en "
+    "Asistente → Conectar IA]"
 )
 
 KEYWORD = re.compile(
@@ -55,6 +68,7 @@ class GuardResult:
     model_text: str  # lo que recibe el asistente (sin secretos)
     display_text: str  # lo que se muestra en la burbuja del chat
     saved: list[str] = field(default_factory=list)  # descripciones de lo guardado en el almacén seguro
+    ai_keys: int = 0  # claves de IA quitadas del mensaje (no se guardan)
     refs: dict[str, str] = field(default_factory=dict)  # SECRETO_n -> valor (solo en este PC)
 
 
@@ -75,6 +89,11 @@ class SecretsGuard:
                 result.saved.append(description)
                 note = f"[🔒 dato guardado de forma segura en este PC: {description}]"
                 result.model_text = result.model_text.replace(value, note)
+                result.display_text = result.display_text.replace(value, f"🔒 {value[:6]}••••{value[-4:]}")
+        for pattern in AI_KEYS:
+            for value in dict.fromkeys(pattern.findall(result.model_text)):
+                result.ai_keys += 1
+                result.model_text = result.model_text.replace(value, AI_KEY_NOTE)
                 result.display_text = result.display_text.replace(value, f"🔒 {value[:6]}••••{value[-4:]}")
         # 2) Lo que sigue a «contraseña», «secret», «token»… y parece una clave.
         found: list[str] = []

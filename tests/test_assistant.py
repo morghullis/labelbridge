@@ -1,16 +1,21 @@
-"""Asistente: secretos fuera del chat, herramientas reales y conversación con el SDK de Anthropic (API simulada)."""
+"""Asistente: secretos fuera del chat, herramientas reales y conversación con el SDK de Anthropic (API simulada).
+
+Los demás proveedores (OpenAI, Gemini y compatibles) se prueban en test_providers.py.
+"""
 
 from __future__ import annotations
 
 import json
 import threading
+from functools import partial
 
 import anthropic
 import httpx2
 import pytest
 
 from labelbridge.assistant import agent as agent_mod
-from labelbridge.assistant.agent import DEFAULTS, Conversation
+from labelbridge.assistant.agent import DEFAULTS, UNANSWERED, Conversation
+from labelbridge.assistant.providers import Endpoint, ProviderError, Reply, UserText, connect, provider_of
 
 MODEL = DEFAULTS.model
 from labelbridge.assistant.secrets_guard import SecretsGuard
@@ -261,18 +266,22 @@ class FakeAPI:
             return httpx2.Response(status, json=body)
         return httpx2.Response(200, json=reply, headers={"request-id": "req_test"})
 
-    def factory(self, api_key: str) -> anthropic.Anthropic:
+    def factory(self, api_key: str, base_url: str = "") -> anthropic.Anthropic:
         return anthropic.Anthropic(
             api_key=api_key,
             max_retries=0,
             http_client=anthropic.DefaultHttpxClient(transport=httpx2.MockTransport(self.handler)),
         )
 
+    @property
+    def connector(self):
+        return partial(connect, sdk_factory=self.factory)
+
 
 def _conversation(core, api: FakeAPI, ui: FakeUI | None = None) -> tuple[Conversation, list]:
     core.secrets.set(ANTHROPIC_API_KEY, "sk-ant-prueba")
     box = Toolbox(_context(core), ui or FakeUI(), SecretsGuard(core.secrets))
-    return Conversation(box, core.secrets, client_factory=api.factory), []
+    return Conversation(box, core.secrets, api.connector), []
 
 
 def test_conversation_runs_app_tools_through_the_sdk(core):
@@ -314,7 +323,7 @@ def test_conversation_runs_app_tools_through_the_sdk(core):
     assistant, results = second["messages"][1], second["messages"][2]
     assert assistant["content"][0] == {"type": "thinking", "thinking": "", "signature": "firma-1"}
     assert results["content"][0]["tool_use_id"] == "toolu_1" and "is_error" not in results["content"][0]
-    assert conversation.messages[-1]["role"] == "assistant" and not conversation.carry
+    assert isinstance(conversation.history[-1], Reply)
 
 
 def test_conversation_recovers_after_errors_and_refusals(core):
@@ -331,7 +340,7 @@ def test_conversation_recovers_after_errors_and_refusals(core):
     emit = lambda kind, data: events.append((kind, data))  # noqa: E731
     conversation.send("hola", emit, threading.Event())
     assert events[-1][0] == "error" and "saturado" in events[-1][1]["message"]
-    assert conversation.messages == [] and conversation.carry[0]["text"].endswith("hola")
+    assert conversation.history == [UserText(UNANSWERED + "hola")]
 
     conversation.send("¿sigues ahí?", emit, threading.Event())
     texts = [block["text"] for block in api.requests[1]["messages"][0]["content"]]
@@ -339,7 +348,7 @@ def test_conversation_recovers_after_errors_and_refusals(core):
     assert events[-1] == ("reply", {"text": "¡Hola! ¿Qué configuramos?"})
 
     conversation.send("algo que el modelo rechaza", emit, threading.Event())
-    assert events[-1][0] == "refusal" and conversation.carry == []  # el texto rechazado no se repite
+    assert events[-1][0] == "refusal" and isinstance(conversation.history[-1], Reply)  # el texto rechazado no se repite
     conversation.send("otra cosa", emit, threading.Event())
     roles = [m["role"] for m in api.requests[-1]["messages"]]
     assert roles == ["user", "assistant", "user"]  # siempre alternados
@@ -370,7 +379,7 @@ def test_stop_discards_a_late_answer(core):
     worker.join(5)
     assert not worker.is_alive() and events == ["stopped"]
     api.gate.set()
-    assert conversation.messages == [] and conversation.carry[0]["text"].endswith("hola")
+    assert conversation.history == [UserText(UNANSWERED + "hola")]
 
 
 def test_works_without_the_fallback_beta(core):
@@ -383,24 +392,37 @@ def test_works_without_the_fallback_beta(core):
     conversation, _ = _conversation(core, api)
     events: list = []
     conversation.send("hola", lambda kind, data: events.append(kind), threading.Event())
-    assert events == ["reply"] and conversation.use_fallbacks is False
+    assert events == ["reply"] and conversation.client().use_fallbacks is False
     assert "fallbacks" not in api.requests[1] and "anthropic-beta" not in api.headers[1]
 
 
 def test_friendly_errors_and_key_check(core):
-    assert "clave de API" in agent_mod.friendly_error(
-        anthropic.AuthenticationError("bad", response=httpx2.Response(401, request=httpx2.Request("POST", "https://x")), body=None)
+    from labelbridge.assistant.providers.claude import provider_error
+
+    endpoint = Endpoint(provider_of("anthropic"), "https://api.anthropic.com", MODEL, "low")
+    unauthorized = anthropic.AuthenticationError(
+        "bad", response=httpx2.Response(401, request=httpx2.Request("POST", "https://x")), body=None
     )
+    assert provider_error(unauthorized).kind == "auth"
+    message = agent_mod.friendly_error(provider_error(unauthorized), endpoint)
+    assert "clave de API de Anthropic" in message and "Conectar IA" in message
+    no_credit = anthropic.BadRequestError(
+        "Your credit balance is too low to access the Anthropic API.",
+        response=httpx2.Response(400, request=httpx2.Request("POST", "https://x")),
+        body=None,
+    )
+    assert provider_error(no_credit).kind == "quota"
+    assert "saldo" in agent_mod.friendly_error(ProviderError("quota"), endpoint)
     calls = []
 
-    def factory(api_key):
+    def factory(api_key, base_url=""):
         def handler(request):
             calls.append(request.url.path)
             return httpx2.Response(200, json={"id": MODEL, "type": "model", "display_name": "Claude Opus 5.5", "created_at": "2026-09-01T00:00:00Z"})
 
         return anthropic.Anthropic(api_key=api_key, max_retries=0, http_client=anthropic.DefaultHttpxClient(transport=httpx2.MockTransport(handler)))
 
-    assert agent_mod.validate_key("sk-ant-prueba", factory) == "Claude Opus 5.5"
+    assert connect(endpoint, "sk-ant-prueba", sdk_factory=factory).check() == "Claude Opus 5.5"
     assert calls == ["/v1/models/claude-opus-5-5"]
 
 
@@ -413,7 +435,7 @@ def test_assistant_page_chats_and_hides_secrets(core):
 
     api = FakeAPI([_message([{"type": "text", "text": "Guardado. ¿Seguimos con la impresora?"}], "end_turn")])
     ctx = _context(core)
-    page = AssistantPage(ctx, client_factory=api.factory)
+    page = AssistantPage(ctx, connector=api.connector)
     assert not page.input.isEnabled() and not page.key_card.isHidden()  # sin clave: primero se configura
     core.secrets.set(ANTHROPIC_API_KEY, "sk-ant-prueba")
     page.refresh()
@@ -431,7 +453,7 @@ def test_assistant_page_chats_and_hides_secrets(core):
     assert any("¿Seguimos con la impresora?" in text for text in shown)
     assert page.send_btn.text() == "Enviar"
     page.new_conversation()
-    assert page.conversation.messages == []
+    assert page.conversation.history == []
 
 
 # --- permisos, límites y consumo -----------------------------------------------------------------
@@ -529,8 +551,10 @@ def test_settings_choose_model_and_effort(core):
     conversation, _ = _conversation(core, api)
     conversation.send("hola", lambda *_: None, threading.Event())
     assert api.requests[0]["model"] == "claude-sonnet-5-5" and api.requests[0]["output_config"] == {"effort": "low"}
-    core.cfg.data.assistant.model = "modelo-inventado"
+    core.cfg.data.assistant.model = "modelo con espacios y cosas raras"
     assert Conversation(conversation.toolbox, core.secrets).model == DEFAULTS.model
+    core.cfg.data.assistant.model = "claude-modelo-nuevo-2027"  # cualquier modelo del proveedor se acepta
+    assert Conversation(conversation.toolbox, core.secrets).model == "claude-modelo-nuevo-2027"
 
 
 def test_diagnose_checks_printers_without_printing(toolbox, core, raw_printer):
