@@ -203,6 +203,15 @@ class JobStore:
                 "total": q("SELECT COUNT(*) FROM jobs").fetchone()[0],
             }
 
+    def count_done(self, source: str | None = None) -> int:
+        sql = "SELECT COUNT(*) FROM jobs WHERE status='done'"
+        params: tuple = ()
+        if source:
+            sql += " AND source=?"
+            params = (source,)
+        with self._lock:
+            return self._conn.execute(sql, params).fetchone()[0]
+
     def next_retry_at(self) -> float | None:
         with self._lock:
             row = self._conn.execute(

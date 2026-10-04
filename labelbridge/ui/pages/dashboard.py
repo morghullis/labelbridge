@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 from ...models import SOURCE_LABELS, status_text
 from .. import icons
 from ..actions import enqueue_test_label
+from .guide import guide_banner, update_guide_banner
 from ..context import AppContext
 from ..theme import job_state
 from ..widgets import Card, Page, Pill, ToggleSwitch, button, label
@@ -33,6 +34,9 @@ class DashboardPage(Page):
         test = button("Imprimir prueba", "printer", tooltip="Etiqueta de ejemplo en la impresora predeterminada")
         test.clicked.connect(self._print_test)
         self.header_actions.addWidget(test)
+
+        self.guide_banner = guide_banner(ctx, navigate)
+        self.add(self.guide_banner)
 
         # Interruptor general
         banner = Card()
@@ -141,6 +145,7 @@ class DashboardPage(Page):
 
     def refresh(self) -> None:
         ctx = self.ctx
+        update_guide_banner(self.guide_banner, ctx)
         paused = ctx.cfg.data.general.paused
         self.auto_switch.blockSignals(True)
         self.auto_switch.setChecked(not paused)

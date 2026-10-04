@@ -347,4 +347,6 @@ class PrintEngine:
         from ..labels.order import sample_order
 
         document = Document("order", order=sample_order())
-        return self.deliver(document, profile, 1, "Prueba LabelBridge")
+        detail = self.deliver(document, profile, 1, "Prueba LabelBridge")
+        self.store.kv_set("guide:test_printed", "1")
+        return detail

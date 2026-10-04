@@ -337,6 +337,9 @@ class ShopifyPage(Page):
     def _tested(self, data: dict) -> None:
         self.test_btn.setEnabled(True)
         self.test_btn.setText("Guardar y probar conexión")
+        if data.get("name") and not self.ctx.cfg.data.labels.store_name.strip():
+            self.ctx.cfg.data.labels.store_name = str(data["name"])  # remitente de la etiqueta
+            self.ctx.cfg.save("general")
         scopes = ", ".join(sorted(data.get("scopes") or [])) or "—"
         text = f"✓ Conectado a «{data.get('name')}» ({data.get('myshopifyDomain')}).\nPermisos: {scopes}"
         if data.get("missing"):

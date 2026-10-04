@@ -19,6 +19,8 @@ from .. import APP_NAME, __version__
 from . import icons
 from .context import AppContext
 from .pages.dashboard import DashboardPage
+from .pages.guide import GuidePage
+from .pages.guide import is_complete as guide_complete
 from .pages.history import HistoryPage
 from .pages.local_api import LocalApiPage
 from .pages.logs import LogsPage
@@ -29,6 +31,7 @@ from .pages.shopify import ShopifyPage
 from .widgets import label
 
 NAV = (
+    ("guide", "Guía paso a paso", "book"),
     ("home", "Inicio", "home"),
     ("printers", "Impresoras", "printer"),
     ("shopify", "Shopify", "shop"),
@@ -62,6 +65,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(root)
 
         self.pages = {
+            "guide": GuidePage(ctx, self.navigate),
             "home": DashboardPage(ctx, self.navigate),
             "printers": PrintersPage(ctx),
             "shopify": ShopifyPage(ctx),
@@ -75,7 +79,7 @@ class MainWindow(QMainWindow):
             self.stack.addWidget(page)
         ctx.bridge.event.connect(self._on_event)
         ctx.bridge.config_saved.connect(lambda _s: self._update_status())
-        self.navigate("home" if ctx.cfg.data.printers else "printers")
+        self.navigate("home" if guide_complete(ctx) else "guide")
         self._update_status()
 
     def _sidebar(self) -> QFrame:

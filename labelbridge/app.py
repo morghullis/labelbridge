@@ -86,6 +86,7 @@ def main(argv: list[str] | None = None) -> int:
     from .ui.actions import enqueue_test_label
     from .ui.context import AppContext, QtBridge
     from .ui.main_window import MainWindow
+    from .ui.pages.guide import is_complete as guide_complete
     from .ui.theme import STYLESHEET
     from .ui.tray import Tray
 
@@ -147,7 +148,7 @@ def main(argv: list[str] | None = None) -> int:
         log.warning("No se pudo configurar el inicio automático", exc_info=True)
 
     wants_hidden = "--minimized" in argv or cfg.data.general.start_minimized
-    if "--show" in argv or not cfg.data.printers or not wants_hidden:
+    if "--show" in argv or not guide_complete(ctx) or not wants_hidden:
         window.show()
     ensure_tray()
 
