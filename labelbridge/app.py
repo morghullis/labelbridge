@@ -195,6 +195,8 @@ def main(argv: list[str] | None = None) -> int:
         log.error("La actualización a la versión %s no se completó (sigue la %s)", not_installed.version, __version__)
         QTimer.singleShot(900, lambda: window.update_failed(not_installed))
     just_installed = pending_whats_new(store.kv_get)
+    if not_installed is None and just_installed is None and store.kv_get("update:installed"):
+        store.kv_set("update:installed", "")  # intento antiguo ya superado por esta versión
     if just_installed is not None:
         store.kv_set("update:installed", "")
         window.show()

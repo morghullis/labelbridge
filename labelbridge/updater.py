@@ -153,6 +153,10 @@ def can_install() -> bool:
     return sys.platform == "win32" and is_frozen()
 
 
+CREATE_NEW_PROCESS_GROUP = 0x00000200
+CREATE_BREAKAWAY_FROM_JOB = 0x01000000
+CREATE_NO_WINDOW = 0x08000000
+
 # Script que aplica la actualización cuando la app se cierra. Va en un archivo .ps1 legible (no un comando
 # codificado) y deja registro en logs/actualizacion.log; el instalador deja el suyo en logs/instalador.log.
 APPLY_SCRIPT = r"""# LabelBridge: aplica la actualización descargada. Lo genera la app; se puede borrar.
@@ -215,10 +219,12 @@ def install_and_restart(installer: Path, app: Path | None = None) -> None:
     script.write_text(apply_script(installer, app, os.getpid(), logs_dir()), encoding="utf-8-sig")
     command = ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
                "-WindowStyle", "Hidden", "-File", str(script)]
-    flags = 0x00000008 | 0x00000200 | 0x08000000  # DETACHED_PROCESS | NEW_PROCESS_GROUP | NO_WINDOW
+    # Consola oculta propia (CREATE_NO_WINDOW). No usar DETACHED_PROCESS: sin consola, Windows PowerShell se
+    # cierra al arrancar sin ejecutar nada (era el fallo de las actualizaciones hasta la 1.3.0).
+    flags = CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP
     try:
         # Fuera de cualquier «job» del proceso actual: así el script sobrevive al cierre de la app.
-        subprocess.Popen(command, creationflags=flags | 0x01000000, close_fds=True)  # CREATE_BREAKAWAY_FROM_JOB
+        subprocess.Popen(command, creationflags=flags | CREATE_BREAKAWAY_FROM_JOB, close_fds=True)
     except OSError:
         subprocess.Popen(command, creationflags=flags, close_fds=True)
     log.info("Actualización: el instalador se ejecutará al cerrar la app (%s)", installer.name)

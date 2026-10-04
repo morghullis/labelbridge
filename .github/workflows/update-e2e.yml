@@ -59,7 +59,16 @@ jobs:
           gh release download "v$env:FROM_VERSION" -p "*.exe" -D old
           git worktree add old-src "v$env:FROM_VERSION"
 
+      - name: "Comprobación: PowerShell con y sin DETACHED_PROCESS"
+        shell: pwsh
+        run: |
+          python -c "import subprocess; c=lambda f: ['powershell.exe','-NoProfile','-NonInteractive','-WindowStyle','Hidden','-Command','Set-Content -Path ' + f + ' -Value ok']; subprocess.Popen(c('detached.txt'), creationflags=0x8|0x200|0x08000000, close_fds=True); subprocess.Popen(c('nowindow.txt'), creationflags=0x200|0x08000000, close_fds=True)"
+          Start-Sleep 20
+          "Con DETACHED_PROCESS (versiones ≤ 1.3.0): " + (Test-Path detached.txt)
+          "Con CREATE_NO_WINDOW (versión nueva): " + (Test-Path nowindow.txt)
+
       - name: "D) Actualizador de la versión instalada → instalador nuevo"
+        continue-on-error: true  # informativo: el actualizador de las versiones ≤ 1.3.0 no lanza el instalador
         shell: pwsh
         run: |
           function Install-Old {
@@ -82,6 +91,7 @@ jobs:
           if (-not $running) { throw "D: la app no se volvió a abrir" }
 
       - name: "E) Actualizador nuevo → instalador nuevo"
+        if: always()
         shell: pwsh
         run: |
           Get-Process LabelBridge -ErrorAction SilentlyContinue | Stop-Process -Force
@@ -103,6 +113,7 @@ jobs:
           if (-not (Test-Path "$logs\instalador.log")) { throw "E: falta el registro del instalador" }
 
       - name: "F) Actualizador nuevo con una app que tarda en cerrarse"
+        if: always()
         shell: pwsh
         run: |
           Get-Process LabelBridge -ErrorAction SilentlyContinue | Stop-Process -Force
