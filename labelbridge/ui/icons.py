@@ -66,8 +66,35 @@ def icon(name: str, color: str = "#334155", size: int = 18) -> QIcon:
     return QIcon(pixmap(name, color, size))
 
 
+def _brand_icon_file(size: int):
+    """PNG de marca generado por packaging/make_icon.py (el más pequeño que cubra el tamaño)."""
+    from ..paths import resource_path
+
+    folder = resource_path("assets", "icons")
+    candidates = sorted(
+        (int(p.stem.split("-")[-1]), p) for p in folder.glob("app-*.png") if p.stem.split("-")[-1].isdigit()
+    ) if folder.is_dir() else []
+    for available, path in candidates:
+        if available >= size:
+            return path
+    return candidates[-1][1] if candidates else None
+
+
 def app_icon_pixmap(size: int = 256) -> QPixmap:
-    """Icono de la app: etiqueta con código de barras sobre degradado índigo."""
+    path = _brand_icon_file(size)
+    if path is not None:
+        pixmap = QPixmap(str(path))
+        if not pixmap.isNull():
+            if pixmap.width() != size:
+                pixmap = pixmap.scaled(
+                    size, size, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+                )
+            return pixmap
+    return generic_icon_pixmap(size)
+
+
+def generic_icon_pixmap(size: int = 256) -> QPixmap:
+    """Icono genérico de LabelBridge: etiqueta con código de barras sobre degradado índigo."""
     px = QPixmap(size, size)
     px.fill(Qt.GlobalColor.transparent)
     p = QPainter(px)

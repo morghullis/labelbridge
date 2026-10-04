@@ -28,6 +28,26 @@ def _ensure_qt_plugin_path() -> None:
             os.environ["QT_PLUGIN_PATH"] = os.pathsep.join(p for p in (str(plugins), current) if p)
 
 
+def _install_spanish_translator(app) -> None:
+    """Botones estándar de Qt en español (Sí, No, Cancelar...)."""
+    from PySide6.QtCore import QLibraryInfo, QLocale, QTranslator
+
+    folders = [QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath)]
+    try:
+        import PySide6
+
+        base = Path(PySide6.__file__).resolve().parent
+        folders += [str(base / "translations"), str(base / "Qt" / "translations")]
+    except Exception:
+        pass
+    translator = QTranslator(app)
+    for folder in folders:
+        if translator.load(QLocale(QLocale.Language.Spanish), "qtbase", "_", folder):
+            app.installTranslator(translator)
+            app._labelbridge_translator = translator  # mantener la referencia viva
+            return
+
+
 def _install_exception_hooks() -> None:
     def excepthook(exc_type, exc, tb) -> None:
         log.critical("Error no controlado", exc_info=(exc_type, exc, tb))
@@ -74,6 +94,7 @@ def main(argv: list[str] | None = None) -> int:
     QApplication.setApplicationVersion(__version__)
     app = QApplication(argv)
     app.setQuitOnLastWindowClosed(False)
+    _install_spanish_translator(app)
 
     setup_logging()
     _install_exception_hooks()

@@ -7,6 +7,9 @@ on:
     tags: ["v*"]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: windows-latest
@@ -47,6 +50,16 @@ jobs:
           $version = python -c "import labelbridge; print(labelbridge.__version__)"
           choco install innosetup -y --no-progress
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=$version" packaging\installer.iss
+
+      - name: Publicar en Releases (solo al crear un tag vX.Y.Z)
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          $installer = (Get-ChildItem dist\installer\*.exe | Select-Object -First 1).FullName
+          gh release create $env:TAG $installer --title "LabelBridge $env:TAG" --notes "Instalador para Windows: descarga el .exe y ábrelo para instalar o actualizar (conserva tu configuración)."
 
       - uses: actions/upload-artifact@v4
         with:

@@ -65,6 +65,20 @@ a = Analysis(
     ],
     noarchive=False,
 )
+def _keep(entry) -> bool:
+    """La app usa widgets sin OpenGL: fuera el OpenGL por software, D3D y traducciones que no usamos."""
+    dest = str(entry[0]).replace("\\", "/").lower()
+    name = dest.rsplit("/", 1)[-1]
+    if name in ("opengl32sw.dll", "d3dcompiler_47.dll"):
+        return False
+    if "/translations/" in dest and name.endswith(".qm") and not name.endswith("_es.qm"):
+        return False
+    return True
+
+
+a.binaries = [entry for entry in a.binaries if _keep(entry)]
+a.datas = [entry for entry in a.datas if _keep(entry)]
+
 pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
