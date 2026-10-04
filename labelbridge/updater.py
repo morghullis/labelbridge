@@ -9,7 +9,6 @@ instalador (verificando SHA-256), lo ejecuta en modo silencioso y se vuelve a ab
 
 from __future__ import annotations
 
-import base64
 import hashlib
 import json
 import logging
@@ -154,29 +153,74 @@ def can_install() -> bool:
     return sys.platform == "win32" and is_frozen()
 
 
-def install_and_restart(installer: Path) -> None:
-    """Lanza el instalador en modo silencioso cuando esta app se cierre; el instalador la vuelve a abrir."""
+# Script que aplica la actualización cuando la app se cierra. Va en un archivo .ps1 legible (no un comando
+# codificado) y deja registro en logs/actualizacion.log; el instalador deja el suyo en logs/instalador.log.
+APPLY_SCRIPT = r"""# LabelBridge: aplica la actualización descargada. Lo genera la app; se puede borrar.
+$ErrorActionPreference = 'Continue'
+try { Start-Transcript -Path @@LOG@@ -Append | Out-Null } catch {}
+$appPid = @@PID@@
+$app = @@APP@@
+$installer = @@INSTALLER@@
+"Esperando a que LabelBridge (PID $appPid) termine de cerrarse..."
+$running = Get-Process -Id $appPid -ErrorAction SilentlyContinue
+if ($running) { [void]$running.WaitForExit(120000) }
+if (Get-Process -Id $appPid -ErrorAction SilentlyContinue) {
+    "La app no se cerró a tiempo: se cierra a la fuerza para actualizar."
+    Stop-Process -Id $appPid -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 2
+}
+"Instalando $installer"
+$setup = Start-Process -FilePath $installer -ArgumentList @('/SILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/NOCANCEL', @@SETUP_LOG@@) -PassThru
+$null = $setup.Handle  # sin esto PowerShell 5.1 no conserva el código de salida
+$setup.WaitForExit()
+"El instalador terminó con código $($setup.ExitCode)"
+Start-Sleep -Seconds 3
+if (-not (Get-Process -Name 'LabelBridge' -ErrorAction SilentlyContinue)) {
+    "Abriendo LabelBridge"
+    Start-Process -FilePath $app -ArgumentList '--updated'
+}
+try { Stop-Transcript | Out-Null } catch {}
+"""
+
+
+def _ps_literal(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+def apply_script(installer: Path, app: Path, pid: int, logs: Path) -> str:
+    """Contenido del script de actualización (separado para poder probarlo)."""
+    setup_log = f'/LOG="{logs / "instalador.log"}"'
+    return (
+        APPLY_SCRIPT.replace("@@LOG@@", _ps_literal(str(logs / "actualizacion.log")))
+        .replace("@@PID@@", str(int(pid)))
+        .replace("@@APP@@", _ps_literal(str(app)))
+        .replace("@@INSTALLER@@", _ps_literal(str(installer)))
+        .replace("@@SETUP_LOG@@", _ps_literal(setup_log))
+    )
+
+
+def install_and_restart(installer: Path, app: Path | None = None) -> None:
+    """Prepara la actualización: cuando esta app se cierre, un script instala la versión nueva y la vuelve a abrir.
+
+    Si la app tarda en cerrarse, el script espera hasta 2 minutos y luego la cierra; si el instalador falla, la
+    app se vuelve a abrir igualmente (con la versión anterior) y avisa (ver failed_update).
+    """
     if not can_install():
         raise UpdateError("La instalación automática solo funciona en la app instalada de Windows")
+    from .paths import logs_dir
 
-    def ps(value: str) -> str:
-        encoded = base64.b64encode(value.encode("utf-8")).decode("ascii")
-        return f"([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{encoded}')))"
-
-    script = (
-        "$ErrorActionPreference = 'SilentlyContinue'\n"
-        f"Wait-Process -Id {os.getpid()} -Timeout 60\n"
-        f"Start-Process -FilePath {ps(str(installer))} "
-        "-ArgumentList '/SILENT','/SUPPRESSMSGBOXES','/NORESTART','/NOCANCEL'\n"
-    )
-    encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+    script = installer.with_name("aplicar-actualizacion.ps1")
+    # Con BOM: Windows PowerShell 5.1 lee así bien las rutas con tildes o eñes.
+    app = app or Path(sys.executable)
+    script.write_text(apply_script(installer, app, os.getpid(), logs_dir()), encoding="utf-8-sig")
+    command = ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+               "-WindowStyle", "Hidden", "-File", str(script)]
     flags = 0x00000008 | 0x00000200 | 0x08000000  # DETACHED_PROCESS | NEW_PROCESS_GROUP | NO_WINDOW
-    subprocess.Popen(
-        ["powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass",
-         "-EncodedCommand", encoded],
-        creationflags=flags,
-        close_fds=True,
-    )
+    try:
+        # Fuera de cualquier «job» del proceso actual: así el script sobrevive al cierre de la app.
+        subprocess.Popen(command, creationflags=flags | 0x01000000, close_fds=True)  # CREATE_BREAKAWAY_FROM_JOB
+    except OSError:
+        subprocess.Popen(command, creationflags=flags, close_fds=True)
     log.info("Actualización: el instalador se ejecutará al cerrar la app (%s)", installer.name)
 
 
@@ -236,12 +280,23 @@ def notes_to_html(notes: str) -> str:
     return html or "<p>Mejoras y correcciones.</p>"
 
 
-def pending_whats_new(store_get: Callable[[str], Any]) -> UpdateInfo | None:
+def _stored_update(store_get: Callable[[str], Any]) -> UpdateInfo | None:
     raw = store_get("update:installed")
     if not raw:
         return None
     try:
-        info = UpdateInfo.from_json(raw)
+        return UpdateInfo.from_json(raw)
     except Exception:
         return None
-    return info if parse_version(info.version) == parse_version(__version__) else None
+
+
+def pending_whats_new(store_get: Callable[[str], Any]) -> UpdateInfo | None:
+    """La actualización que se acaba de instalar (para mostrar las novedades una vez)."""
+    info = _stored_update(store_get)
+    return info if info is not None and parse_version(info.version) == parse_version(__version__) else None
+
+
+def failed_update(store_get: Callable[[str], Any]) -> UpdateInfo | None:
+    """Se intentó actualizar a una versión más nueva y la app sigue en la anterior: la instalación falló."""
+    info = _stored_update(store_get)
+    return info if info is not None and is_newer(info.version) else None

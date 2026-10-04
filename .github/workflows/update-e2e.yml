@@ -1,0 +1,124 @@
+# Prueba de punta a punta de la actualización automática con el código actual, en Windows real.
+# Compila el instalador de este commit y comprueba que una app ya instalada se actualiza y se vuelve a abrir:
+#   D) con el actualizador de la versión instalada (la que tiene el usuario hoy)
+#   E) con el actualizador nuevo
+#   F) con el actualizador nuevo cuando la app tarda en cerrarse
+name: Update end-to-end
+
+on:
+  workflow_dispatch:
+    inputs:
+      from_version:
+        description: "Versión instalada desde la que se actualiza"
+        default: "1.3.0"
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    env:
+      QT_QPA_PLATFORM: offscreen
+      GH_TOKEN: ${{ github.token }}
+      FROM_VERSION: ${{ inputs.from_version }}
+      APPKEY: HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{8B5C6F1E-3C2A-4E7B-9C1D-2F4A6B8C0D1E}_is1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Instalador de este commit
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          python packaging/make_icon.py
+          python packaging/make_guide_images.py
+          python -m PyInstaller packaging/labelbridge.spec --noconfirm --clean
+          choco install innosetup -y --no-progress
+          $version = python -c "import labelbridge; print(labelbridge.__version__)"
+          "NEW_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=$version" packaging\installer.iss
+          Get-ChildItem dist\installer
+
+      - name: Versión instalada de partida y su código
+        shell: pwsh
+        run: |
+          gh release download "v$env:FROM_VERSION" -p "*.exe" -D old
+          git worktree add old-src "v$env:FROM_VERSION"
+
+      - name: "D) Actualizador de la versión instalada → instalador nuevo"
+        shell: pwsh
+        run: |
+          function Install-Old {
+            Get-Process LabelBridge -ErrorAction SilentlyContinue | Stop-Process -Force
+            Start-Sleep 2
+            (Start-Process (Get-ChildItem old\*.exe)[0].FullName -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -PassThru).WaitForExit()
+            Start-Sleep 12
+            Get-Process LabelBridge -ErrorAction SilentlyContinue | Stop-Process -Force
+            Start-Sleep 2
+          }
+          Install-Old
+          "Antes: " + (Get-ItemProperty $env:APPKEY).DisplayVersion
+          $setup = (Get-ChildItem dist\installer\*.exe)[0].FullName
+          python devtools/diagnose_update.py $setup --src old-src --close-seconds 0
+          Start-Sleep 75
+          $after = (Get-ItemProperty $env:APPKEY).DisplayVersion
+          $running = Get-Process LabelBridge -ErrorAction SilentlyContinue
+          "Después: $after · app abierta: $([bool]$running)"
+          if ($after -ne $env:NEW_VERSION) { throw "D: no se instaló la versión nueva" }
+          if (-not $running) { throw "D: la app no se volvió a abrir" }
+
+      - name: "E) Actualizador nuevo → instalador nuevo"
+        shell: pwsh
+        run: |
+          Get-Process LabelBridge -ErrorAction SilentlyContinue | Stop-Process -Force
+          Start-Sleep 2
+          (Start-Process (Get-ChildItem old\*.exe)[0].FullName -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -PassThru).WaitForExit()
+          Start-Sleep 12
+          Get-Process LabelBridge -ErrorAction SilentlyContinue | Stop-Process -Force
+          $app = Join-Path (Get-ItemProperty $env:APPKEY).InstallLocation "LabelBridge.exe"
+          $setup = (Get-ChildItem dist\installer\*.exe)[0].FullName
+          python devtools/diagnose_update.py $setup --app $app --close-seconds 0
+          Start-Sleep 75
+          $after = (Get-ItemProperty $env:APPKEY).DisplayVersion
+          $running = Get-Process LabelBridge -ErrorAction SilentlyContinue
+          "Después: $after · app abierta: $([bool]$running)"
+          $logs = Join-Path $env:LOCALAPPDATA "LabelBridge\logs"
+          if (Test-Path "$logs\actualizacion.log") { Get-Content "$logs\actualizacion.log" -Tail 20 }
+          if ($after -ne $env:NEW_VERSION) { throw "E: no se instaló la versión nueva" }
+          if (-not $running) { throw "E: la app no se volvió a abrir" }
+          if (-not (Test-Path "$logs\instalador.log")) { throw "E: falta el registro del instalador" }
+
+      - name: "F) Actualizador nuevo con una app que tarda en cerrarse"
+        shell: pwsh
+        run: |
+          Get-Process LabelBridge -ErrorAction SilentlyContinue | Stop-Process -Force
+          Start-Sleep 2
+          (Start-Process (Get-ChildItem old\*.exe)[0].FullName -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -PassThru).WaitForExit()
+          Start-Sleep 12
+          Get-Process LabelBridge -ErrorAction SilentlyContinue | Stop-Process -Force
+          $app = Join-Path (Get-ItemProperty $env:APPKEY).InstallLocation "LabelBridge.exe"
+          $setup = (Get-ChildItem dist\installer\*.exe)[0].FullName
+          $slow = Start-Process python -ArgumentList 'devtools/diagnose_update.py',"`"$setup`"",'--app',"`"$app`"",'--close-seconds','150' -PassThru
+          Start-Sleep 200
+          $after = (Get-ItemProperty $env:APPKEY).DisplayVersion
+          $running = Get-Process LabelBridge -ErrorAction SilentlyContinue
+          "Después: $after · app abierta: $([bool]$running)"
+          $logs = Join-Path $env:LOCALAPPDATA "LabelBridge\logs"
+          if (Test-Path "$logs\actualizacion.log") { Get-Content "$logs\actualizacion.log" -Tail 20 }
+          $slow | Stop-Process -Force -ErrorAction SilentlyContinue
+          if ($after -ne $env:NEW_VERSION) { throw "F: no se instaló la versión nueva" }
+          if (-not $running) { throw "F: la app no se volvió a abrir" }

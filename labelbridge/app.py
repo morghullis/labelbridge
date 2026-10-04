@@ -90,7 +90,7 @@ def main(argv: list[str] | None = None) -> int:
     from .ui.context import AppContext, QtBridge
     from .ui.main_window import MainWindow
     from .ui.update_dialog import WhatsNewDialog
-    from .updater import pending_whats_new
+    from .updater import failed_update, pending_whats_new
     from .ui.pages.guide import is_complete as guide_complete
     from .ui.theme import STYLESHEET
     from .ui.tray import Tray
@@ -143,6 +143,11 @@ def main(argv: list[str] | None = None) -> int:
 
     def quit_app() -> None:
         window.quitting = True
+        # Si algo se queda colgado al cerrar, el proceso termina igual a los 20 s (la actualización espera a
+        # que la app se cierre para instalar).
+        watchdog = threading.Timer(20.0, lambda: os._exit(0))
+        watchdog.daemon = True  # no retrasa un cierre normal
+        watchdog.start()
         app.quit()
 
     window.quit_app = quit_app
@@ -183,6 +188,12 @@ def main(argv: list[str] | None = None) -> int:
     wants_hidden = "--minimized" in argv or cfg.data.general.start_minimized
     if "--show" in argv or "--updated" in argv or not guide_complete(ctx) or not wants_hidden:
         window.show()
+    not_installed = failed_update(store.kv_get)
+    if not_installed is not None:
+        store.kv_set("update:installed", "")
+        window.show()
+        log.error("La actualización a la versión %s no se completó (sigue la %s)", not_installed.version, __version__)
+        QTimer.singleShot(900, lambda: window.update_failed(not_installed))
     just_installed = pending_whats_new(store.kv_get)
     if just_installed is not None:
         store.kv_set("update:installed", "")

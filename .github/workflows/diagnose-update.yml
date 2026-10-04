@@ -58,7 +58,7 @@ jobs:
         shell: pwsh
         run: |
           $setup = (Get-ChildItem new\*.exe)[0].FullName
-          python devtools/diagnose_update.py $setup 0
+          python devtools/diagnose_update.py $setup --close-seconds 0
           Start-Sleep 90
           "Versión instalada: " + (Get-ItemProperty $env:APPKEY).DisplayVersion
           Get-Process LabelBridge -ErrorAction SilentlyContinue | Format-Table Id, Path, StartTime -AutoSize
@@ -83,7 +83,7 @@ jobs:
           Get-Process LabelBridge -ErrorAction SilentlyContinue | Stop-Process -Force
           "Antes: " + (Get-ItemProperty $env:APPKEY).DisplayVersion
           $setup = (Get-ChildItem new\*.exe)[0].FullName
-          python devtools/diagnose_update.py $setup 75
+          python devtools/diagnose_update.py $setup --close-seconds 75
           Start-Sleep 60
           "Después: " + (Get-ItemProperty $env:APPKEY).DisplayVersion
           Get-Process LabelBridge -ErrorAction SilentlyContinue | Format-Table Id, Path, StartTime -AutoSize

@@ -2,6 +2,12 @@
 
 Cada versión publicada muestra estas notas en la ventana de actualización de la app y en la página de descargas.
 
+## 1.3.1
+
+- Actualizaciones más fiables: si la app tarda en cerrarse, el instalador espera en lugar de cancelarse, y la app siempre se vuelve a abrir al terminar.
+- Si una actualización no se completa, la app te avisa al abrirse y te ofrece reintentar o descargar el instalador.
+- Cada actualización deja registro (actualizacion.log e instalador.log) para revisar cualquier problema.
+
 ## 1.3.0
 
 - Datos cifrados en el PC: la configuración, los pedidos y las etiquetas se guardan con AES-256 y la clave vive en el Administrador de credenciales de Windows (lo anterior se cifra solo al actualizar).

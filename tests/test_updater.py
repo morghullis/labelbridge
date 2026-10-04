@@ -116,3 +116,28 @@ def test_update_dialog_builds(core):
     dialog._skip()
     assert core.cfg.data.general.skipped_version == "99.0.0"
     WhatsNewDialog(None, info).close()
+
+
+def test_apply_script_waits_installs_and_reopens(tmp_path):
+    from pathlib import Path
+
+    installer = Path(r"C:\Users\José O'Neil\AppData\Local\Temp\LabelBridge-actualizacion\LabelBridge-Setup-9.9.9.exe")
+    app = Path(r"C:\Users\José O'Neil\AppData\Local\Programs\LabelBridge\LabelBridge.exe")
+    logs = Path(r"C:\Users\José O'Neil\AppData\Local\LabelBridge\logs")
+    script = updater.apply_script(installer, app, 4321, logs)
+    assert "$appPid = 4321" in script
+    assert "'C:\\Users\\José O''Neil\\AppData\\Local\\Programs\\LabelBridge\\LabelBridge.exe'" in script  # comillas escapadas
+    assert "WaitForExit(120000)" in script and "Stop-Process -Id $appPid -Force" in script  # espera y, si no, cierra
+    assert "'/SILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/NOCANCEL'" in script
+    assert "instalador.log" in script and "actualizacion.log" in script  # deja registro de todo
+    assert "Start-Process -FilePath $app -ArgumentList '--updated'" in script  # vuelve a abrir la app siempre
+    assert "@@" not in script
+
+
+def test_failed_update_is_detected():
+    newer = updater.UpdateInfo(version="99.0.0", url="https://x/y.exe")
+    current = updater.UpdateInfo(version=__version__, url="https://x/y.exe")
+    assert updater.failed_update({"update:installed": newer.to_json()}.get).version == "99.0.0"
+    assert updater.pending_whats_new({"update:installed": newer.to_json()}.get) is None
+    assert updater.failed_update({"update:installed": current.to_json()}.get) is None
+    assert updater.failed_update({"update:installed": ""}.get) is None

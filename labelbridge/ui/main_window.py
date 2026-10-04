@@ -219,6 +219,36 @@ class MainWindow(QMainWindow):
             lambda message: error(self, "Actualizaciones", f"No se pudo comprobar si hay versiones nuevas: {message}"),
         )
 
+    def update_failed(self, info) -> None:
+        """La actualización anterior no se instaló: se explica y se ofrece reintentar o descargarla a mano."""
+        from PySide6.QtCore import QUrl
+        from PySide6.QtGui import QDesktopServices
+        from PySide6.QtWidgets import QMessageBox
+
+        from ..paths import logs_dir
+        from ..updater import UPDATES_PAGE
+
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("La actualización no se completó")
+        box.setText(f"No se pudo instalar la versión {info.version}; sigues con la {__version__}.")
+        box.setInformativeText(
+            "Puedes reintentarlo ahora o descargar el instalador desde la página de descargas. El detalle quedó en "
+            "los registros (actualizacion.log e instalador.log)."
+        )
+        retry = box.addButton("Reintentar", QMessageBox.ButtonRole.AcceptRole)
+        page = box.addButton("Página de descargas", QMessageBox.ButtonRole.ActionRole)
+        logs = box.addButton("Ver registros", QMessageBox.ButtonRole.ActionRole)
+        box.addButton("Cerrar", QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is retry:
+            self.check_updates_now()
+        elif clicked is page:
+            QDesktopServices.openUrl(QUrl(UPDATES_PAGE))
+        elif clicked is logs:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(logs_dir())))
+
     def open_update_dialog(self, info) -> None:
         if info is None:
             return
