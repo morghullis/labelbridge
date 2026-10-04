@@ -9,6 +9,7 @@ from PySide6.QtWidgets import QCheckBox, QFormLayout, QHBoxLayout, QLineEdit, QP
 from ... import APP_NAME, __version__
 from ...paths import data_dir, logs_dir, output_dir
 from ...system import autostart
+from ...updater import UPDATES_PAGE
 from ..context import AppContext
 from ..widgets import Card, Page, button, label
 
@@ -82,9 +83,26 @@ class SettingsPage(Page):
         row = QHBoxLayout()
         row.addStretch(1)
         save = button("Guardar ajustes", "check", "primary")
+        self.save_btn = save
         save.clicked.connect(self._save)
         row.addWidget(save)
         self.add(layout=row)
+
+        updates = Card("Actualizaciones", "LabelBridge avisa cuando hay una versión nueva y se actualiza con un clic.")
+        self.auto_update = QCheckBox("Avisarme cuando haya una nueva versión (recomendado)")
+        self.auto_update.setChecked(g.auto_update_check)
+        updates.add(self.auto_update)
+        row = QHBoxLayout()
+        row.addWidget(label(f"Versión instalada: <b>{__version__}</b>"))
+        row.addStretch(1)
+        check = button("Buscar actualizaciones ahora", "download", "primary")
+        check.clicked.connect(lambda: self.window().check_updates_now())
+        page_btn = button("Página de descargas", "link")
+        page_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(UPDATES_PAGE)))
+        row.addWidget(page_btn)
+        row.addWidget(check)
+        updates.add(layout=row)
+        self.add(updates)
 
         data = Card("Datos y soporte")
         data.add(
@@ -113,6 +131,7 @@ class SettingsPage(Page):
         g.start_with_windows = self.autostart.isChecked()
         g.start_minimized = self.minimized.isChecked()
         g.auto_discover = self.auto_discover.isChecked()
+        g.auto_update_check = self.auto_update.isChecked()
         g.notify_errors = self.notify_errors.isChecked()
         g.notify_printed = self.notify_printed.isChecked()
         g.max_retries = self.retries.value()

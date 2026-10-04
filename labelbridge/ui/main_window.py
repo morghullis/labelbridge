@@ -49,6 +49,9 @@ class MainWindow(QMainWindow):
         self.ctx = ctx
         self.quitting = False
         self._hint_shown = False
+        self.quit_app = self.close  # app.py lo reemplaza por la salida real
+        self.pending_update = None
+        self._prompted_versions: set[str] = set()
         self.setWindowTitle(APP_NAME)
         self.setWindowIcon(icons.app_icon())
         self.resize(1180, 780)
@@ -117,6 +120,19 @@ class MainWindow(QMainWindow):
             col.addWidget(btn)
         col.addStretch(1)
 
+        self.update_pill = QPushButton("")
+        self.update_pill.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.update_pill.setIcon(icons.icon("download", "#1E1B4B", 16))
+        self.update_pill.setStyleSheet(
+            "QPushButton { background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #FDE68A, stop:1 #F59E0B);"
+            " color: #1E1B4B; border: none; border-radius: 10px; padding: 9px 10px; font-weight: 700; text-align: left; }"
+            "QPushButton:hover { background: #FCD34D; }"
+        )
+        self.update_pill.setVisible(False)
+        self.update_pill.clicked.connect(lambda: self.open_update_dialog(self.pending_update))
+        col.addWidget(self.update_pill)
+        col.addSpacing(6)
+
         status = QFrame()
         status.setObjectName("SidebarStatus")
         status_layout = QVBoxLayout(status)
@@ -144,9 +160,55 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentWidget(page)
         page.refresh()
 
-    def _on_event(self, kind: str, _data) -> None:
+    def _on_event(self, kind: str, data) -> None:
         if kind in ("paused", "job"):
             self._update_status()
+        elif kind == "update" and data is not None:
+            self.announce_update(data)
+
+    # --- actualizaciones -------------------------------------------------------------------
+    def announce_update(self, info, prompt: bool = True) -> None:
+        self.pending_update = info
+        self.update_pill.setText(f"  Actualizar a la {info.version}")
+        self.update_pill.setVisible(True)
+        if not prompt or info.version in self._prompted_versions:
+            return
+        self._prompted_versions.add(info.version)
+        if self.isVisible() and not self.isMinimized():
+            self.open_update_dialog(info)
+        else:
+            self.ctx.events.notify(
+                "Nueva versión de LabelBridge", f"La versión {info.version} está lista. Haz clic aquí para actualizar."
+            )
+
+    def check_updates_now(self) -> None:
+        """Comprobación manual (Ajustes o bandeja): siempre informa del resultado."""
+        from .. import __version__ as current
+        from .widgets import error, info as show_info, run_async
+
+        def done(found) -> None:
+            if found is None:
+                self.show_and_raise()
+                show_info(self, "Actualizaciones", f"Ya tienes la última versión de LabelBridge ({current}).")
+            else:
+                self.announce_update(found, prompt=False)
+                self.open_update_dialog(found)
+
+        run_async(
+            self.ctx.services.updates.check_now,
+            done,
+            lambda message: error(self, "Actualizaciones", f"No se pudo comprobar si hay versiones nuevas: {message}"),
+        )
+
+    def open_update_dialog(self, info) -> None:
+        if info is None:
+            return
+        from .update_dialog import UpdateDialog
+
+        self.show_and_raise()
+        dialog = UpdateDialog(self, self.ctx, info, self.quit_app)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dialog.show()
 
     def _update_status(self) -> None:
         paused = self.ctx.cfg.data.general.paused

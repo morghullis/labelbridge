@@ -20,6 +20,8 @@ class Tray(QSystemTrayIcon):
         show_window: Callable[[], None],
         quit_app: Callable[[], None],
         print_test: Callable[[], object],
+        check_updates: Callable[[], object] | None = None,
+        message_clicked: Callable[[], object] | None = None,
     ) -> None:
         super().__init__(icons.app_icon())
         self.ctx = ctx
@@ -33,6 +35,11 @@ class Tray(QSystemTrayIcon):
         menu.addAction(self.pause_action)
         test = menu.addAction(icons.icon("printer"), "Imprimir etiqueta de prueba")
         test.triggered.connect(print_test)
+        if check_updates is not None:
+            updates = menu.addAction(icons.icon("download"), "Buscar actualizaciones")
+            updates.triggered.connect(check_updates)
+        if message_clicked is not None:
+            self.messageClicked.connect(message_clicked)
         menu.addSeparator()
         quit_action = menu.addAction(icons.icon("power"), "Salir (detiene la impresión automática)")
         quit_action.triggered.connect(quit_app)

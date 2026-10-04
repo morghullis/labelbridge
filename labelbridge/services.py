@@ -17,6 +17,7 @@ from .connectors.shopify import ShopifyService
 from .jobstore import JobStore
 from .printing.engine import PrintEngine
 from .secret_store import LOCAL_API_KEY, SecretStore
+from .updater import UpdateService
 
 log = logging.getLogger(__name__)
 
@@ -87,6 +88,7 @@ class Services:
         self.mqtt = MqttService(cfg, secrets, store, engine, events)
         self.shopify = ShopifyService(cfg, secrets, store, engine, events)
         self.network = NetworkWatcher(cfg, events)
+        self.updates = UpdateService(cfg, events)
         self.by_section: dict[str, BackgroundService] = {
             "local_api": self.local_api,
             "mqtt": self.mqtt,
@@ -98,7 +100,7 @@ class Services:
         cfg.subscribe(self._on_config_saved)
 
     def all(self) -> list[BackgroundService]:
-        return list(self.by_section.values())
+        return [*self.by_section.values(), self.updates]
 
     def start(self) -> None:
         for service in self.all():
@@ -125,8 +127,10 @@ class Services:
             for name in self.by_section:
                 self.restart(name)
         elif section == "general":
-            # "general" también se guarda al pausar: solo reiniciamos el vigía si cambió su ajuste.
+            # "general" también se guarda al pausar: solo se reinicia lo que cambió de estado.
             if self.network.enabled() != self.network.running:
                 self.restart(section)
+            if self.updates.enabled() != self.updates.running:
+                threading.Thread(target=self.updates.restart, name="restart-updates", daemon=True).start()
         elif section in self.by_section:
             self.restart(section)

@@ -1,0 +1,257 @@
+"""Ventanas de actualización: «Nueva versión disponible» (descarga + instalación) y «Novedades»."""
+
+from __future__ import annotations
+
+import threading
+import time
+from datetime import datetime
+from pathlib import Path
+
+from PySide6.QtCore import QObject, Qt, QUrl, Signal
+from PySide6.QtGui import QColor, QDesktopServices, QLinearGradient, QPainter
+from PySide6.QtWidgets import (
+    QApplication,
+    QDialog,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QProgressBar,
+    QTextBrowser,
+    QVBoxLayout,
+    QWidget,
+)
+
+from .. import APP_NAME, __version__
+from .. import updater
+from ..updater import UpdateInfo
+from . import icons
+from .context import AppContext
+from .widgets import button, label
+
+
+def _size_text(size: int) -> str:
+    return f"{size / 1024 / 1024:.1f} MB".replace(".", ",") if size else ""
+
+
+def _date_text(value: str) -> str:
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone().strftime("%d/%m/%Y")
+    except ValueError:
+        return ""
+
+
+class _Banner(QFrame):
+    """Cabecera con degradado índigo, icono de la app y títulos."""
+
+    def __init__(self, title: str, subtitle: str) -> None:
+        super().__init__()
+        self.setFixedHeight(112)
+        row = QHBoxLayout(self)
+        row.setContentsMargins(26, 18, 26, 18)
+        row.setSpacing(18)
+        logo = QLabel()
+        logo.setPixmap(icons.app_icon_pixmap(64))
+        row.addWidget(logo)
+        texts = QVBoxLayout()
+        texts.setSpacing(4)
+        heading = QLabel(title)
+        heading.setStyleSheet("color: white; font-size: 20px; font-weight: 700; background: transparent;")
+        sub = QLabel(subtitle)
+        sub.setStyleSheet("color: #E0E7FF; font-size: 13px; background: transparent;")
+        texts.addStretch(1)
+        texts.addWidget(heading)
+        texts.addWidget(sub)
+        texts.addStretch(1)
+        row.addLayout(texts, 1)
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        painter = QPainter(self)
+        gradient = QLinearGradient(0, 0, self.width(), self.height())
+        gradient.setColorAt(0.0, QColor("#312E81"))
+        gradient.setColorAt(0.55, QColor("#4F46E5"))
+        gradient.setColorAt(1.0, QColor("#7C3AED"))
+        painter.fillRect(self.rect(), gradient)
+        painter.end()
+
+
+def _notes_box(notes: str) -> QTextBrowser:
+    box = QTextBrowser()
+    box.setOpenExternalLinks(True)
+    box.setHtml(updater.notes_to_html(notes))
+    box.setStyleSheet(
+        "QTextBrowser { background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 10px; padding: 8px 12px;"
+        " font-size: 13px; color: #0F172A; }"
+    )
+    box.setMinimumHeight(150)
+    return box
+
+
+class _DownloadSignals(QObject):
+    progress = Signal(int, int)
+    finished = Signal(str)
+    failed = Signal(str)
+
+
+class UpdateDialog(QDialog):
+    def __init__(self, parent: QWidget | None, ctx: AppContext, info: UpdateInfo, quit_app) -> None:
+        super().__init__(parent)
+        self.ctx = ctx
+        self.info = info
+        self.quit_app = quit_app
+        self._cancel = threading.Event()
+        self._started = 0.0
+        self.setWindowTitle(f"Actualizar {APP_NAME}")
+        self.setMinimumWidth(560)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(_Banner("Nueva versión disponible", f"{APP_NAME} {info.version} · tienes la {__version__}"))
+
+        body = QVBoxLayout()
+        body.setContentsMargins(26, 20, 26, 22)
+        body.setSpacing(12)
+        meta = [part for part in (_date_text(info.published_at), _size_text(info.size)) if part]
+        if meta:
+            body.addWidget(label("Publicada el " + " · ".join(meta), "Muted"))
+        body.addWidget(label("Novedades", "SectionTitle"))
+        body.addWidget(_notes_box(info.notes), 1)
+
+        self.progress = QProgressBar()
+        self.progress.setVisible(False)
+        self.progress.setTextVisible(False)
+        self.progress.setFixedHeight(10)
+        body.addWidget(self.progress)
+        self.status = label("", "Muted", wrap=True)
+        self.status.setVisible(False)
+        body.addWidget(self.status)
+
+        hint = (
+            "LabelBridge se cerrará un momento, se instalará la nueva versión y se abrirá sola. "
+            "Tu configuración y tu historial se conservan."
+            if updater.can_install()
+            else "En este equipo se descargará el instalador para que lo ejecutes tú."
+        )
+        self.hint = label(hint, "Hint", wrap=True)
+        body.addWidget(self.hint)
+
+        buttons = QHBoxLayout()
+        self.skip_btn = button("Omitir esta versión", None, "ghost")
+        self.skip_btn.clicked.connect(self._skip)
+        buttons.addWidget(self.skip_btn)
+        buttons.addStretch(1)
+        self.later_btn = button("Más tarde")
+        self.later_btn.clicked.connect(self._later)
+        self.update_btn = button("Actualizar ahora", "download", "primary")
+        self.update_btn.clicked.connect(self._start)
+        buttons.addWidget(self.later_btn)
+        buttons.addWidget(self.update_btn)
+        body.addLayout(buttons)
+        layout.addLayout(body)
+
+    # --- acciones ------------------------------------------------------------------------
+    def _skip(self) -> None:
+        self.ctx.cfg.data.general.skipped_version = self.info.version
+        self.ctx.cfg.save("general")
+        self.reject()
+
+    def _later(self) -> None:
+        self._cancel.set()
+        self.reject()
+
+    def _start(self) -> None:
+        self.update_btn.setEnabled(False)
+        self.skip_btn.setVisible(False)
+        self.later_btn.setText("Cancelar")
+        self.progress.setVisible(True)
+        self.progress.setRange(0, 0)
+        self.status.setVisible(True)
+        self.status.setText("Conectando…")
+        self._started = time.time()
+        signals = _DownloadSignals(self)
+        signals.progress.connect(self._on_progress)
+        signals.finished.connect(self._on_downloaded)
+        signals.failed.connect(self._on_failed)
+        self._signals = signals
+
+        def work() -> None:
+            try:
+                path = updater.download(self.info, lambda done, total: signals.progress.emit(done, total), self._cancel)
+            except Exception as exc:  # se muestra en la ventana
+                signals.failed.emit(str(exc))
+            else:
+                signals.finished.emit(str(path))
+
+        threading.Thread(target=work, name="descarga-actualizacion", daemon=True).start()
+
+    def _on_progress(self, done: int, total: int) -> None:
+        elapsed = max(0.1, time.time() - self._started)
+        speed = done / elapsed / 1024 / 1024
+        if total:
+            self.progress.setRange(0, 1000)
+            self.progress.setValue(int(done * 1000 / total))
+            self.status.setText(
+                f"Descargando {_size_text(done)} de {_size_text(total)} · {speed:.1f} MB/s".replace(".", ",")
+            )
+        else:
+            self.status.setText(f"Descargando {_size_text(done)}…")
+
+    def _on_downloaded(self, path: str) -> None:
+        self.progress.setRange(0, 1000)
+        self.progress.setValue(1000)
+        installer = Path(path)
+        if not updater.can_install():
+            self.status.setText(f"✓ Descarga verificada: {installer.name}")
+            self.later_btn.setText("Cerrar")
+            self.update_btn.setText("Abrir carpeta")
+            self.update_btn.setEnabled(True)
+            self.update_btn.clicked.disconnect()
+            self.update_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(installer.parent))))
+            return
+        self.status.setText("✓ Descarga verificada. Instalando la nueva versión…")
+        self.later_btn.setEnabled(False)
+        self.ctx.store.kv_set("update:installed", self.info.to_json())
+        try:
+            updater.install_and_restart(installer)
+        except Exception as exc:
+            self._on_failed(str(exc))
+            return
+        QApplication.processEvents()
+        self.quit_app()
+
+    def _on_failed(self, message: str) -> None:
+        self.progress.setVisible(False)
+        self.status.setText(f"✗ {message}")
+        self.status.setObjectName("Warning")
+        self.status.style().unpolish(self.status)
+        self.status.style().polish(self.status)
+        self.update_btn.setText("Reintentar")
+        self.update_btn.setEnabled(True)
+        self.later_btn.setText("Cerrar")
+        self._cancel = threading.Event()
+
+    def reject(self) -> None:
+        self._cancel.set()
+        super().reject()
+
+
+class WhatsNewDialog(QDialog):
+    def __init__(self, parent: QWidget | None, info: UpdateInfo) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(f"{APP_NAME} actualizado")
+        self.setMinimumWidth(520)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(_Banner("¡Actualización instalada!", f"Ahora tienes {APP_NAME} {info.version}"))
+        body = QVBoxLayout()
+        body.setContentsMargins(26, 20, 26, 22)
+        body.setSpacing(12)
+        body.addWidget(label("Novedades de esta versión", "SectionTitle"))
+        body.addWidget(_notes_box(info.notes), 1)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        ok = button("Entendido", "check", "primary")
+        ok.clicked.connect(self.accept)
+        row.addWidget(ok)
+        body.addLayout(row)
+        layout.addLayout(body)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)

@@ -84,6 +84,24 @@ El instalador no pide administrador (instalación por usuario), crea accesos dir
 
 > Para distribuir a otras personas sin el aviso de SmartScreen, firma el `.exe` y el instalador con un certificado de firma de código.
 
+## Actualizaciones automáticas
+
+- Página pública de descargas: <https://morghullis.github.io/labelbridge-updates/> (solo instalador y versión; el código sigue privado).
+- La app consulta esa página al arrancar y cada 6 horas. Si hay una versión nueva muestra **«Nueva versión disponible»** con las novedades; al pulsar **Actualizar ahora** descarga el instalador, verifica su SHA-256, se cierra, se instala en silencio y se vuelve a abrir mostrando **«¡Actualización instalada!»**. La configuración y el historial se conservan.
+- También: **Ajustes → Actualizaciones → Buscar actualizaciones ahora**, o clic derecho en el icono de la bandeja.
+
+### Publicar una versión nueva
+
+1. Sube `__version__` en `labelbridge/__init__.py` (p. ej. `1.2.0`).
+2. Agrega en `CHANGELOG.md` una sección `## 1.2.0` con las novedades (líneas que empiezan por `- `).
+3. Crea y sube el tag:
+
+```bash
+git tag -a v1.2.0 -m "LabelBridge 1.2.0" && git push origin main v1.2.0
+```
+
+GitHub Actions prueba todo, genera las capturas de la guía, compila y verifica el `.exe`, lo publica en Releases (privado) y en la página de descargas (público). Todas las apps instaladas lo detectan solas.
+
 ## ¿Cómo llegan los pedidos?
 
 | Modo | Cómo | Ejecuciones de n8n |

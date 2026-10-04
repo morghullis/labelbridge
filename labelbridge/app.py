@@ -86,6 +86,8 @@ def main(argv: list[str] | None = None) -> int:
     from .ui.actions import enqueue_test_label
     from .ui.context import AppContext, QtBridge
     from .ui.main_window import MainWindow
+    from .ui.update_dialog import WhatsNewDialog
+    from .updater import pending_whats_new
     from .ui.pages.guide import is_complete as guide_complete
     from .ui.theme import STYLESHEET
     from .ui.tray import Tray
@@ -127,7 +129,22 @@ def main(argv: list[str] | None = None) -> int:
         window.quitting = True
         app.quit()
 
-    tray = Tray(ctx, window.show_and_raise, quit_app, lambda: enqueue_test_label(ctx))
+    window.quit_app = quit_app
+
+    def tray_message_clicked() -> None:
+        if window.pending_update is not None:
+            window.open_update_dialog(window.pending_update)
+        else:
+            window.show_and_raise()
+
+    tray = Tray(
+        ctx,
+        window.show_and_raise,
+        quit_app,
+        lambda: enqueue_test_label(ctx),
+        check_updates=window.check_updates_now,
+        message_clicked=tray_message_clicked,
+    )
     instance.activated.connect(window.show_and_raise)
 
     def ensure_tray(attempts_left: int = 10) -> None:
@@ -148,8 +165,13 @@ def main(argv: list[str] | None = None) -> int:
         log.warning("No se pudo configurar el inicio automático", exc_info=True)
 
     wants_hidden = "--minimized" in argv or cfg.data.general.start_minimized
-    if "--show" in argv or not guide_complete(ctx) or not wants_hidden:
+    if "--show" in argv or "--updated" in argv or not guide_complete(ctx) or not wants_hidden:
         window.show()
+    just_installed = pending_whats_new(store.kv_get)
+    if just_installed is not None:
+        store.kv_set("update:installed", "")
+        window.show()
+        QTimer.singleShot(900, lambda: WhatsNewDialog(window, just_installed).show())
     ensure_tray()
 
     code = app.exec()

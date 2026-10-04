@@ -32,8 +32,11 @@ jobs:
         run: python -m pytest -q
 
       - name: Ejecutable (PyInstaller)
+        env:
+          QT_QPA_PLATFORM: offscreen
         run: |
           python packaging/make_icon.py
+          python packaging/make_guide_images.py
           python -m PyInstaller packaging/labelbridge.spec --noconfirm --clean
 
       - name: Probar el ejecutable empaquetado
@@ -66,3 +69,21 @@ jobs:
           name: LabelBridge-Setup
           path: dist/installer/*.exe
           if-no-files-found: error
+
+  publish-updates:
+    name: Publicar en la página de descargas
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: LabelBridge-Setup
+          path: dist/installer
+
+      - name: Publicar versión (las apps instaladas la detectan solas)
+        env:
+          UPDATES_DEPLOY_KEY: ${{ secrets.UPDATES_DEPLOY_KEY }}
+        run: python3 packaging/publish_update.py --push

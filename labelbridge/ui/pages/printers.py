@@ -66,6 +66,7 @@ class PrintersPage(Page):
         mine.add(self.table)
         actions = QHBoxLayout()
         add = button("Agregar", "plus", "primary")
+        self.add_btn = add
         menu = QMenu(add)
         menu.addAction(icons.icon("printer"), "Impresora instalada en Windows…", lambda: self._new("system"))
         menu.addAction(icons.icon("wifi"), "Impresora de red por IP…", lambda: self._new("network"))
@@ -88,6 +89,7 @@ class PrintersPage(Page):
         # --- detección -----------------------------------------------------------------------
         detect = Card("Detectar impresoras")
         tabs = QTabWidget()
+        self.tabs = tabs
         detect.add(tabs)
 
         installed = QWidget()
@@ -99,6 +101,7 @@ class PrintersPage(Page):
         refresh = button("Actualizar", "refresh")
         refresh.clicked.connect(self._load_system)
         add_sys = button("Agregar a LabelBridge", "plus", "primary")
+        self.add_sys_btn = add_sys
         add_sys.clicked.connect(self._add_system)
         row.addWidget(refresh)
         row.addWidget(add_sys)

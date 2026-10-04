@@ -155,6 +155,7 @@ class PrinterDialog(QDialog):
         cancel = button("Cancelar")
         cancel.clicked.connect(self.reject)
         save = button("Guardar", "check", "primary")
+        self.save_btn = save
         save.clicked.connect(self._save)
         buttons.addWidget(cancel)
         buttons.addWidget(save)

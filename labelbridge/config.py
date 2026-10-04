@@ -86,6 +86,8 @@ class GeneralSettings:
     paused: bool = False
     auto_discover: bool = True
     guide_acknowledged: str = ""  # pasos informativos de la guía marcados como «Entendido»
+    auto_update_check: bool = True
+    skipped_version: str = ""
     default_printer_id: str = ""
     max_retries: int = 5
     retention_days: int = 30

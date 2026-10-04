@@ -33,6 +33,7 @@ class DashboardPage(Page):
 
         test = button("Imprimir prueba", "printer", tooltip="Etiqueta de ejemplo en la impresora predeterminada")
         test.clicked.connect(self._print_test)
+        self.test_btn = test
         self.header_actions.addWidget(test)
 
         self.guide_banner = guide_banner(ctx, navigate)

@@ -9,11 +9,22 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from PySide6.QtCore import Qt, QTimer, QUrl
-from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QProgressBar, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtGui import QDesktopServices, QPixmap
+from PySide6.QtWidgets import (
+    QDialog,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QProgressBar,
+    QPushButton,
+    QScrollArea,
+    QVBoxLayout,
+    QWidget,
+)
 
 from ...connectors.shopify import ShopifyError, normalize_shop
 from ...secret_store import SHOPIFY_ACCESS_TOKEN, SHOPIFY_CLIENT_SECRET
+from ...updater import UPDATES_PAGE
 from ..actions import enqueue_test_label
 from ..context import AppContext
 from ..widgets import Card, Page, Pill, button, copy_to_clipboard, label
@@ -34,6 +45,7 @@ class Step:
     check: Callable[[AppContext], bool]
     actions: list[tuple[str, str, str]] = field(default_factory=list)  # (texto, icono, acción)
     optional: bool = False
+    images: list[tuple[str, str]] = field(default_factory=list)  # (archivo en assets/guide, pie de foto)
 
 
 # --- comprobaciones ------------------------------------------------------------------------
@@ -108,44 +120,47 @@ STEPS: list[Step] = [
         "Conecta tu impresora de etiquetas",
         "Sirve cualquier impresora: USB o instalada en Windows, o por Wi‑Fi/red sin driver.",
         "<ol>"
-        "<li>Pulsa <b>Ir a Impresoras</b>.</li>"
-        "<li><b>Si la impresora ya funciona en este PC</b> (USB o instalada): pestaña <i>Instaladas en este equipo</i> "
-        "→ selecciónala → <b>Agregar a LabelBridge</b>.</li>"
-        "<li><b>Si está en la red o Wi‑Fi</b>: pestaña <i>En la red</i> → <b>Buscar en la red</b> → elige la tuya → "
-        "<b>Agregar a LabelBridge</b>. No necesita driver.</li>"
-        "<li>En la ventana que se abre revisa: <b>Alias</b> <code>etiquetas</code>, <b>Tamaño</b> 4 × 6 in para "
-        "envíos, y <b>Lenguaje</b> <i>ZPL</i> si es Zebra o compatible (si no, <i>Driver de Windows</i>).</li>"
-        "<li>Pulsa <b>Guardar</b>. La primera impresora queda como predeterminada ★.</li>"
+        "<li>Pulsa <b>Ir a Impresoras</b> (botón de abajo).</li>"
+        "<li><b>Si la impresora ya funciona en este PC</b> (USB o instalada): en ② <i>Instaladas en este equipo</i> "
+        "selecciónala y pulsa ③ <b>Agregar a LabelBridge</b>.</li>"
+        "<li><b>Si está en la red o Wi‑Fi</b>: en ② abre <i>En la red</i>, pulsa <b>Buscar en la red</b>, elige la "
+        "tuya y pulsa <b>Agregar a LabelBridge</b>. No necesita driver. Si conoces la IP, también puedes usar "
+        "① <b>Agregar</b>.</li>"
+        "<li>En la ventana de la impresora (segunda imagen): ① <b>Alias</b> <code>etiquetas</code>, ② <b>Lenguaje</b> "
+        "<i>ZPL</i> si es Zebra o compatible (si no, <i>Driver de Windows</i>), ③ <b>Tamaño</b> 4 × 6 in y "
+        "④ <b>Guardar</b>.</li>"
         "</ol>",
         _printer_ready,
         [("Ir a Impresoras", "printer", "nav:printers")],
+        images=[("printers.png", "Pantalla Impresoras"), ("printer-dialog.png", "Ventana de la impresora")],
     ),
     Step(
         "test",
         "Imprime una etiqueta de prueba",
         "Comprueba que la etiqueta sale completa y del tamaño correcto.",
         "<ol>"
-        "<li>Pulsa <b>Imprimir prueba</b>: sale una etiqueta de ejemplo (pedido #1001).</li>"
-        "<li>Revisa que no salga cortada ni girada. Si sale mal, en <b>Impresoras → Editar</b> ajusta "
-        "<i>Tamaño</i>, <i>Rotación</i> o <i>Resolución</i> y vuelve a probar.</li>"
-        "<li>Si no sale nada, abre <b>Historial</b>: el detalle explica la causa (impresora apagada, sin papel, "
-        "IP incorrecta…).</li>"
+        "<li>Pulsa ① <b>Imprimir prueba</b> (aquí abajo o en Inicio): sale una etiqueta de ejemplo (pedido #1001).</li>"
+        "<li>En ② <i>Últimos trabajos</i> debe aparecer <b>Impreso</b>. Revisa que no salga cortada ni girada; si sale "
+        "mal, ajusta <i>Tamaño</i>, <i>Rotación</i> o <i>Resolución</i> en <b>Impresoras → Editar</b>.</li>"
+        "<li>Si dice <b>Error</b> o <b>Reintentando</b>, el detalle en <b>Historial</b> explica la causa (impresora "
+        "apagada, sin papel, IP incorrecta…).</li>"
         "</ol>",
         _test_printed,
         [("Imprimir prueba", "printer", "test"), ("Ver historial", "clock", "nav:history")],
+        images=[("test-print.png", "Inicio"), ("test-result.png", "Últimos trabajos")],
     ),
     Step(
         "sender",
         "Pon los datos de tu tienda en la etiqueta",
         "El remitente que aparece arriba en cada etiqueta de pedido.",
         "<ol>"
-        "<li>Ve a <b>Ajustes</b> → <i>Etiqueta de pedido generada</i>.</li>"
-        "<li>Escribe el nombre de la tienda y la dirección desde la que envías.</li>"
-        "<li>Elige si quieres mostrar los productos, el QR del pedido y el total.</li>"
-        "<li>Pulsa <b>Guardar ajustes</b>.</li>"
+        "<li>Ve a <b>Ajustes</b>.</li>"
+        "<li>① Escribe el nombre de la tienda y ② la dirección desde la que envías.</li>"
+        "<li>Elige si quieres mostrar los productos, el QR del pedido y el total, y pulsa ③ <b>Guardar ajustes</b>.</li>"
         "</ol>",
         _sender_ready,
         [("Ir a Ajustes", "sliders", "nav:settings")],
+        images=[("sender.png", "Ajustes → Etiqueta de pedido generada")],
     ),
     Step(
         "shopify_app",
@@ -153,16 +168,14 @@ STEPS: list[Step] = [
         "Da permiso a LabelBridge para leer tus pedidos. Sirve para todos tus PCs.",
         "<ol>"
         "<li>Pulsa <b>Abrir Dev Dashboard</b> e inicia sesión con la cuenta dueña de la tienda.</li>"
-        "<li><b>Apps → Create app → Start from Dev Dashboard</b>. Nombre: <code>LabelBridge</code>.</li>"
-        "<li>En la versión de la app, en <b>Access scopes</b>, pega los permisos con <b>Copiar permisos</b> "
-        "(<code>read_orders</code>). Si vas a comprar guías con Shopify Shipping usa "
-        "<b>Copiar permisos + guías</b>.</li>"
-        "<li>En <b>Protected customer data</b> marca <b>Name</b>, <b>Address</b> y <b>Phone</b>: la etiqueta "
+        "<li>② <b>Apps → Create app → Start from Dev Dashboard</b>. Nombre: <code>LabelBridge</code>.</li>"
+        "<li>③ En <b>Access scopes</b> pega los permisos con <b>Copiar permisos</b> (<code>read_orders</code>). Si vas a "
+        "comprar guías con Shopify Shipping usa <b>Copiar permisos + guías</b>.</li>"
+        "<li>④ En <b>Protected customer data</b> marca <b>Name</b>, <b>Address</b> y <b>Phone</b>: la etiqueta "
         "necesita nombre, dirección y teléfono.</li>"
-        "<li><b>Release</b> (publica la versión) e <b>instala</b> la app en tu tienda.</li>"
-        "<li>En <b>App settings</b> copia el <b>Client ID</b> y el <b>Client secret</b>.</li>"
-        "<li>En LabelBridge, pantalla <b>Shopify</b>: escribe tu tienda (<code>…myshopify.com</code>) y pega los dos "
-        "datos con el método <i>App del Dev Dashboard</i>.</li>"
+        "<li>⑤ <b>Release</b> (publica la versión) e <b>Install app</b> en tu tienda.</li>"
+        "<li>⑥ En <b>App settings</b> copia el <b>Client ID</b> y el <b>Client secret</b>: los pegas en el paso "
+        "siguiente.</li>"
         "</ol>"
         "<p>¿Aparece <i>shop_not_permitted</i>? La app y la tienda deben estar en la misma organización del Dev "
         "Dashboard.</p>",
@@ -173,69 +186,82 @@ STEPS: list[Step] = [
             ("Copiar permisos + guías", "copy", f"copy:{SCOPES_LABELS}"),
             ("Ir a Shopify", "shop", "nav:shopify"),
         ],
+        images=[("devdashboard.png", "Dev Dashboard de Shopify (ilustración)")],
     ),
     Step(
         "shopify_on",
         "Conecta tu tienda",
         "LabelBridge empieza a revisar los pedidos nuevos.",
         "<ol>"
-        "<li>En <b>Shopify</b> pulsa <b>Guardar y probar conexión</b>: debe decir <i>✓ Conectado</i> y mostrar los "
-        "permisos (si falta alguno, te lo indica).</li>"
-        "<li>Activa <b>Conector Shopify activo</b> y pulsa <b>Guardar cambios</b>.</li>"
+        "<li>Ve a <b>Shopify</b> y ① activa <b>Conector Shopify activo</b>.</li>"
+        "<li>② Escribe tu tienda: <code>tu-tienda.myshopify.com</code>.</li>"
+        "<li>③ Pega el <b>Client ID</b> y el <b>Client secret</b> del paso anterior.</li>"
+        "<li>④ Pulsa <b>Guardar y probar conexión</b>: debe decir <i>✓ Conectado</i> y mostrar los permisos (si falta "
+        "alguno, te lo indica).</li>"
         "<li>Se imprimen los pedidos <b>nuevos</b> desde ese momento. Para pedidos de horas anteriores usa "
         "<i>Reprocesar las últimas X h</i>.</li>"
         "</ol>",
         _shopify_connected,
         [("Ir a Shopify", "shop", "nav:shopify")],
+        images=[("shopify-connect.png", "Pantalla Shopify → Conexión")],
     ),
     Step(
         "what",
         "Elige qué se imprime en cada pedido",
         "Etiqueta de pedido, guía de envío con franqueo, o ambas.",
         "<ul>"
-        "<li><b>Etiqueta de pedido de LabelBridge</b> (activada por defecto): dirección, productos, código de barras "
+        "<li>① <b>Etiqueta de pedido de LabelBridge</b> (activada por defecto): dirección, productos, código de barras "
         "y QR. Sirve para empacar e identificar el paquete. <b>No lleva franqueo.</b></li>"
-        "<li><b>Guía con Shopify Shipping</b>: LabelBridge compra la guía y la imprime. <b>Shopify cobra cada "
+        "<li>② <b>Comprar etiqueta con Shopify Shipping</b>: compra la guía y la imprime. <b>Shopify cobra cada "
         "guía.</b> Antes configura en Shopify el paquete y la tarifa predeterminados, y actívala en un solo PC.</li>"
-        "<li><b>Guía de otra paquetería</b>: n8n la crea y la guarda en el pedido; activa <i>Etiqueta desde un "
-        "metafield</i>.</li>"
+        "<li>③ <b>Etiqueta desde un metafield</b>: para guías de otra paquetería que n8n o tu web guardan en el "
+        "pedido.</li>"
         "</ul>"
-        "<p>Cada opción puede ir a una impresora distinta. Cuando lo tengas claro pulsa <b>Entendido</b>.</p>",
+        "<p>A la derecha de cada opción eliges la impresora. Pulsa <b>Guardar cambios</b> y después <b>Entendido</b> "
+        "aquí.</p>",
         _what_to_print,
         [("Ir a Shopify", "shop", "nav:shopify"), ("Entendido", "check", "ack:what")],
+        images=[("shopify-what.png", "Pantalla Shopify → Qué imprimir en cada pedido")],
     ),
     Step(
         "order",
         "Haz un pedido de prueba",
         "Comprueba todo de punta a punta con un pedido de prueba.",
         "<ol>"
-        "<li>Pulsa <b>Crear pedido de prueba</b>: se abre <i>Pedidos preliminares</i> en Shopify.</li>"
-        "<li>Agrega un producto y un cliente con dirección de envío.</li>"
-        "<li>Pulsa <b>Cobrar → Marcar como pagado</b> (no se le cobra a nadie).</li>"
-        "<li>En menos de un minuto sale la etiqueta y aparece en <b>Historial</b> con origen <i>Shopify</i>.</li>"
-        "<li>Después cancela o archiva ese pedido en Shopify.</li>"
+        "<li>Pulsa <b>Crear pedido de prueba</b>: se abre ① <i>Pedidos preliminares</i> en Shopify.</li>"
+        "<li>② Agrega un producto y un cliente con dirección de envío.</li>"
+        "<li>③ Pulsa <b>Cobrar → Marcar como pagado</b> (no se le cobra a nadie).</li>"
+        "<li>En menos de un minuto sale la etiqueta y aparece en <b>Historial</b> con origen <i>Shopify</i>. Después "
+        "cancela o archiva ese pedido en Shopify.</li>"
         "</ol>",
         _test_order,
         [("Crear pedido de prueba", "link", "url:draft"), ("Ver historial", "clock", "nav:history")],
+        images=[("draft-order.png", "Shopify → Pedidos preliminares (ilustración)")],
     ),
     Step(
         "daily",
         "Déjalo funcionando para el día a día",
         "LabelBridge trabaja solo, en segundo plano.",
         "<ul>"
-        "<li><b>Iniciar con Windows</b> debe estar activado (Ajustes): si el PC se reinicia, vuelve a imprimir "
-        "solo.</li>"
-        "<li>Al cerrar la ventana la app <b>sigue funcionando</b> junto al reloj. Para pausar: clic derecho en el "
-        "icono → <i>Pausar impresión automática</i>.</li>"
+        "<li>① <b>Iniciar LabelBridge al encender Windows</b> debe estar activado: si el PC se reinicia, vuelve a "
+        "imprimir solo.</li>"
+        "<li>Al cerrar la ventana la app <b>sigue funcionando</b> junto al reloj (① en la segunda imagen). Clic derecho "
+        "→ ② <i>Pausar impresión automática</i> si necesitas detenerla.</li>"
         "<li>Deja el PC <b>encendido</b> y la impresora conectada. Si algo falla verás un aviso y la etiqueta se "
         "reintenta sola.</li>"
-        "<li><b>¿Otro PC?</b> Instala el mismo <i>LabelBridge-Setup.exe</i> y haz los pasos 1 a 3. Deja el "
-        "conector Shopify activo <b>solo en un PC</b> (o reparte pedidos con el filtro por tag).</li>"
+        "<li><b>¿Otro PC?</b> Descarga el instalador desde la <b>página de descargas</b>, instálalo y haz los pasos 1 a "
+        "3. Deja el conector Shopify activo <b>solo en un PC</b> (o reparte pedidos con el filtro por tag).</li>"
         "<li>Si Windows dice <i>«Windows protegió su PC»</i> al instalar: <b>Más información → Ejecutar de todas "
         "formas</b>.</li>"
+        "<li>Las <b>actualizaciones</b> llegan solas: la app te avisa y se actualiza con un clic.</li>"
         "</ul>",
         _daily,
-        [("Ir a Ajustes", "sliders", "nav:settings"), ("Entendido", "check", "ack:daily")],
+        [
+            ("Ir a Ajustes", "sliders", "nav:settings"),
+            ("Página de descargas", "link", f"url:{UPDATES_PAGE}"),
+            ("Entendido", "check", "ack:daily"),
+        ],
+        images=[("daily.png", "Ajustes → General"), ("tray.png", "Bandeja de Windows (ilustración)")],
     ),
     Step(
         "n8n",
@@ -277,9 +303,16 @@ def is_complete(ctx: AppContext) -> bool:
 CODE_STYLE = "font-family: Consolas, Menlo, monospace; color: #3730A3; background-color: #EEF2FF;"
 
 
+BADGE_STYLE = "background-color: #F59E0B; color: #1E1B4B; font-weight: 700;"
+CIRCLED = "①②③④⑤⑥⑦⑧⑨"
+
+
 def _highlight_code(html: str) -> str:
-    """Resalta lo que hay que escribir o pegar (nombres, permisos, dominios)."""
-    return html.replace("<code>", f'<span style="{CODE_STYLE}">&nbsp;').replace("</code>", "&nbsp;</span>")
+    """Resalta lo que hay que escribir o pegar y convierte ①②③ en las insignias doradas de las capturas."""
+    html = html.replace("<code>", f'<span style="{CODE_STYLE}">&nbsp;').replace("</code>", "&nbsp;</span>")
+    for number, symbol in enumerate(CIRCLED, start=1):
+        html = html.replace(symbol, f'<span style="{BADGE_STYLE}">&nbsp;{number}&nbsp;</span>')
+    return html
 
 
 BADGE_STYLES = {
@@ -288,6 +321,70 @@ BADGE_STYLES = {
     "pending": "background: #E2E8F0; color: #475569;",
     "optional": "background: #F1F5F9; color: #64748B; border: 1px dashed #94A3B8;",
 }
+
+
+def guide_image_path(name: str):
+    from ...paths import resource_path
+
+    return resource_path("assets", "guide", name)
+
+
+class ImageViewer(QDialog):
+    """Captura a tamaño completo (clic en una imagen de la guía)."""
+
+    def __init__(self, parent: QWidget | None, pixmap: QPixmap, caption: str) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(caption)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 12, 12, 12)
+        view = QLabel()
+        view.setPixmap(pixmap)
+        view.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        scroll = QScrollArea()
+        scroll.setWidget(view)
+        scroll.setWidgetResizable(True)
+        layout.addWidget(scroll)
+        screen = self.screen().availableGeometry() if self.screen() else None
+        logical = pixmap.size() / pixmap.devicePixelRatio()
+        width, height = logical.width() + 48, logical.height() + 48
+        if screen is not None:
+            width, height = min(width, int(screen.width() * 0.9)), min(height, int(screen.height() * 0.9))
+        self.resize(width, height)
+
+
+class GuideImage(QWidget):
+    """Captura señalada (2x) ajustada al ancho de la tarjeta, con pie de foto; clic para ampliar."""
+
+    MAX_WIDTH = 760
+
+    def __init__(self, file_name: str, caption: str) -> None:
+        super().__init__()
+        self.caption = caption
+        self.pixmap = QPixmap(str(guide_image_path(file_name)))
+        self.available = not self.pixmap.isNull()
+        if not self.available:
+            return
+        self.pixmap.setDevicePixelRatio(2.0)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+        logical = self.pixmap.size() / 2.0
+        scale = min(1.0, self.MAX_WIDTH / max(1, logical.width()))
+        shown = self.pixmap.scaled(
+            int(self.pixmap.width() * scale),
+            int(self.pixmap.height() * scale),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        shown.setDevicePixelRatio(2.0)
+        picture = QLabel()
+        picture.setPixmap(shown)
+        picture.setCursor(Qt.CursorShape.PointingHandCursor)
+        picture.setToolTip("Clic para ver en grande")
+        picture.setStyleSheet("QLabel { border: 1px solid #E2E8F0; border-radius: 8px; background: white; }")
+        picture.mousePressEvent = lambda _event: ImageViewer(self.window(), self.pixmap, caption).exec()
+        layout.addWidget(picture, 0, Qt.AlignmentFlag.AlignLeft)
+        layout.addWidget(label(f"▲ {caption} · clic para ampliar", "Small"))
 
 
 class StepCard(QFrame):
@@ -319,14 +416,23 @@ class StepCard(QFrame):
         self.toggle.clicked.connect(lambda: self.set_expanded(not self.details.isVisible()))
         body.addWidget(self.toggle, 0, Qt.AlignmentFlag.AlignLeft)
 
-        self.details = QLabel(_highlight_code(step.details))
-        self.details.setWordWrap(True)
-        self.details.setTextFormat(Qt.TextFormat.RichText)
-        self.details.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        self.details.setStyleSheet(
+        self.details = QWidget()
+        details_layout = QVBoxLayout(self.details)
+        details_layout.setContentsMargins(0, 0, 0, 4)
+        details_layout.setSpacing(12)
+        instructions = QLabel(_highlight_code(step.details))
+        instructions.setWordWrap(True)
+        instructions.setTextFormat(Qt.TextFormat.RichText)
+        instructions.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        instructions.setStyleSheet(
             "QLabel { background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 8px; padding: 10px 14px;"
             " color: #0F172A; line-height: 150%; }"
         )
+        details_layout.addWidget(instructions)
+        for file_name, caption in step.images:
+            shot = GuideImage(file_name, caption)
+            if shot.available:
+                details_layout.addWidget(shot)
         body.addWidget(self.details)
 
         actions = QHBoxLayout()

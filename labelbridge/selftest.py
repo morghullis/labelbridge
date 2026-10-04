@@ -111,7 +111,17 @@ def run(argv: list[str]) -> int:
         store.close()
         return f"{len(NAV)} pantallas"
 
+    def guide_and_updates() -> str:
+        from . import updater
+        from .paths import resource_path
+
+        images = list(resource_path("assets", "guide").glob("*.png"))
+        assert len(images) >= 8, f"faltan imágenes de la guía ({len(images)})"
+        assert updater.is_newer("99.0.0") and not updater.is_newer("0.0.1")
+        return f"{len(images)} imágenes de guía · actualizador listo"
+
     check("librerías", libraries)
+    check("guía y actualizaciones", guide_and_updates)
     check("impresión de Windows", windows_printing)
     check("etiqueta → PDF → ZPL", label_pipeline)
     check("interfaz", interface)
