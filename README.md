@@ -98,6 +98,8 @@ El instalador no pide administrador (instalación por usuario), crea accesos dir
 - Página pública de descargas: <https://morghullis.github.io/labelbridge-updates/> (solo instalador y versión; el código sigue privado).
 - La app consulta esa página al arrancar y cada 6 horas. Si hay una versión nueva muestra **«Nueva versión disponible»** con las novedades; al pulsar **Actualizar ahora** descarga el instalador, verifica su SHA-256, se cierra, se instala en silencio y se vuelve a abrir mostrando **«¡Actualización instalada!»**. La configuración y el historial se conservan.
 - También: **Ajustes → Actualizaciones → Buscar actualizaciones ahora**, o clic derecho en el icono de la bandeja.
+- Cada actualización deja registro en `logs/actualizacion.log` (pasos) e `instalador.log` (Inno Setup). Si no se completa, la app lo avisa al abrirse y ofrece reintentar o descargar el instalador.
+- El workflow manual **Update end-to-end** compila el instalador del commit actual y comprueba en Windows real que una versión instalada se actualiza y se vuelve a abrir (también cuando la app tarda en cerrarse).
 
 ### Publicar una versión nueva
 

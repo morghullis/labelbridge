@@ -4,7 +4,8 @@ Cada versión publicada muestra estas notas en la ventana de actualización de l
 
 ## 1.3.1
 
-- Actualizaciones más fiables: si la app tarda en cerrarse, el instalador espera en lugar de cancelarse, y la app siempre se vuelve a abrir al terminar.
+- Importante: si tienes la 1.3.0 o una anterior, instala esta versión desde la página de descargas (botón «Página de descargas»). En esas versiones la actualización automática no llegaba a ejecutar el instalador; desde la 1.3.1 ya funciona sola.
+- Actualizaciones arregladas: la app se cierra, se instala la versión nueva y se vuelve a abrir sola. Si la app tarda en cerrarse, el instalador espera en lugar de cancelarse.
 - Si una actualización no se completa, la app te avisa al abrirse y te ofrece reintentar o descargar el instalador.
 - Cada actualización deja registro (actualizacion.log e instalador.log) para revisar cualquier problema.
 
