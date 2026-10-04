@@ -43,6 +43,10 @@ def _install_exception_hooks() -> None:
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv if argv is None else argv)
     _ensure_qt_plugin_path()
+    if "--self-test" in argv:
+        from .selftest import run as self_test
+
+        return self_test(argv)
 
     from PySide6.QtCore import QTimer
     from PySide6.QtGui import QFont

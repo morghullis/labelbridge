@@ -33,6 +33,14 @@ jobs:
           python packaging/make_icon.py
           python -m PyInstaller packaging/labelbridge.spec --noconfirm --clean
 
+      - name: Probar el ejecutable empaquetado
+        shell: pwsh
+        run: |
+          $report = Join-Path $env:RUNNER_TEMP "selftest.txt"
+          $proc = Start-Process -FilePath "dist\LabelBridge\LabelBridge.exe" -ArgumentList "--self-test", "`"$report`"" -Wait -PassThru
+          if (Test-Path $report) { Get-Content $report } else { Write-Host "No se generó el informe" }
+          if ($proc.ExitCode -ne 0) { throw "La autoprueba del .exe falló (código $($proc.ExitCode))" }
+
       - name: Instalador (Inno Setup)
         shell: pwsh
         run: |
