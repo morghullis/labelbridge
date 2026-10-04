@@ -500,7 +500,7 @@ def test_connect_card_tests_and_saves_the_key_for_the_chosen_provider(core):
     assert [r.url for r in http.requests[1:]] == ["https://api.openai.com/v1/models",
                                                   "https://api.openai.com/v1/models/gpt-6.1-sol"]
     assert page.conversation.endpoint.provider.id == "openai" and page.input.isEnabled()
-    assert "OpenAI" in page.footnote.text()
+    assert "OpenAI" in page.status_text() and "OpenAI" in page.footnote.toolTip()
 
 
 def test_settings_switch_provider_model_and_address(core):
@@ -678,13 +678,11 @@ def test_a_rejected_address_changes_nothing_and_connect_saves_nothing(core):
     before = core.cfg.data.security.require_https
 
     class Window:
-        def __init__(self):
-            self.pages = {}
-
-        def navigate(self, key):
-            self.went = key
+        def open_assistant(self, connect=False, provider=None):
+            self.opened = (connect, provider)
 
     window = Window()
     page.window = lambda: window
     page._open_connect()
-    assert window.went == "assistant" and core.cfg.data.security.require_https == before  # no guardó Seguridad
+    assert window.opened == (True, "openai")  # abre «Conecta tu IA» con el proveedor elegido aquí
+    assert core.cfg.data.security.require_https == before  # y no guardó nada de Seguridad

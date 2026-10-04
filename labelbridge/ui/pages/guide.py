@@ -115,19 +115,25 @@ STEPS: list[Step] = [
         "¿Prefieres conversar? El asistente lo configura por ti",
         "Escríbele tus datos (impresora, tienda…) y él hace los pasos de esta guía. Opcional.",
         "<ol>"
-        "<li>Abre ① <b>Asistente</b> en el menú de la izquierda. La primera vez, en <b>Conecta tu IA</b>, elige tu "
-        "proveedor (<b>Claude, ChatGPT de OpenAI, Gemini</b>, otro compatible o un modelo en tu equipo con Ollama), "
-        "pega tu <b>clave de API</b> y pulsa <b>Guardar y probar</b> (primera captura). Se paga por uso a tu "
-        "proveedor: configurar todo suele costar menos de un dólar.</li>"
-        "<li>② Escríbele con tus palabras, por ejemplo: <i>«Tengo una Zebra por USB y quiero imprimir las guías de "
-        "Shopify Shipping de mi tienda»</i>. Él agrega la impresora, conecta la tienda y te dice qué falta.</li>"
-        "<li>Antes de cada cambio te pide permiso. Las claves se piden en una ventana segura (o con ③ <b>Dato "
-        "secreto</b>) y se quedan en este PC. Comprar guías siempre pide confirmación.</li>"
+        "<li>Ábrelo con ① el <b>botón dorado de la máscara</b>, abajo a la derecha: está en todas las pantallas "
+        "(también con <b>F1</b>).</li>"
+        "<li>La primera vez, en <b>Conecta tu IA</b>: ② elige tu IA (<b>Claude, ChatGPT de OpenAI, Gemini</b>, otra "
+        "compatible u Ollama en tu equipo), ③ pega tu <b>clave de API</b> y ④ pulsa <b>Guardar y probar</b>. Se paga "
+        "por uso a tu proveedor: configurar todo suele costar menos de un dólar.</li>"
+        "<li>⑤ Escríbele con tus palabras, por ejemplo: <i>«Tengo una Zebra por USB y quiero imprimir las guías de "
+        "Shopify Shipping de mi tienda»</i>. Él agrega la impresora, conecta la tienda y te dice qué falta; la máscara "
+        "te muestra si piensa, trabaja o te pregunta algo.</li>"
+        "<li>Antes de cada cambio te pide permiso. Las claves se piden en una ventana segura (o con ⑥ el "
+        "<b>candado</b>) y se quedan en este PC. Comprar guías siempre pide confirmación.</li>"
         "</ol>",
         _assistant_ready,
         [("Abrir el asistente", "chat", "nav:assistant")],
         optional=True,
-        images=[("assistant-connect.png", "Asistente → Conecta tu IA"), ("assistant.png", "Pantalla Asistente")],
+        images=[
+            ("assistant-bubble.png", "El botón del asistente (en todas las pantallas)"),
+            ("assistant-connect.png", "Conecta tu IA"),
+            ("assistant.png", "El chat del asistente"),
+        ],
     ),
     Step(
         "printer",

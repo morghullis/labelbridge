@@ -1,5 +1,9 @@
-"""Asistente: configura LabelBridge conversando. Funciona con la IA que elija el usuario (Claude, OpenAI, Gemini o
-cualquier API compatible con OpenAI) y usa las herramientas de la app."""
+"""El chat del asistente: configura LabelBridge conversando. Funciona con la IA que elija el usuario (Claude, OpenAI,
+Gemini o cualquier API compatible con OpenAI) y usa las herramientas de la app.
+
+Vive dentro del panel flotante (ui/assistant_dock.py), que está disponible en todas las pantallas. La señal `mood`
+cuenta lo que pasa (escribe, piensa, usa una herramienta, responde…) para que la máscara reaccione.
+"""
 
 from __future__ import annotations
 
@@ -7,7 +11,7 @@ import threading
 from typing import Any, Callable
 
 from PySide6.QtCore import QObject, Qt, QTimer, QUrl, Signal, Slot
-from PySide6.QtGui import QDesktopServices, QFont, QKeyEvent, QTextCursor, QTextDocument
+from PySide6.QtGui import QDesktopServices, QFont, QKeyEvent, QPixmap, QTextCursor, QTextDocument
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -32,9 +36,11 @@ from ...events import CONFIG_EXTERNAL
 from ...secret_store import MQTT_PASSWORD, SHOPIFY_ACCESS_TOKEN, SHOPIFY_CLIENT_SECRET
 from .. import icons
 from ..context import AppContext
-from ..widgets import Card, Pill, SecretField, button, copy_to_clipboard, label, repolish, run_async
+from ..mascot import mascot_pixmap
+from ..widgets import Card, SecretField, button, copy_to_clipboard, label, repolish, run_async
 
-BUBBLE_MAX = 620
+BUBBLE_MAX = 292  # ancho máximo de una burbuja dentro del panel
+AVATAR = 28
 WELCOME = (
     "¡Hola! Soy el asistente de LabelBridge. Escríbeme con tus palabras qué quieres configurar y lo hago por ti: la "
     "impresora de etiquetas, la conexión con tu tienda de Shopify y la compra e impresión automática de las **guías de "
@@ -43,11 +49,11 @@ WELCOME = (
     "🔒 Antes de cambiar algo te pido permiso, y si hace falta un dato secreto (como el Client secret de Shopify) te "
     "abro una ventana segura: no hace falta escribirlo en el chat."
 )
-SUGGESTIONS = (
-    "Configúralo todo conmigo paso a paso",
-    "Quiero que se impriman solas las guías de Shopify Shipping",
-    "Conecta mi impresora de etiquetas",
-    "¿Por qué no se imprimió un pedido?",
+SUGGESTIONS = (  # (lo que dice el botón, lo que se envía)
+    ("Configúralo todo conmigo", "Configúralo todo conmigo paso a paso"),
+    ("Imprimir solas las guías de Shopify", "Quiero que se impriman solas las guías de Shopify Shipping"),
+    ("Conectar mi impresora", "Conecta mi impresora de etiquetas"),
+    ("¿Por qué no se imprimió un pedido?", "¿Por qué no se imprimió un pedido?"),
 )
 # Datos secretos que se pueden guardar con el botón del candado (la clave de la IA va en «Conectar IA»).
 LOCK_KINDS = dict(SECRET_KINDS)
@@ -115,7 +121,7 @@ class ApprovalDialog(QDialog):
         layout.setSpacing(12)
         head = QHBoxLayout()
         icon = QLabel()
-        icon.setPixmap(icons.pixmap("sparkle", "#4F46E5", 22))
+        icon.setPixmap(mascot_pixmap("curious", 40))
         head.addWidget(icon, 0, Qt.AlignmentFlag.AlignTop)
         head.addWidget(label("El asistente quiere hacer este cambio:", "CardTitle", wrap=True), 1)
         layout.addLayout(head)
@@ -219,14 +225,24 @@ class QtAssistantUI:
         self.page = page
         self.invoker = _Invoker()
 
+    def _asking(self, show: Callable[[], Any]) -> Any:
+        def run() -> Any:
+            self.page.mood.emit("asking", True)
+            try:
+                return show()
+            finally:
+                self.page.mood.emit("asking", False)
+
+        return self.invoker.call(run)
+
     def confirm(self, title: str, text: str, accept: str) -> bool:
-        return bool(self.invoker.call(lambda: confirm_action(self.page.window(), title, text, accept)))
+        return bool(self._asking(lambda: confirm_action(self.page.window(), title, text, accept)))
 
     def approve(self, title: str, text: str) -> str:
-        return str(self.invoker.call(lambda: approve_change(self.page.window(), title, text)))
+        return str(self._asking(lambda: approve_change(self.page.window(), title, text)))
 
     def ask_secret(self, title: str, hint: str) -> str | None:
-        return self.invoker.call(lambda: SecretDialog.ask(self.page.window(), title, hint))
+        return self._asking(lambda: SecretDialog.ask(self.page.window(), title, hint))
 
     def open_url(self, url: str) -> None:
         self.invoker.call(lambda: QDesktopServices.openUrl(QUrl(url)))
@@ -267,6 +283,13 @@ def open_safe_link(url: str) -> None:
         QDesktopServices.openUrl(target)
 
 
+def _narrow(combo: QComboBox) -> QComboBox:
+    """Lista desplegable que cabe en el panel aunque algún texto sea largo."""
+    combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+    combo.setMinimumContentsLength(12)
+    return combo
+
+
 def pick_model(provider, wanted: str, available: list[str]) -> str:
     """El modelo que se usará: el elegido si existe; si no, el primero recomendado que tenga la cuenta."""
     if not available or wanted in available:
@@ -279,15 +302,16 @@ def pick_model(provider, wanted: str, available: list[str]) -> str:
     return wanted or available[0]
 
 
-def _avatar() -> QLabel:
+_AVATARS: dict[str, QPixmap] = {}
+
+
+def _avatar(expression: str = "neutral") -> QLabel:
+    """La máscara pequeña junto a cada mensaje del asistente (imagen fija: la viva está en la cabecera)."""
+    if expression not in _AVATARS:
+        _AVATARS[expression] = mascot_pixmap(expression, AVATAR)
     avatar = QLabel()
-    avatar.setFixedSize(30, 30)
-    avatar.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    avatar.setPixmap(icons.pixmap("sparkle", "#FFFFFF", 16))
-    avatar.setStyleSheet(
-        "QLabel { background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #818CF8, stop:1 #4338CA);"
-        " border-radius: 15px; }"
-    )
+    avatar.setFixedSize(AVATAR, AVATAR)
+    avatar.setPixmap(_AVATARS[expression])
     return avatar
 
 
@@ -386,11 +410,16 @@ class Composer(QPlainTextEdit):
 # --- pantalla -------------------------------------------------------------------------------------
 
 class AssistantPage(QWidget):
+    """El chat (sin cabecera: la pone el panel flotante, con la máscara viva)."""
+
     agent_event = Signal(str, object)
+    mood = Signal(str, object)  # lo que pasa en la conversación, para la cara de la máscara
+    changed = Signal()  # cambió el estado que muestra la cabecera (listo, trabajando, falta la IA…)
 
     def __init__(self, ctx: AppContext, connector=None) -> None:
         super().__init__()
-        self.setObjectName("Content")
+        self._built = False
+        self.setObjectName("AssistantChat")
         self.ctx = ctx
         self.ui = QtAssistantUI(self)
         self.guard = SecretsGuard(ctx.secrets)
@@ -399,98 +428,123 @@ class AssistantPage(QWidget):
         self.conversation = Conversation(self.toolbox, ctx.secrets, self.connector)
         self.cancel = threading.Event()
         self.busy = False
+        self.activity = ""  # lo que hace ahora (para la cabecera)
         self._worker: threading.Thread | None = None
         self.pending_notes: list[str] = []
         self._activities: dict[str, ActivityRow] = {}
         self._thinking: ActivityRow | None = None
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(32, 28, 32, 20)
-        outer.setSpacing(14)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
 
-        header = QHBoxLayout()
-        titles = QVBoxLayout()
-        titles.setSpacing(4)
-        titles.addWidget(label("Asistente", "PageTitle"))
-        titles.addWidget(
-            label(
-                "Escríbele tus datos y él configura LabelBridge por ti: impresora, tienda y guías de Shopify Shipping.",
-                "PageSubtitle",
-                wrap=True,
-            )
-        )
-        header.addLayout(titles, 1)
-        self.usage = Pill("off", "")
-        header.addWidget(self.usage, 0, Qt.AlignmentFlag.AlignTop)
-        self.status = Pill("off", "")
-        header.addWidget(self.status, 0, Qt.AlignmentFlag.AlignTop)
-        self.key_btn = button("Conectar IA", "key", "ghost", "Elegir el proveedor de IA y su clave de API")
-        self.key_btn.clicked.connect(lambda: self.key_card.setVisible(not self.key_card.isVisible()))
-        header.addWidget(self.key_btn, 0, Qt.AlignmentFlag.AlignTop)
-        self.new_btn = button("Nueva conversación", "refresh", "ghost")
-        self.new_btn.clicked.connect(self.new_conversation)
-        header.addWidget(self.new_btn, 0, Qt.AlignmentFlag.AlignTop)
-        outer.addLayout(header)
-
+        # «Conecta tu IA» arriba, con su propio desplazamiento si no cabe (ventanas pequeñas).
         self.key_card = self._key_card()
-        self.key_card.setVisible(not self.conversation.has_key())
-        outer.addWidget(self.key_card)
+        holder = QWidget()
+        holder.setObjectName("AssistantChat")
+        card_layout = QVBoxLayout(holder)
+        card_layout.setContentsMargins(12, 12, 12, 0)
+        card_layout.addWidget(self.key_card)
+        self.key_box = QScrollArea()
+        self.key_box.setObjectName("KeyScroll")
+        self.key_box.setWidget(holder)
+        self.key_box.setWidgetResizable(True)
+        self.key_box.setFrameShape(QFrame.Shape.NoFrame)
+        self.key_box.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.key_box.setSizeAdjustPolicy(QScrollArea.SizeAdjustPolicy.AdjustToContents)
+        outer.addWidget(self.key_box)
+        self._card_wanted = False
+        self._set_card(not self.conversation.has_key())
 
-        panel = QFrame()
-        panel.setObjectName("ChatPanel")
-        panel_layout = QVBoxLayout(panel)
-        panel_layout.setContentsMargins(1, 1, 1, 1)
         self.scroll = QScrollArea()
+        self.scroll.setObjectName("ChatScroll")
         self.scroll.setWidgetResizable(True)
         self.scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         area = QWidget()
         area.setObjectName("ChatArea")
         self.column = QVBoxLayout(area)
-        self.column.setContentsMargins(20, 18, 20, 18)
-        self.column.setSpacing(12)
+        self.column.setContentsMargins(14, 14, 14, 14)
+        self.column.setSpacing(10)
         self.column.addStretch(1)
         self.scroll.setWidget(area)
         bar = self.scroll.verticalScrollBar()
         bar.rangeChanged.connect(lambda _low, high: bar.setValue(high))  # siempre al último mensaje
-        panel_layout.addWidget(self.scroll)
-        outer.addWidget(panel, 1)
+        outer.addWidget(self.scroll, 1)
 
         composer = QFrame()
         self.composer = composer
         composer.setObjectName("Composer")
         row = QHBoxLayout(composer)
-        row.setContentsMargins(12, 8, 8, 8)
+        row.setContentsMargins(10, 8, 10, 6)
         row.setSpacing(8)
         self.input = Composer()
-        self.input.setPlaceholderText("Escribe aquí… (Enter envía, Mayús+Enter salto de línea)")
-        self.input.setFixedHeight(64)
+        self.input.setPlaceholderText("Escribe aquí… (Enter envía)")
+        self.input.setToolTip("Enter envía · Mayús+Enter hace un salto de línea")
+        self.input.setFixedHeight(54)
         self.input.submitted.connect(self.send_current)
+        self.input.textChanged.connect(lambda: self.mood.emit("typing", bool(self.input.toPlainText().strip())))
         row.addWidget(self.input, 1)
-        self.secret_btn = button("Dato secreto", "lock", None, "Guardar una clave o contraseña sin escribirla en el chat")
+        self.secret_btn = button("", "lock", None, "Dato secreto: guardar una clave o contraseña sin escribirla en el chat")
+        self.secret_btn.setObjectName("IconButton")
+        self.secret_btn.setAccessibleName("Dato secreto")
+        self.secret_btn.setFixedSize(40, 40)
         self.secret_btn.clicked.connect(self._secret_from_button)
         row.addWidget(self.secret_btn, 0, Qt.AlignmentFlag.AlignBottom)
         self.send_btn = button("Enviar", "send", "primary")
+        self.send_btn.setFixedHeight(40)
         self.send_btn.clicked.connect(self._send_or_stop)
         row.addWidget(self.send_btn, 0, Qt.AlignmentFlag.AlignBottom)
         outer.addWidget(composer)
         self.footnote = label("", "Small", wrap=True)
+        self.footnote.setContentsMargins(14, 0, 14, 10)
         outer.addWidget(self.footnote)
 
         self.agent_event.connect(self._on_agent_event)
         ctx.bridge.event.connect(self._on_app_event)
         ctx.bridge.config_saved.connect(lambda section: self._on_app_event(CONFIG_EXTERNAL, section))
+        self._built = True
         self._welcome()
         self.refresh()
 
+    def _set_card(self, visible: bool) -> None:
+        """Muestra u oculta «Conecta tu IA» (con su recuadro, para no dejar huecos)."""
+        self._card_wanted = visible
+        self.key_card.setVisible(visible)
+        self.key_box.setVisible(visible)
+        self._fit_card()
+
+    def _fit_card(self) -> None:
+        """Sin IA conectada aún no hay nada que conversar: la tarjeta usa todo el panel. Con IA, deja ver el chat."""
+        if not self._built:
+            return  # aún construyéndose
+        first_time = self._card_wanted and not self.conversation.has_key()
+        self.scroll.setVisible(not first_time)
+        self.layout().setStretchFactor(self.key_box, 1 if first_time else 0)
+        if first_time:
+            self.key_box.setMaximumHeight(16777215)  # todo el alto disponible
+        else:
+            self.key_box.setMaximumHeight(max(180, self.height() - 240))  # y siempre se ve algo del chat
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._fit_card()
+
+    def toggle_connect(self) -> None:
+        if self._card_wanted and self.conversation.has_key():
+            self._set_card(False)
+        else:
+            self.show_connect()
+
     def _on_app_event(self, kind: str, data) -> None:
         if kind == CONFIG_EXTERNAL and data in ("assistant", "all"):
-            if not self.key_card.isVisible():  # no se pisa lo que el usuario está escribiendo en la tarjeta
+            if not self._card_wanted:  # no se pisa lo que el usuario está escribiendo en la tarjeta
                 self._provider_changed()
             self.refresh()
 
     def show_connect(self, provider_id: str | None = None) -> None:
         """Abre la tarjeta «Conecta tu IA» (desde Ajustes o la guía), con ese proveedor si se indica."""
-        self.key_card.setVisible(True)
+        self._set_card(True)
         index = self.provider_combo.findData(provider_id) if provider_id else -1
         if index < 0:
             self._provider_changed()  # el proveedor guardado
@@ -504,12 +558,12 @@ class AssistantPage(QWidget):
     def _key_card(self) -> Card:
         card = Card(
             "Conecta tu IA",
-            "El asistente funciona con la IA que prefieras: Claude, ChatGPT (OpenAI), Gemini u otra compatible. Usa tu "
-            "propia clave de API y pagas por uso directamente a tu proveedor; los límites y permisos son los mismos.",
+            "Elige tu IA y usa tu propia clave: pagas por uso a tu proveedor. Los permisos y límites son los mismos "
+            "con cualquiera.",
         )
         self.key_form = QFormLayout()
         self.key_form.setSpacing(10)
-        self.provider_combo = QComboBox()
+        self.provider_combo = _narrow(QComboBox())
         for provider in PROVIDERS.values():
             self.provider_combo.addItem(provider.name, provider.id)
         self.provider_combo.setCurrentIndex(max(0, self.provider_combo.findData(resolve(self.ctx.cfg.data.assistant).provider.id)))
@@ -517,21 +571,24 @@ class AssistantPage(QWidget):
         self.key_form.addRow("Proveedor", self.provider_combo)
         self.url_field = QLineEdit()
         self.key_form.addRow("Dirección", self.url_field)
-        self.model_field = QComboBox()
+        self.model_field = _narrow(QComboBox())
         self.model_field.setEditable(True)
         self.key_form.addRow("Modelo", self.model_field)
         card.add(layout=self.key_form)
         self.key_steps = label("", wrap=True)
+        self.key_steps.setStyleSheet("font-size: 12px; color: #334155;")
         card.add(self.key_steps)
-        row = QHBoxLayout()
         self.key_field = SecretField("", copyable=False)
-        row.addWidget(self.key_field, 1)
+        card.add(self.key_field)
+        row = QHBoxLayout()
+        row.setSpacing(8)
         self.key_save = button("Guardar y probar", "check", "primary")
         self.key_save.clicked.connect(self._save_key)
         row.addWidget(self.key_save)
-        self.open_keys = button("Abrir página de claves", "link")
+        self.open_keys = button("Obtener clave", "link")
         self.open_keys.clicked.connect(self._open_keys_page)
         row.addWidget(self.open_keys)
+        row.addStretch(1)
         card.add(layout=row)
         self.key_result = label("", "Hint", wrap=True)
         self.key_result.setVisible(False)
@@ -595,7 +652,8 @@ class AssistantPage(QWidget):
             steps += "<br>✓ Ya hay una clave guardada para este proveedor: deja el campo vacío para volver a probarla."
         self.key_steps.setText(steps)
         self.open_keys.setVisible(bool(provider.keys_url))
-        self.open_keys.setText("Abrir página de claves" if provider.needs_key else f"Descargar {provider.short}")
+        self.open_keys.setText("Obtener clave" if provider.needs_key else f"Descargar {provider.short}")
+        self.open_keys.setToolTip(provider.keys_url)
         if user:
             self.key_result.setVisible(False)
 
@@ -673,9 +731,14 @@ class AssistantPage(QWidget):
             self._key_message(True, f"✓ Conectado a {provider.short} · {label_name}. Ya puedes escribirle al asistente.{note}")
             self._provider_changed()
             self.refresh()
-            QTimer.singleShot(3000, lambda: self.key_card.setVisible(not self.conversation.has_key()))
+            self.mood.emit("connected", None)
+            QTimer.singleShot(3000, self._hide_connected_card)
 
         run_async(check, ok, lambda message: self._key_message(False, f"✗ {message}"))
+
+    def _hide_connected_card(self) -> None:
+        if self.conversation.has_key():
+            self._set_card(False)
 
     def _key_message(self, ok: bool, text: str) -> None:
         self.key_save.setEnabled(True)
@@ -686,34 +749,40 @@ class AssistantPage(QWidget):
         repolish(self.key_result)
 
     # --- conversación ------------------------------------------------------------------------------
+    def status_text(self) -> str:
+        """Lo que dice la cabecera bajo «Asistente»."""
+        if self.busy:
+            return f"{self.activity}…" if self.activity else "Pensando…"
+        if not self.conversation.has_key():
+            return "Falta conectar la IA"
+        return f"Lista · {self.conversation.endpoint.label}"
+
+    def usage_text(self) -> str:
+        settings = self.ctx.cfg.data.assistant
+        today = self.conversation.meter.today()
+        budget = float(settings.daily_budget_usd or 0)
+        return f"Hoy ≈ {today['cost']:.2f} USD" + (f" de {budget:.2f}" if budget > 0 else "")
+
     def refresh(self) -> None:
         has_key = self.conversation.has_key()
-        if not has_key:
-            self.key_card.setVisible(True)
-        if self.busy:
-            self.status.set_state("connecting", "Trabajando…")
-        elif has_key:
-            self.status.set_state("ok", "Listo")
-        else:
-            self.status.set_state("warn", "Falta conectar la IA")
+        if not has_key and not self._card_wanted:
+            self._set_card(True)  # p. ej. se cambió a un proveedor sin clave guardada
+        self._fit_card()
         self.input.setEnabled(has_key)
         self.send_btn.setEnabled(has_key or self.busy)
         for chip in self.findChildren(QPushButton, "Suggestion"):
             chip.setEnabled(has_key and not self.busy)
-        settings = self.ctx.cfg.data.assistant
         endpoint = self.conversation.endpoint
         today = self.conversation.meter.today()
-        budget = float(settings.daily_budget_usd or 0)
-        spent = f"Hoy ≈ {today['cost']:.2f} USD" + (f" de {budget:.2f}" if budget > 0 else "")
-        self.usage.set_state("warn" if budget > 0 and today["cost"] >= budget * 0.8 else "off", spent)
-        self.usage.setToolTip(
-            f"Tokens hoy: {int(today['input']):,} de entrada · {int(today['cache_read']):,} leídos de caché · "
-            f"{int(today['output']):,} de salida. Estimación; la factura real está en tu cuenta del proveedor."
-        )
         self.footnote.setText(
-            "🔒 Las claves que escribas o pegues se guardan solo en este PC y no se envían al asistente. Cada cambio "
-            f"pide tu permiso y comprar guías siempre pide confirmación. Funciona con {endpoint.label}."
+            f"🔒 Tus claves se quedan en este PC y cada cambio pide permiso · {self.usage_text()}"
         )
+        self.footnote.setToolTip(
+            f"Funciona con {endpoint.label}. Tokens hoy: {int(today['input']):,} de entrada · "
+            f"{int(today['cache_read']):,} leídos de caché · {int(today['output']):,} de salida. Es una estimación; "
+            "la factura real está en tu cuenta del proveedor."
+        )
+        self.changed.emit()
 
     def _add(self, widget: QWidget) -> QWidget:
         self.column.insertWidget(self.column.count() - 1, widget)
@@ -724,18 +793,13 @@ class AssistantPage(QWidget):
         self._add(bubble(WELCOME.format(shop=shop), "assistant"))
         chips = QWidget()
         grid = QVBoxLayout(chips)
-        grid.setContentsMargins(40, 0, 0, 0)
-        grid.setSpacing(8)
-        for start in range(0, len(SUGGESTIONS), 2):
-            line = QHBoxLayout()
-            line.setSpacing(8)
-            for text in SUGGESTIONS[start : start + 2]:
-                chip = button(text, None, "chip")
-                chip.setObjectName("Suggestion")
-                chip.clicked.connect(lambda _=False, t=text: self.send_text(t))
-                line.addWidget(chip)
-            line.addStretch(1)
-            grid.addLayout(line)
+        grid.setContentsMargins(AVATAR + 10, 0, 0, 0)
+        grid.setSpacing(6)
+        for text, message in SUGGESTIONS:
+            chip = button(text, None, "chip")
+            chip.setObjectName("Suggestion")
+            chip.clicked.connect(lambda _=False, m=message: self.send_text(m))
+            grid.addWidget(chip, 0, Qt.AlignmentFlag.AlignLeft)
         self._add(chips)
 
     def new_conversation(self) -> None:
@@ -753,6 +817,7 @@ class AssistantPage(QWidget):
         self._thinking = None
         self._welcome()
         self.refresh()
+        self.mood.emit("new", None)
 
     def send_current(self) -> None:
         if self.busy:
@@ -787,6 +852,8 @@ class AssistantPage(QWidget):
         for section in sections:
             self.ctx.cfg.save(section)
             self.ctx.events.emit(CONFIG_EXTERNAL, section)
+        if cleaned.saved or cleaned.refs:
+            self.mood.emit("secret", None)
         message = cleaned.model_text
         if self.pending_notes:
             message = "\n".join(self.pending_notes) + "\n\n" + message
@@ -795,6 +862,8 @@ class AssistantPage(QWidget):
 
     def _start(self, message: str) -> None:
         self.busy = True
+        self.activity = ""
+        self.mood.emit("sent", None)
         self.cancel = threading.Event()
         turn = self.cancel  # identifica el turno: los avisos de un turno ya detenido se ignoran
         self.send_btn.setText("Detener")
@@ -822,9 +891,12 @@ class AssistantPage(QWidget):
         self.cancel.set()
         self._finish_turn()
         self._add(ActivityRow("Detenido", False)).finish(False, "puedes seguir escribiendo")
+        self.mood.emit("stopped", None)
 
     def _finish_turn(self) -> None:
         self.busy = False
+        self.activity = ""
+        self.mood.emit("finished", None)
         self._hide_thinking()
         for row in self._activities.values():
             row.finish(False, "sin terminar")
@@ -853,19 +925,27 @@ class AssistantPage(QWidget):
         if kind == "tool":
             self._hide_thinking()
             self._activities[data["id"]] = self._add(ActivityRow(data["activity"], True))  # type: ignore[assignment]
+            self.activity = data["activity"]
+            self.mood.emit("tool", data["name"])
+            self.changed.emit()
         elif kind == "tool_done":
             row = self._activities.pop(data["id"], None)
             if row is not None:
                 row.finish(data["ok"], data.get("detail", ""))
             self._show_thinking()
+            self.activity = ""
+            self.mood.emit("tool_done", bool(data["ok"]))
+            self.changed.emit()
         elif kind in ("reply", "note"):
             self._hide_thinking()
             self._add(bubble(data["text"], "assistant"))
             if kind == "note":
                 self._show_thinking()
+            self.mood.emit(kind, data["text"])
         elif kind in ("error", "refusal"):
             self._hide_thinking()
             self._add(bubble(data["message"], "error"))
+            self.mood.emit(kind, data["message"])
 
     # --- datos secretos ----------------------------------------------------------------------------
     def _secret_from_button(self) -> None:
@@ -881,4 +961,5 @@ class AssistantPage(QWidget):
             self.ctx.events.emit(CONFIG_EXTERNAL, section)
         self._add(ActivityRow(f"🔒 Guardado en este PC: {title}", False)).finish(True)
         self.pending_notes.append(f"[Nota de la app: el usuario guardó «{title}» con la ventana segura.]")
+        self.mood.emit("secret", None)
         self.refresh()

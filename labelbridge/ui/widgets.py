@@ -296,7 +296,8 @@ class Page(QWidget):
         inner = QWidget()
         inner.setObjectName("Content")
         self.layout_ = QVBoxLayout(inner)
-        self.layout_.setContentsMargins(32, 28, 32, 28)
+        # Abajo, espacio para que nada quede tapado por el bubble del asistente.
+        self.layout_.setContentsMargins(32, 28, 32, 104)
         self.layout_.setSpacing(18)
         header = QHBoxLayout()
         titles = QVBoxLayout()

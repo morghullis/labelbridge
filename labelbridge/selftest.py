@@ -228,6 +228,27 @@ def run(argv: list[str]) -> int:
         store.close()
         return f"{len(conversation.tools)} herramientas · Claude, OpenAI, compatibles y Gemini · SDK anthropic {anthropic.__version__}"
 
+    def mascot() -> str:
+        """La máscara animada del asistente: todas las expresiones se dibujan y la animación avanza."""
+        from PySide6.QtCore import QRectF
+        from PySide6.QtGui import QColor, QImage, QPainter
+
+        from .ui import mascot as m
+
+        for key in m.EXPRESSIONS:
+            image = QImage(60, 60, QImage.Format.Format_ARGB32)
+            image.fill(QColor(0, 0, 0, 0))
+            painter = QPainter(image)
+            m.paint_mascot(painter, QRectF(0, 0, 60, 60), m.still_frame(key), badge=True)
+            painter.end()
+            assert image.pixelColor(30, 37).alpha() == 255, f"la expresión {key} no se dibujó"
+        face = m.Mascot(reduced_motion=False)
+        face.set_base("thinking")
+        face.react("happy", 0.5)
+        for _ in range(10):
+            face.step()
+        return f"{len(m.EXPRESSIONS)} expresiones"
+
     def security() -> str:
         """Cifrado de datos (AES-256-GCM) y política de descargas en el ejecutable empaquetado."""
         from . import paths
@@ -271,6 +292,7 @@ def run(argv: list[str]) -> int:
     check("seguridad", security)
     check("interfaz", interface)
     check("asistente", assistant)
+    check("máscara animada", mascot)
     lines.append("RESULTADO: " + ("OK" if ok else "FALLO"))
     report_path.write_text("\n".join(lines), encoding="utf-8")
     return 0 if ok else 1

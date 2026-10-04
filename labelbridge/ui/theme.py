@@ -117,10 +117,25 @@ QTabBar::tab:selected {{ color: {ACCENT}; border-bottom: 2px solid {ACCENT}; }}
 QProgressBar {{ background: #E2E8F0; border: none; border-radius: 4px; height: 8px; text-align: center; color: transparent; }}
 QProgressBar::chunk {{ background: {ACCENT}; border-radius: 4px; }}
 QScrollArea {{ border: none; background: transparent; }}
-QFrame#ChatPanel {{ background: white; border: 1px solid {BORDER}; border-radius: 14px; }}
-QWidget#ChatArea {{ background: white; }}
-QFrame#Composer {{ background: white; border: 1px solid #CBD5E1; border-radius: 14px; }}
-QFrame#Composer QPlainTextEdit {{ border: none; background: transparent; padding: 4px 2px; font-size: 14px; }}
+QFrame#AssistantCard {{ background: white; border: 1px solid {BORDER}; border-radius: 16px; }}
+QFrame#AssistantHeader {{
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #141C2E, stop:1 #0B1020);
+    border: none; border-top-left-radius: 15px; border-top-right-radius: 15px;
+}}
+QLabel#AssistantTitle {{ color: white; font-size: 15px; font-weight: 700; }}
+QLabel#AssistantStatus {{ color: #94A3B8; font-size: 12px; }}
+QPushButton#HeaderButton {{ background: transparent; border: none; border-radius: 8px; padding: 0; }}
+QPushButton#HeaderButton:hover {{ background: rgba(255, 255, 255, 0.10); }}
+QPushButton#HeaderButton:pressed {{ background: rgba(255, 255, 255, 0.16); }}
+QPushButton#HeaderButton:focus {{ border: 1px solid #818CF8; }}
+QWidget#AssistantChat {{ background: transparent; }}
+QScrollArea#KeyScroll {{ background: transparent; border: none; }}
+QScrollArea#ChatScroll {{ background: #F8FAFC; border: none; }}
+QWidget#ChatArea {{ background: #F8FAFC; }}
+QFrame#Composer {{ background: transparent; border: none; border-top: 1px solid {BORDER}; }}
+QFrame#Composer QPlainTextEdit {{ border: 1px solid #CBD5E1; border-radius: 10px; background: white; padding: 4px 6px; font-size: 14px; }}
+QFrame#Composer QPlainTextEdit:focus {{ border: 1px solid {ACCENT}; }}
+QPushButton#IconButton {{ padding: 0; }}
 QScrollBar:vertical {{ background: transparent; width: 10px; margin: 2px; }}
 QScrollBar::handle:vertical {{ background: #CBD5E1; border-radius: 4px; min-height: 30px; }}
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}

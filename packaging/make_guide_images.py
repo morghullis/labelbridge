@@ -88,14 +88,15 @@ def united(rects: list[QRectF]) -> QRectF:
     return result
 
 
-def capture(root: QWidget, targets: list, name: str, context: list[QWidget] | None = None, margin: int = 36) -> None:
-    """Captura `root`, oscurece todo menos los objetivos, los numera y recorta alrededor."""
+def capture(root: QWidget, targets: list, name: str, context: list[QWidget] | None = None, margin: int = 36,
+            first: int = 1) -> None:
+    """Captura `root`, oscurece todo menos los objetivos, los numera (desde `first`) y recorta alrededor."""
     pixmap = root.grab()
     ratio = pixmap.devicePixelRatio()
     image = pixmap.toImage().convertToFormat(QImage.Format.Format_ARGB32_Premultiplied)
     image.setDevicePixelRatio(1)  # el escalado lo controlamos nosotros (si no, QPainter escala dos veces)
     numbered: list[tuple[int, QRectF]] = []
-    for index, target in enumerate(targets, start=1):
+    for index, target in enumerate(targets, start=first):
         widgets = target if isinstance(target, (list, tuple)) else [target]
         numbered.append((index, united([widget_rect(w, root) for w in widgets])))
 
@@ -463,17 +464,23 @@ def main() -> None:
     capture(window, [page.enabled, page.shop, [page.client_id, page.client_secret], page.test_btn], "shopify-connect.png")
     capture(window, [page.buy_label, page.label_printer, page.print_order], "shopify-what.png", context=[page.buy_warning])
 
+    # El asistente flotante: el bubble en cualquier pantalla, «Conecta tu IA» y el chat.
     window.resize(1180, 760)
-    window.navigate("assistant")
-    page = window.pages["assistant"]
+    window.navigate("home")
+    dock = window.assistant
+    pump(600)
+    capture(window, [dock.launcher], "assistant-bubble.png", context=[window.stack], margin=0)
+    window.open_assistant(connect=True, provider="openai")
+    page = dock.page
+    pump(600)
+    capture(window, [page.provider_combo, page.key_field, page.key_save], "assistant-connect.png",
+            context=[dock.panel.card], margin=24, first=2)
+    page._set_card(False)
     demo_conversation(page)
     pump(500)
-    capture(window, [window.nav_buttons["assistant"], page.composer, page.secret_btn], "assistant.png", context=[page])
-    page.show_connect()
-    page.provider_combo.setCurrentIndex(page.provider_combo.findData("openai"))
-    pump(300)
-    capture(window, [page.provider_combo, page.key_field, page.key_save], "assistant-connect.png",
-            context=[page.key_card])
+    capture(window, [page.composer, page.secret_btn], "assistant.png", context=[dock.panel.card], margin=24, first=5)
+    dock.close()
+    pump(400)
     window.resize(1180, 1700)
 
     sketch_dev_dashboard()

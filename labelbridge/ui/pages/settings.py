@@ -375,10 +375,8 @@ class SettingsPage(Page):
     def _open_connect(self) -> None:
         """Abre «Conecta tu IA» con el proveedor elegido aquí (sin guardar nada de esta pantalla)."""
         window = self.window()
-        window.navigate("assistant")
-        page = getattr(window, "pages", {}).get("assistant")
-        if hasattr(page, "show_connect"):
-            page.show_connect(self.assistant_provider.currentData())
+        if hasattr(window, "open_assistant"):
+            window.open_assistant(connect=True, provider=self.assistant_provider.currentData())
 
     def _load_models(self) -> None:
         endpoint = self._form_endpoint()

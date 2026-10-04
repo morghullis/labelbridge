@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 
 from PySide6.QtCore import QSize, Qt
-from PySide6.QtGui import QCloseEvent
+from PySide6.QtGui import QCloseEvent, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QButtonGroup,
     QFrame,
@@ -30,13 +30,12 @@ from .pages.n8n import N8nPage
 from .pages.printers import PrintersPage
 from .pages.settings import SettingsPage
 from .pages.shopify import ShopifyPage
-from .widgets import Page, label
+from .widgets import label
 
 log = logging.getLogger(__name__)
 
 NAV = (
     ("guide", "Guía paso a paso", "book"),
-    ("assistant", "Asistente", "chat"),
     ("home", "Inicio", "home"),
     ("printers", "Impresoras", "printer"),
     ("shopify", "Shopify", "shop"),
@@ -48,17 +47,15 @@ NAV = (
 )
 
 
-def _assistant_page(ctx: AppContext) -> QWidget:
-    """El asistente es opcional: si no carga, el resto de la app sigue funcionando igual."""
+def _assistant_dock(ctx: AppContext, host: QWidget, area: QWidget):
+    """El asistente flotante es opcional: si no carga, el resto de la app sigue funcionando igual."""
     try:
-        from .pages.assistant import AssistantPage
+        from .assistant_dock import AssistantDock
 
-        return AssistantPage(ctx)
+        return AssistantDock(ctx, host, area)
     except Exception:
         log.exception("No se pudo cargar el asistente")
-        page = Page("Asistente", "No se pudo cargar el asistente en este equipo. El resto de LabelBridge funciona con normalidad.")
-        page.finish()
-        return page
+        return None
 
 
 class MainWindow(QMainWindow):
@@ -87,7 +84,6 @@ class MainWindow(QMainWindow):
 
         self.pages = {
             "guide": GuidePage(ctx, self.navigate),
-            "assistant": _assistant_page(ctx),
             "home": DashboardPage(ctx, self.navigate),
             "printers": PrintersPage(ctx),
             "shopify": ShopifyPage(ctx),
@@ -99,6 +95,10 @@ class MainWindow(QMainWindow):
         }
         for page in self.pages.values():
             self.stack.addWidget(page)
+        # El asistente flota sobre todas las pantallas (bubble abajo a la derecha; F1 lo abre y lo cierra).
+        self.assistant = _assistant_dock(ctx, root, self.stack)
+        shortcut = QShortcut(QKeySequence(Qt.Key.Key_F1), self)
+        shortcut.activated.connect(self.toggle_assistant)
         ctx.bridge.event.connect(self._on_event)
         ctx.bridge.config_saved.connect(lambda _s: self._update_status())
         self.navigate("home" if guide_complete(ctx) else "guide")
@@ -167,7 +167,25 @@ class MainWindow(QMainWindow):
         col.addWidget(label(f"v{__version__}", "BrandSub"))
         return side
 
+    def open_assistant(self, connect: bool = False, provider: str | None = None) -> None:
+        """Muestra la ventana y abre el chat del asistente (con «Conecta tu IA» si se pide)."""
+        if self.assistant is None:
+            return
+        if not self.isVisible() or self.isMinimized():
+            self.show_and_raise()
+        else:  # visible pero quizá tapada por otra ventana (p. ej. desde la bandeja)
+            self.raise_()
+            self.activateWindow()
+        self.assistant.open(connect=connect, provider=provider)
+
+    def toggle_assistant(self) -> None:
+        if self.assistant is not None:
+            self.assistant.toggle()
+
     def navigate(self, key: str) -> None:
+        if key == "assistant":  # el asistente ya no es una pantalla: se abre el chat flotante
+            self.open_assistant()
+            return
         page = self.pages.get(key)
         if page is None:
             return

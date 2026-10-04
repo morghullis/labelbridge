@@ -17,6 +17,7 @@ flowchart LR
 
 ## Qué hace
 
+- **Asistente flotante con la máscara viva**: un botón dorado con la máscara del logo, abajo a la derecha de todas las pantallas (o **F1**), abre el chat sin salir de lo que estás haciendo. La máscara parpadea, te sigue con la mirada y cambia de expresión según la conversación: escucha mientras escribes, piensa (la corona carga en índigo), trabaja, responde, se alegra cuando algo queda listo, pregunta, se preocupa ante un error y se duerme si no se usa. Respeta la opción de Windows de reducir las animaciones. Diseño: «Asistente LabelBridge: máscara animada» en Claude Design.
 - **Asistente con IA (la que prefieras)**: escribes tus datos con tus palabras («tengo una Zebra por USB y mi tienda es mi-tienda.myshopify.com») y el asistente configura la app con las mismas acciones de las pantallas: agrega la impresora, conecta la tienda, prueba la conexión y activa la impresión de las guías. Funciona con **Claude (Anthropic), OpenAI (ChatGPT), Google Gemini, OpenRouter, DeepSeek, Groq, xAI, Mistral, Together, modelos en tu equipo con Ollama o LM Studio, o cualquier API compatible con OpenAI**, cada uno con tu propia clave. Los permisos, límites y filtros son los mismos con cualquier modelo. Los secretos se piden en una ventana segura y nunca se envían al modelo; comprar guías siempre pide confirmación.
 - **Guía paso a paso integrada**: al instalar, la app abre una guía que lleva de la mano por toda la configuración (impresora, prueba, remitente, app de Shopify, pedido de prueba) y marca cada paso solo cuando comprueba que quedó listo.
 - **Impresoras**: lista las instaladas en Windows y **busca en la red** (puertos 9100/631/515 y Bonjour) automáticamente cada vez que el PC se conecta a una red Wi‑Fi/LAN, avisando si aparece una impresora nueva. Imprime por driver, por **IP directa sin driver** (RAW 9100 o IPP) y puede **instalar en Windows** una impresora de red encontrada.
@@ -166,7 +167,7 @@ labelbridge/
   security/            cifrado, política de seguridad, límites, auditoría y registros sin secretos
 devtools/              pruebas reales del asistente (gastan tokens)
   system/              inicio con Windows, instancia única, instalar impresoras
-  ui/                  interfaz (PySide6)
+  ui/                  interfaz (PySide6); mascot.py = la máscara animada, assistant_dock.py = bubble y chat flotante
 n8n/                   plantillas de flujos + guía
 docs/                  Shopify y protocolo
 packaging/             PyInstaller, Inno Setup, script de compilación

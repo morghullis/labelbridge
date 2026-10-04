@@ -165,6 +165,7 @@ def main(argv: list[str] | None = None) -> int:
         lambda: enqueue_test_label(ctx),
         check_updates=window.check_updates_now,
         message_clicked=tray_message_clicked,
+        open_assistant=window.open_assistant,
     )
     instance.activated.connect(window.show_and_raise)
 

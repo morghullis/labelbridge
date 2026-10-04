@@ -22,6 +22,7 @@ class Tray(QSystemTrayIcon):
         print_test: Callable[[], object],
         check_updates: Callable[[], object] | None = None,
         message_clicked: Callable[[], object] | None = None,
+        open_assistant: Callable[[], object] | None = None,
     ) -> None:
         super().__init__(icons.app_icon())
         self.ctx = ctx
@@ -29,6 +30,9 @@ class Tray(QSystemTrayIcon):
         menu = QMenu()
         open_action = menu.addAction(icons.icon("home"), f"Abrir {APP_NAME}")
         open_action.triggered.connect(show_window)
+        if open_assistant is not None:
+            assistant = menu.addAction(icons.icon("chat"), "Asistente")
+            assistant.triggered.connect(open_assistant)
         menu.addSeparator()
         self.pause_action = QAction(menu)
         self.pause_action.triggered.connect(lambda: ctx.engine.set_paused(not ctx.cfg.data.general.paused))
