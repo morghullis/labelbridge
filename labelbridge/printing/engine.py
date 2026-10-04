@@ -77,10 +77,16 @@ def resolve_printer(requested: str, cfg: ConfigManager) -> PrinterProfile:
 
 
 class PrintEngine:
-    def __init__(self, store: JobStore, cfg: ConfigManager, events: ev.Events, shop_domain_fn=None) -> None:
+    def __init__(
+        self, store: JobStore, cfg: ConfigManager, events: ev.Events, shop_domain_fn=None, policy=None
+    ) -> None:
+        from ..security.policy import SecurityPolicy
+
         self.store = store
         self.cfg = cfg
         self.events = events
+        # Política de seguridad: aprueba cada trabajo externo, cada descarga y sus redirecciones.
+        self.policy = policy if policy is not None else SecurityPolicy(cfg)
         self._shop_domain_fn = shop_domain_fn or (lambda: cfg.data.shopify.shop)
         self._wake = threading.Event()
         self._stop = threading.Event()
@@ -89,6 +95,19 @@ class PrintEngine:
         self.current_job_id: str | None = None
         # Funciones que añaden cabeceras de autenticación a descargas concretas (p. ej. Shopify).
         self.url_auth_providers: list = []
+
+    # --- entrada de trabajos --------------------------------------------------------
+    def submit(self, req, source: str, client: str = "") -> tuple[dict[str, Any], bool]:
+        """Puerta única para los trabajos que llegan de fuera (API local, n8n, Shopify).
+
+        Pasa por la política de seguridad (lanza PolicyDenied), se guarda en la cola y despierta al motor.
+        """
+        self.policy.admit_job(req, source, client)
+        job, created = self.store.add(req, source)
+        if created:
+            self.events.emit(ev.JOB, job)
+            self.wake()
+        return job, created
 
     # --- ciclo de vida -----------------------------------------------------------
     def start(self) -> None:
@@ -157,19 +176,23 @@ class PrintEngine:
                 break
 
     def _download(self, job: dict[str, Any]) -> dict[str, Any]:
+        from ..security.policy import PolicyDenied
+
         headers = dict(job["headers"] or {})
         for provider in self.url_auth_providers:
             headers.update(provider(job["url"]) or {})
-        resp = net.request("GET", job["url"], headers=headers or None, timeout=45)
+        guard = self.policy.url_guard(job["source"])
+        try:
+            resp = net.request("GET", job["url"], headers=headers or None, timeout=45, url_guard=guard)
+        except PolicyDenied as exc:
+            raise PermanentPrintError(f"Descarga bloqueada por seguridad: {exc}") from None
         data = resp.body
         if not data:
             raise PrintError("El archivo descargado está vacío")
         fmt = job["format"]
         if fmt == "auto":
             fmt = detect_format(data, resp.content_type)
-        path = self.store.spool_dir / f"{job['id']}.bin"
-        path.write_bytes(data)
-        updated = self.store.set_payload(job["id"], str(path), fmt)
+        updated = self.store.save_payload(job["id"], data, fmt)
         log.info("Descargado %s (%d KB, %s)", job["title"], len(data) // 1024, fmt)
         return updated or job
 
@@ -219,18 +242,20 @@ class PrintEngine:
         self.events.emit(ev.JOB, updated)
 
     def _document(self, job: dict[str, Any]) -> Document:
+        from ..jobstore import PayloadUnavailable
+
         if job["url"] and not job["payload_path"]:
             job = self._download(job)
-        path = Path(job["payload_path"]) if job["payload_path"] else None
-        if path is None or not path.exists():
-            raise PermanentPrintError("El contenido del trabajo ya no existe en la cola")
+        try:
+            data = self.store.read_payload(job)
+        except PayloadUnavailable as exc:
+            raise PermanentPrintError(str(exc)) from None
         if job["format"] == "order":
-            return Document("order", order=json.loads(path.read_text(encoding="utf-8")))
-        data = path.read_bytes()
+            return Document("order", order=json.loads(data.decode("utf-8")))
         fmt = job["format"]
         if fmt == "auto":
             fmt = detect_format(data)
-            self.store.set_payload(job["id"], str(path), fmt)
+            self.store.set_format(job["id"], fmt)
         return Document(fmt, data=data)
 
     # --- conversión + salida -------------------------------------------------------------

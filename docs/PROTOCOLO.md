@@ -53,7 +53,7 @@ Autenticación: `Authorization: Bearer <clave>` o `X-Api-Key: <clave>`.
 
 | Método | Ruta | Descripción |
 |---|---|---|
-| `GET` | `/api/v1/health` | Estado (sin clave). |
+| `GET` | `/api/v1/health` | Estado. Sin clave responde solo `ok`, `app` y `version`; con clave agrega equipo, pausa y cola. |
 | `POST` | `/api/v1/jobs` | Un trabajo, una lista o `{"jobs": [...]}`. Responde `202 {"accepted": [{"id", "external_id", "status", "duplicate"}]}`. |
 | `GET` | `/api/v1/jobs?limit=50&status=failed` | Trabajos recientes. |
 | `GET` | `/api/v1/jobs/{id}` | Un trabajo (por id interno o el tuyo). |
@@ -62,7 +62,19 @@ Autenticación: `Authorization: Bearer <clave>` o `X-Api-Key: <clave>`.
 | `POST` | `/api/v1/print/test?printer=etiquetas` | Etiqueta de prueba. |
 | `POST` | `/api/v1/pause` · `/api/v1/resume` | Pausa o reanuda la impresión automática. |
 
-Errores: `400` (trabajo inválido, con `{"error": "..."}`), `401` (clave), `413` (demasiado grande).
+Errores (siempre `{"error": "..."}`): `400` trabajo inválido o más copias de las permitidas, `401` clave
+incorrecta, `403` URL no permitida, `413` demasiado grande, `421` cabecera `Host` no permitida, `429` demasiadas
+peticiones o equipo bloqueado (con `Retry-After` en segundos).
+
+Seguridad (se ajusta en **Ajustes → Seguridad**):
+
+- Límite de peticiones por minuto y por equipo, y de trabajos nuevos por minuto.
+- Tras varias claves incorrectas seguidas, ese equipo queda bloqueado unos minutos y la app avisa.
+- Solo acepta la cabecera `Host` del propio PC (127.0.0.1, `localhost`, su nombre o sus IPs): protege contra DNS
+  rebinding desde páginas web. Puedes agregar otros nombres en `allowed_hosts`.
+- Las URLs de los trabajos deben ser `https` si están en internet. Nunca se descarga de direcciones reservadas
+  (169.254.x.x…) y la red interna solo se permite para trabajos de la API local. Cada redirección se revisa igual.
+- Todo lo rechazado queda en `logs/seguridad.log`.
 
 Para llamarla desde el navegador (tu web abierta en el mismo PC) agrega el origen en *Orígenes web (CORS)*.
 
@@ -80,6 +92,8 @@ n8n se ejecuta solo cuando ocurre un evento y **publica** el trabajo; el PC mant
 
 - `<id>` en el tema debe ser seguro para MQTT: letras, números, `-` y `_` (las plantillas lo limpian solas).
 - La app se conecta con sesión persistente y QoS 1; un trabajo repetido (mismo `id`) no se imprime dos veces.
+- Si llegan más trabajos por minuto de los permitidos, los retenidos (`jobs/<id>`) se quedan en el broker y la app
+  los vuelve a pedir un minuto después: no se pierde ninguno. Un mensaje más grande que el máximo se rechaza.
 - Prueba rápida con `mosquitto_pub`:
 
 ```bash

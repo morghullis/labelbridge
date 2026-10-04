@@ -5,4 +5,5 @@ segno>=1.6
 certifi>=2024.2.2
 paho-mqtt>=2.1
 anthropic>=1.11,<2
+cryptography>=43
 pywin32>=306; sys_platform == "win32"

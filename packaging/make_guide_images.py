@@ -352,10 +352,10 @@ def demo_context():
     general.auto_discover = False
     general.guide_acknowledged = "daily,what"
     cfg.data.local_api.enabled = False
-    cfg.data.labels.store_name = "Pedro Yoruba Jewelry"
+    cfg.data.labels.store_name = "Mi Tienda"
     cfg.data.labels.sender_address = "2401 NW 7th St\nMiami, FL 33125\n+1 305 555 0123"
     shopify = cfg.data.shopify
-    shopify.enabled, shopify.shop, shopify.client_id = True, "pedroyorubajewelry.myshopify.com", "a1b2c3d4e5f6a7b8c9d0e1f2"
+    shopify.enabled, shopify.shop, shopify.client_id = True, "mi-tienda.myshopify.com", "a1b2c3d4e5f6a7b8c9d0e1f2"
     shopify.buy_shipping_label, shopify.shipping_label_printer = True, "etiquetas"
     cfg.data.mqtt.channel = "pc-bodega"
     secrets = SecretStore(paths.data_dir() / "secrets.json", backend="file")
@@ -371,7 +371,7 @@ def demo_context():
     engine = PrintEngine(store, cfg, events)
     services = Services(cfg, secrets, store, engine, events)
     services.shopify.state = "ok"
-    services.shopify.message = "Conectado a pedroyorubajewelry.myshopify.com · revisado a las 10:24"
+    services.shopify.message = "Conectado a mi-tienda.myshopify.com · revisado a las 10:24"
     return AppContext(cfg, secrets, store, engine, services, events, QtBridge(events, cfg))
 
 
@@ -382,7 +382,7 @@ def demo_conversation(page) -> None:
     page._add(
         bubble(
             "Tengo una Zebra ZD421 por USB y quiero que se impriman solas las guías de Shopify Shipping de "
-            "pedroyorubajewelry",
+            "mi-tienda",
             "user",
         )
     )
@@ -391,7 +391,7 @@ def demo_conversation(page) -> None:
     page._add(
         bubble(
             "Listo: agregué la **Zebra ZD421** como «etiquetas» (ZPL, 4 × 6 in) y conecté "
-            "**pedroyorubajewelry.myshopify.com**.\n\nAhora te abro una ventana segura para pegar el **Client secret** "
+            "**mi-tienda.myshopify.com**.\n\nAhora te abro una ventana segura para pegar el **Client secret** "
             "de tu app de Shopify.",
             "assistant",
         )

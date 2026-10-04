@@ -123,6 +123,9 @@ class Services:
             threading.Thread(target=service.restart, name=f"restart-{section}", daemon=True).start()
 
     def _on_config_saved(self, section: str) -> None:
+        if section == "security":
+            self.restart("local_api")  # límites de conexiones; el resto de reglas se aplican al momento
+            return
         if section == "all":
             for name in self.by_section:
                 self.restart(name)

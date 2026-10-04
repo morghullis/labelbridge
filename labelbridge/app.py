@@ -70,15 +70,18 @@ def main(argv: list[str] | None = None) -> int:
 
     from PySide6.QtCore import QTimer
     from PySide6.QtGui import QFont
-    from PySide6.QtWidgets import QApplication, QSystemTrayIcon
+    from PySide6.QtWidgets import QApplication, QMessageBox, QSystemTrayIcon
 
     from .config import ConfigManager
     from .events import Events
     from .jobstore import JobStore
     from .logging_setup import memory_handler, setup_logging
-    from .paths import config_path, data_dir, db_path, spool_dir
+    from .paths import config_path, data_dir, db_path, logs_dir, spool_dir
     from .printing.engine import PrintEngine
     from .secret_store import SecretStore
+    from .security.audit import AuditLog
+    from .security.crypto import CryptoError, DataProtector
+    from .security.policy import SecurityPolicy
     from .services import Services
     from .system import autostart
     from .system.single_instance import SingleInstance
@@ -113,11 +116,24 @@ def main(argv: list[str] | None = None) -> int:
     app.setStyleSheet(STYLESHEET)
     app.setWindowIcon(icons.app_icon())
 
-    cfg = ConfigManager(config_path())
     secrets = SecretStore(data_dir() / "secrets.json")
-    store = JobStore(db_path(), spool_dir())
+    try:
+        # Clave de cifrado de los datos en disco (configuración, pedidos, etiquetas).
+        protector = DataProtector.from_secrets(secrets)
+    except CryptoError as exc:
+        log.critical("No se pudo preparar el cifrado de datos: %s", exc)
+        QMessageBox.critical(
+            None,
+            APP_NAME,
+            f"{exc}.\n\nLabelBridge no se abre para no perder ni exponer datos. Reinicia el equipo y vuelve a "
+            "intentarlo; si continúa, revisa el Administrador de credenciales de Windows.",
+        )
+        return 1
+    cfg = ConfigManager(config_path(), protector)
+    store = JobStore(db_path(), spool_dir(), protector)
     events = Events()
-    engine = PrintEngine(store, cfg, events)
+    policy = SecurityPolicy(cfg, AuditLog(logs_dir() / "seguridad.log"))
+    engine = PrintEngine(store, cfg, events, policy=policy)
     services = Services(cfg, secrets, store, engine, events)
     bridge = QtBridge(events, cfg)
     memory_handler.add_listener(bridge.forward_log)

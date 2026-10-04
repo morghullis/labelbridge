@@ -50,6 +50,8 @@ def core(qapp, home):
     printer = PrinterProfile(alias="archivo", kind="file", output_dir=str(home / "out"), language="driver")
     cfg.data.printers = [printer]
     cfg.data.general.default_printer_id = printer.id
+    cfg.data.general.auto_discover = False  # las pruebas nunca escanean la red
+    cfg.data.general.auto_update_check = False
     cfg.save()
     store = JobStore(paths.db_path(), paths.spool_dir())
     events = Events()

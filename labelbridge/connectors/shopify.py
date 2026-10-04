@@ -29,6 +29,7 @@ from ..jobstore import JobStore
 from ..models import JobRequest
 from ..printing.engine import PrintEngine
 from ..secret_store import SHOPIFY_ACCESS_TOKEN, SHOPIFY_CLIENT_SECRET, SecretStore
+from ..security.policy import PolicyDenied
 from .base import BackgroundService
 
 log = logging.getLogger(__name__)
@@ -550,10 +551,14 @@ class ShopifyService(BackgroundService):
         return queued
 
     def _enqueue(self, req: JobRequest) -> int:
-        job, created = self.store.add(req, "shopify")
+        try:
+            job, created = self.engine.submit(req, "shopify")
+        except PolicyDenied as exc:
+            log.error("Shopify: %s rechazado por seguridad: %s", req.title, exc)
+            self.events.notify("Etiqueta bloqueada por seguridad", f"{req.title}: {exc}", "error")
+            return 0
         if created:
             log.info("Shopify: en cola %s", job["title"])
-            self.events.emit(ev.JOB, job)
         return int(created)
 
     # --- compra de etiquetas Shopify Shipping ----------------------------------------------------

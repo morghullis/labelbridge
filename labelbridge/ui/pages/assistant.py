@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ...assistant.agent import API_KEYS_URL, MODEL_NAME, Conversation, friendly_error, validate_key
+from ...assistant.agent import API_KEYS_URL, Conversation, chosen_model, friendly_error, model_name, validate_key
 from ...assistant.secrets_guard import SecretsGuard
 from ...assistant.tools import SECRET_KINDS, Toolbox
 from ...events import CONFIG_EXTERNAL
@@ -34,11 +34,10 @@ BUBBLE_MAX = 620
 WELCOME = (
     "¡Hola! Soy el asistente de LabelBridge. Escríbeme con tus palabras qué quieres configurar y lo hago por ti: la "
     "impresora de etiquetas, la conexión con tu tienda de Shopify y la compra e impresión automática de las **guías de "
-    "envío de Shopify Shipping**.\n\n"
-    "Puedes darme varios datos a la vez, por ejemplo: *«Tengo una Zebra ZD421 por USB y mi tienda es "
-    "pedroyorubajewelry»*.\n\n"
-    "🔒 Si hace falta un dato secreto (como el Client secret de Shopify) te abro una ventana segura: no hace falta "
-    "escribirlo en el chat."
+    "envío de Shopify Shipping**. También reviso que todo funcione y te ayudo si algo no se imprimió.\n\n"
+    "Puedes darme varios datos a la vez, por ejemplo: *«Tengo una Zebra por USB y mi tienda es {shop}»*.\n\n"
+    "🔒 Antes de cambiar algo te pido permiso, y si hace falta un dato secreto (como el Client secret de Shopify) te "
+    "abro una ventana segura: no hace falta escribirlo en el chat."
 )
 SUGGESTIONS = (
     "Configúralo todo conmigo paso a paso",
@@ -100,6 +99,56 @@ def confirm_action(parent: QWidget, title: str, text: str, accept: str) -> bool:
     box.setDefaultButton(no)  # lo seguro es lo predeterminado
     box.exec()
     return box.clickedButton() is yes
+
+
+class ApprovalDialog(QDialog):
+    """Ventana de permiso para un cambio del asistente. Resultado: "once", "session" o "deny"."""
+
+    def __init__(self, parent: QWidget | None, title: str, text: str) -> None:
+        super().__init__(parent)
+        self.choice = "deny"  # cerrar la ventana = no permitir
+        self.setWindowTitle(title)
+        self.setMinimumWidth(540)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(22, 20, 22, 18)
+        layout.setSpacing(12)
+        head = QHBoxLayout()
+        icon = QLabel()
+        icon.setPixmap(icons.pixmap("sparkle", "#4F46E5", 22))
+        head.addWidget(icon, 0, Qt.AlignmentFlag.AlignTop)
+        head.addWidget(label("El asistente quiere hacer este cambio:", "CardTitle", wrap=True), 1)
+        layout.addLayout(head)
+        detail = label(text, wrap=True, selectable=True)
+        detail.setStyleSheet(
+            "QLabel { background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 8px; padding: 10px 12px; }"
+        )
+        layout.addWidget(detail)
+        layout.addWidget(label("¿Le das permiso? Puedes permitir solo esto o todos los cambios de esta conversación.",
+                               "Muted", wrap=True))
+        row = QHBoxLayout()
+        deny = button("No permitir")
+        deny.clicked.connect(self.reject)
+        session = button("Permitir todo en esta conversación", None, "ghost")
+        session.clicked.connect(lambda: self._done("session"))
+        once = button("Permitir", "check", "primary")
+        once.clicked.connect(lambda: self._done("once"))
+        row.addWidget(deny)
+        row.addStretch(1)
+        row.addWidget(session)
+        row.addWidget(once)
+        layout.addLayout(row)
+        once.setDefault(True)
+        once.setFocus()
+
+    def _done(self, choice: str) -> None:
+        self.choice = choice
+        self.accept()
+
+
+def approve_change(parent: QWidget, title: str, text: str) -> str:
+    dialog = ApprovalDialog(parent, title, text)
+    dialog.exec()
+    return dialog.choice
 
 
 class SecretDialog(QDialog):
@@ -171,6 +220,9 @@ class QtAssistantUI:
 
     def confirm(self, title: str, text: str, accept: str) -> bool:
         return bool(self.invoker.call(lambda: confirm_action(self.page.window(), title, text, accept)))
+
+    def approve(self, title: str, text: str) -> str:
+        return str(self.invoker.call(lambda: approve_change(self.page.window(), title, text)))
 
     def ask_secret(self, title: str, hint: str) -> str | None:
         return self.invoker.call(lambda: SecretDialog.ask(self.page.window(), title, hint))
@@ -347,6 +399,8 @@ class AssistantPage(QWidget):
             )
         )
         header.addLayout(titles, 1)
+        self.usage = Pill("off", "")
+        header.addWidget(self.usage, 0, Qt.AlignmentFlag.AlignTop)
         self.status = Pill("off", "")
         header.addWidget(self.status, 0, Qt.AlignmentFlag.AlignTop)
         self.key_btn = button("Clave de API", "key", "ghost")
@@ -398,14 +452,8 @@ class AssistantPage(QWidget):
         self.send_btn.clicked.connect(self._send_or_stop)
         row.addWidget(self.send_btn, 0, Qt.AlignmentFlag.AlignBottom)
         outer.addWidget(composer)
-        outer.addWidget(
-            label(
-                "🔒 Las claves que escribas o pegues se guardan solo en este PC y no se envían al asistente. "
-                f"Comprar guías siempre pide tu confirmación. Funciona con {MODEL_NAME} de Anthropic.",
-                "Small",
-                wrap=True,
-            )
-        )
+        self.footnote = label("", "Small", wrap=True)
+        outer.addWidget(self.footnote)
 
         self.agent_event.connect(self._on_agent_event)
         self._welcome()
@@ -448,11 +496,13 @@ class AssistantPage(QWidget):
         self.key_save.setEnabled(False)
         self.key_save.setText("Probando…")
 
+        model = chosen_model(self.ctx.cfg.data.assistant)
+
         def check() -> str:
             try:
-                return validate_key(key, self.conversation.client_factory)
+                return validate_key(key, self.conversation.client_factory, model)
             except Exception as exc:
-                raise RuntimeError(friendly_error(exc)) from None
+                raise RuntimeError(friendly_error(exc, model)) from None
 
         def ok(model_name: str) -> None:
             self.ctx.secrets.set(ANTHROPIC_API_KEY, key)
@@ -486,13 +536,28 @@ class AssistantPage(QWidget):
         self.send_btn.setEnabled(has_key or self.busy)
         for chip in self.findChildren(QPushButton, "Suggestion"):
             chip.setEnabled(has_key and not self.busy)
+        settings = self.ctx.cfg.data.assistant
+        today = self.conversation.meter.today()
+        budget = float(settings.daily_budget_usd or 0)
+        spent = f"Hoy ≈ {today['cost']:.2f} USD" + (f" de {budget:.2f}" if budget > 0 else "")
+        self.usage.set_state("warn" if budget > 0 and today["cost"] >= budget * 0.8 else "off", spent)
+        self.usage.setToolTip(
+            f"Tokens hoy: {int(today['input']):,} de entrada · {int(today['cache_read']):,} leídos de caché · "
+            f"{int(today['output']):,} de salida. Estimación; la factura real está en platform.claude.com."
+        )
+        self.footnote.setText(
+            "🔒 Las claves que escribas o pegues se guardan solo en este PC y no se envían al asistente. Cada cambio "
+            "pide tu permiso y comprar guías siempre pide confirmación. Funciona con "
+            f"{model_name(self.conversation.model)} de Anthropic."
+        )
 
     def _add(self, widget: QWidget) -> QWidget:
         self.column.insertWidget(self.column.count() - 1, widget)
         return widget
 
     def _welcome(self) -> None:
-        self._add(bubble(WELCOME, "assistant"))
+        shop = self.ctx.cfg.data.shopify.shop or "mi-tienda.myshopify.com"
+        self._add(bubble(WELCOME.format(shop=shop), "assistant"))
         chips = QWidget()
         grid = QVBoxLayout(chips)
         grid.setContentsMargins(40, 0, 0, 0)

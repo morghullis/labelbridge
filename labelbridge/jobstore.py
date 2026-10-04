@@ -1,4 +1,8 @@
-"""Cola e historial de trabajos en SQLite (sobrevive a reinicios y cortes de luz)."""
+"""Cola e historial de trabajos en SQLite (sobrevive a reinicios y cortes de luz).
+
+Con `protector` los datos de clientes van cifrados en disco: el contenido de cada trabajo (pedido,
+etiqueta PDF/ZPL) y las columnas url, headers y meta. Lo que ya estaba guardado sin cifrar se cifra al abrir.
+"""
 
 from __future__ import annotations
 
@@ -56,9 +60,18 @@ def _start_of_today() -> float:
     return datetime(now.year, now.month, now.day).timestamp()
 
 
+ENCRYPTED_COLUMNS = ("url", "headers", "meta")
+CRYPTO_FLAG = "crypto:jobs-v1"
+
+
+class PayloadUnavailable(Exception):
+    """El contenido del trabajo ya no existe o no se puede descifrar."""
+
+
 class JobStore:
-    def __init__(self, db_path: Path, spool_dir: Path) -> None:
+    def __init__(self, db_path: Path, spool_dir: Path, protector=None) -> None:
         self.spool_dir = spool_dir
+        self.protector = protector
         self._lock = threading.RLock()
         self._conn = sqlite3.connect(str(db_path), check_same_thread=False, isolation_level=None)
         self._conn.row_factory = sqlite3.Row
@@ -70,20 +83,97 @@ class JobStore:
             self._conn.execute(
                 "UPDATE jobs SET status='queued', updated_at=? WHERE status='printing'", (time.time(),)
             )
+        if protector is not None and self.kv_get(CRYPTO_FLAG) != "1":
+            self._encrypt_existing()
 
     def close(self) -> None:
         with self._lock:
             self._conn.close()
 
+    # --- cifrado ------------------------------------------------------------
+    def _seal(self, column: str, job_id: str, value: str) -> str:
+        if self.protector is None or not value:
+            return value
+        return self.protector.encrypt_text(value, f"jobs.{column}:{job_id}")
+
+    def _open(self, column: str, job_id: str, value: str) -> str:
+        if self.protector is None or not value:
+            return value
+        from .security.crypto import CryptoError
+
+        try:
+            return self.protector.decrypt_text(value, f"jobs.{column}:{job_id}")
+        except CryptoError:
+            log.warning("No se pudo descifrar %s del trabajo %s", column, job_id)
+            return ""
+
+    def _write_payload(self, job_id: str, suffix: str, data: bytes) -> str:
+        if self.protector is not None:
+            data = self.protector.encrypt(data, f"spool:{job_id}")
+        path = self.spool_dir / f"{job_id}.{suffix}"
+        tmp = path.with_suffix(".tmp")
+        tmp.write_bytes(data)
+        tmp.replace(path)
+        return str(path)
+
+    def read_payload(self, job: dict[str, Any]) -> bytes:
+        """Contenido guardado del trabajo (descifrado). Lanza PayloadUnavailable si ya no está."""
+        path = Path(job.get("payload_path") or "")
+        if not job.get("payload_path") or not path.exists():
+            raise PayloadUnavailable("El contenido de este trabajo ya no está disponible")
+        data = path.read_bytes()
+        if self.protector is not None:
+            from .security.crypto import CryptoError
+
+            try:
+                data = self.protector.decrypt(data, f"spool:{job['id']}")
+            except CryptoError:
+                raise PayloadUnavailable("El contenido de este trabajo está dañado o es de otra instalación") from None
+        return data
+
+    def read_order(self, job: dict[str, Any]) -> dict[str, Any]:
+        return json.loads(self.read_payload(job).decode("utf-8"))
+
+    def save_payload(self, job_id: str, data: bytes, fmt: str | None = None) -> dict[str, Any] | None:
+        """Guarda (cifrado) el archivo descargado de un trabajo con URL."""
+        values: dict[str, Any] = {"payload_path": self._write_payload(job_id, "bin", data)}
+        if fmt:
+            values["format"] = fmt
+        return self._update(job_id, **values)
+
+    def _encrypt_existing(self) -> None:
+        """Migración: cifra lo guardado por versiones anteriores (una sola vez)."""
+        with self._lock:
+            rows = self._conn.execute("SELECT id, url, headers, meta, payload_path FROM jobs").fetchall()
+            for row in rows:
+                values = {
+                    column: self._seal(column, row["id"], row[column] or "")
+                    for column in ENCRYPTED_COLUMNS
+                    if row[column] and not str(row[column]).startswith("lbx1:")
+                }
+                if values:
+                    cols = ", ".join(f"{k}=?" for k in values)
+                    self._conn.execute(f"UPDATE jobs SET {cols} WHERE id=?", (*values.values(), row["id"]))
+                path = Path(row["payload_path"] or "")
+                if row["payload_path"] and path.exists():
+                    data = path.read_bytes()
+                    if not self.protector.is_encrypted(data):
+                        tmp = path.with_suffix(".tmp")
+                        tmp.write_bytes(self.protector.encrypt(data, f"spool:{row['id']}"))
+                        tmp.replace(path)
+        self.kv_set(CRYPTO_FLAG, "1")
+        if rows:
+            log.info("Datos de %d trabajo(s) cifrados en disco", len(rows))
+
     # --- utilidades -------------------------------------------------------
-    @staticmethod
-    def _row(row: sqlite3.Row | None) -> dict[str, Any] | None:
+    def _row(self, row: sqlite3.Row | None) -> dict[str, Any] | None:
         if row is None:
             return None
         job = dict(row)
+        job["url"] = self._open("url", job["id"], job.get("url") or "")
         for key in ("headers", "meta"):
             try:
-                job[key] = json.loads(job[key] or "{}")
+                job[key] = json.loads(self._open(key, job["id"], job[key] or "") or "{}")
             except json.JSONDecodeError:
                 job[key] = {}
         return job
@@ -109,13 +199,9 @@ class JobStore:
             job_id = uuid.uuid4().hex
             payload_path = ""
             if req.content is not None:
-                path = self.spool_dir / f"{job_id}.bin"
-                path.write_bytes(req.content)
-                payload_path = str(path)
+                payload_path = self._write_payload(job_id, "bin", req.content)
             elif req.order is not None:
-                path = self.spool_dir / f"{job_id}.json"
-                path.write_text(json.dumps(req.order, ensure_ascii=False), encoding="utf-8")
-                payload_path = str(path)
+                payload_path = self._write_payload(job_id, "json", json.dumps(req.order, ensure_ascii=False).encode("utf-8"))
             now = time.time()
             self._conn.execute(
                 """INSERT INTO jobs (id, source, external_id, title, printer, copies, format, url,
@@ -130,9 +216,9 @@ class JobStore:
                     req.printer,
                     req.copies,
                     req.format,
-                    req.url,
-                    json.dumps(req.headers),
-                    json.dumps(req.meta, ensure_ascii=False, default=str),
+                    self._seal("url", job_id, req.url),
+                    self._seal("headers", job_id, json.dumps(req.headers)),
+                    self._seal("meta", job_id, json.dumps(req.meta, ensure_ascii=False, default=str)),
                     payload_path,
                     now,
                     now,
@@ -220,11 +306,8 @@ class JobStore:
         return row[0] if row and row[0] is not None else None
 
     # --- transiciones -----------------------------------------------------------
-    def set_payload(self, job_id: str, path: str, fmt: str | None = None) -> dict[str, Any] | None:
-        values: dict[str, Any] = {"payload_path": path}
-        if fmt:
-            values["format"] = fmt
-        return self._update(job_id, **values)
+    def set_format(self, job_id: str, fmt: str) -> dict[str, Any] | None:
+        return self._update(job_id, format=fmt)
 
     def set_printing(self, job_id: str) -> dict[str, Any] | None:
         with self._lock:
@@ -297,13 +380,14 @@ class JobStore:
             meta=job["meta"],
         )
         if job["payload_path"]:
-            path = Path(job["payload_path"])
-            if not path.exists():
+            try:
+                data = self.read_payload(job)
+            except PayloadUnavailable:
                 return None
-            if path.suffix == ".json":
-                req.order = json.loads(path.read_text(encoding="utf-8"))
+            if job["payload_path"].endswith(".json"):
+                req.order = json.loads(data.decode("utf-8"))
             else:
-                req.content = path.read_bytes()
+                req.content = data
         new_job, _ = self.add(req, "manual")
         return new_job
 

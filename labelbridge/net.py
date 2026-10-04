@@ -8,7 +8,7 @@ import ssl
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urlparse
 
 from . import APP_NAME, __version__
@@ -67,9 +67,16 @@ class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
     """Al redirigir a otro dominio no reenvía credenciales (tokens, Authorization, cabeceras propias).
 
     Además así funcionan las URLs firmadas (S3, CDN) que rechazan cabeceras Authorization extra.
+    Con `guard`, cada destino de redirección pasa antes por la política de seguridad.
     """
 
+    def __init__(self, guard: Callable[[str], None] | None = None) -> None:
+        super().__init__()
+        self.guard = guard
+
     def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D401
+        if self.guard is not None:
+            self.guard(newurl)  # lanza PolicyDenied si el destino no está permitido
         new = super().redirect_request(req, fp, code, msg, headers, newurl)
         if new is None:
             return None
@@ -86,11 +93,13 @@ class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
 _opener: urllib.request.OpenerDirector | None = None
 
 
-def _get_opener() -> urllib.request.OpenerDirector:
+def _get_opener(guard: Callable[[str], None] | None = None) -> urllib.request.OpenerDirector:
     global _opener
+    if guard is not None:
+        return urllib.request.build_opener(_SafeRedirectHandler(guard), urllib.request.HTTPSHandler(context=ssl_context()))
     if _opener is None:
         _opener = urllib.request.build_opener(
-            _SafeRedirectHandler, urllib.request.HTTPSHandler(context=ssl_context())
+            _SafeRedirectHandler(), urllib.request.HTTPSHandler(context=ssl_context())
         )
     return _opener
 
@@ -119,7 +128,11 @@ def request(
     timeout: float = 20.0,
     max_bytes: int = DEFAULT_MAX_BYTES,
     raise_for_status: bool = True,
+    url_guard: Callable[[str], None] | None = None,
 ) -> Response:
+    """Petición HTTP. `url_guard` aprueba la URL y cada redirección (lanza una excepción si no)."""
+    if url_guard is not None:
+        url_guard(url)
     hdrs = {"User-Agent": USER_AGENT, "Accept": "*/*"}
     if headers:
         hdrs.update(headers)
@@ -129,7 +142,7 @@ def request(
         hdrs.setdefault("Content-Type", "application/json")
     req = urllib.request.Request(url, data=body, method=method.upper(), headers=hdrs)
     try:
-        with _get_opener().open(req, timeout=timeout) as resp:
+        with _get_opener(url_guard).open(req, timeout=timeout) as resp:
             content = resp.read(max_bytes + 1)
             if len(content) > max_bytes:
                 raise NetworkError(f"La respuesta supera {max_bytes // (1024 * 1024)} MB")

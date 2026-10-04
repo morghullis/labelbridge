@@ -10,6 +10,7 @@ from collections import deque
 from typing import Callable
 
 from .paths import is_frozen, logs_dir
+from .security.redact import RedactingFormatter
 
 LOG_FORMAT = "%(asctime)s %(levelname)-7s [%(name)s] %(message)s"
 DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
@@ -49,7 +50,8 @@ def setup_logging(level: int = logging.INFO) -> None:
     if getattr(root, "_labelbridge_configured", False):
         return
     root.setLevel(level)
-    formatter = logging.Formatter(LOG_FORMAT, DATE_FORMAT)
+    # Claves, tokens, firmas de URLs y correos se borran antes de escribir el registro.
+    formatter = RedactingFormatter(LOG_FORMAT, DATE_FORMAT)
 
     file_handler = logging.handlers.RotatingFileHandler(
         logs_dir() / "labelbridge.log", maxBytes=2_000_000, backupCount=5, encoding="utf-8"
@@ -66,6 +68,6 @@ def setup_logging(level: int = logging.INFO) -> None:
         root.addHandler(console)
 
     # Librerías ruidosas
-    logging.getLogger("zeroconf").setLevel(logging.WARNING)
-    logging.getLogger("urllib3").setLevel(logging.WARNING)
+    for noisy in ("zeroconf", "urllib3", "httpx2", "httpcore2", "anthropic"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
     root._labelbridge_configured = True  # type: ignore[attr-defined]

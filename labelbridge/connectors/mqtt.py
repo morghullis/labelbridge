@@ -16,6 +16,7 @@ import logging
 import re
 import ssl
 import threading
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -30,6 +31,7 @@ from ..jobstore import JobStore
 from ..models import JobError, parse_jobs_payload
 from ..printing.engine import PrintEngine
 from ..secret_store import MQTT_PASSWORD, SecretStore
+from ..security.policy import PolicyDenied
 from .base import BackgroundService
 
 log = logging.getLogger(__name__)
@@ -73,6 +75,7 @@ class MqttService(BackgroundService):
         # mid de publicación -> (job_id, estado, updated_at): se confirma al recibir el PUBACK.
         self._inflight: dict[int, tuple[str, str, float]] = {}
         self._inflight_lock = threading.Lock()
+        self._resubscribe_at = 0.0  # >0: volver a suscribirse (trabajos retenidos que esperaban por el límite)
         events.subscribe(self._on_event)
 
     def enabled(self) -> bool:
@@ -133,6 +136,9 @@ class MqttService(BackgroundService):
             while not stop.is_set():
                 if client.is_connected():
                     self.send_acks()
+                    if self._resubscribe_at and time.monotonic() >= self._resubscribe_at:
+                        self._resubscribe_at = 0.0
+                        client.subscribe([(t["jobs"], 1), (f"{t['jobs']}/+", 1)])  # el broker reenvía lo retenido
                 if not self.sleep(stop, wake, 30):
                     break
         finally:
@@ -184,42 +190,51 @@ class MqttService(BackgroundService):
             log.exception("MQTT: error procesando un mensaje de %s", message.topic)
 
     # --- mensajes -----------------------------------------------------------------------------
+    def _report_error(self, publish: Callable[..., Any], job_id: str | None, message: str) -> None:
+        t = topics(self._channel or self.channel())
+        body = {"id": job_id, "status": "failed", "error": message, "agent": self.cfg.data.general.agent_name, "at": _now()}
+        publish(t["errors"], json.dumps(body, ensure_ascii=False), qos=1)
+
     def handle_message(self, topic: str, payload: bytes, publish: Callable[..., Any]) -> int:
         """Guarda los trabajos del mensaje y limpia el retenido. Devuelve cuántos son nuevos."""
         if not payload:
             return 0  # retenido borrado (por nosotros u otro cliente)
         t = topics(self._channel or self.channel())
         per_job = topic.startswith(t["jobs"] + "/")
-        try:
-            data = json.loads(payload.decode("utf-8"))
-            requests = parse_jobs_payload(data, require_id=True)
-        except (UnicodeDecodeError, json.JSONDecodeError, JobError) as exc:
-            log.warning("MQTT: trabajo inválido en %s: %s", topic, exc)
-            publish(
-                t["errors"],
-                json.dumps(
-                    {
-                        "id": topic.rsplit("/", 1)[-1] if per_job else None,
-                        "status": "failed",
-                        "error": f"Trabajo inválido: {exc}",
-                        "agent": self.cfg.data.general.agent_name,
-                        "at": _now(),
-                    }
-                ),
-                qos=1,
-            )
+        topic_id = topic.rsplit("/", 1)[-1] if per_job else None
+        limit_mb = max(1, self.cfg.data.security.max_message_mb)
+        problem = ""
+        requests = []
+        if len(payload) > limit_mb * 1024 * 1024:
+            problem = f"Mensaje demasiado grande (máximo {limit_mb} MB)"
+            self.engine.policy.audit.record("mqtt", "mensaje", "deny", detail=f"{len(payload)} bytes en {topic}")
+        else:
+            try:
+                requests = parse_jobs_payload(json.loads(payload.decode("utf-8")), require_id=True)
+            except (UnicodeDecodeError, json.JSONDecodeError, JobError) as exc:
+                problem = f"Trabajo inválido: {exc}"
+        if problem:
+            log.warning("MQTT: %s en %s", problem, topic)
+            self._report_error(publish, topic_id, problem)
             if per_job:
                 publish(topic, b"", qos=1, retain=True)
             return 0
         new = 0
         for req in requests:
-            job, created = self.store.add(req, "mqtt")
+            try:
+                job, created = self.engine.submit(req, "mqtt")
+            except PolicyDenied as exc:
+                if exc.status == 429 and per_job:
+                    # Demasiados trabajos seguidos: el mensaje se queda retenido en el broker y se vuelve a
+                    # pedir en un minuto (no se pierde nada).
+                    self._resubscribe_at = time.monotonic() + 60
+                    log.warning("n8n: %s Se procesará en un minuto.", exc)
+                    return new
+                self._report_error(publish, req.external_id, str(exc))
+                continue
             if created:
                 new += 1
                 log.info("n8n (tiempo real): trabajo recibido %s", job["title"])
-                self.events.emit(ev.JOB, job)
-        if new:
-            self.engine.wake()
         if per_job:
             # Ya está guardado en la cola local: se borra del broker para no recibirlo otra vez.
             publish(topic, b"", qos=1, retain=True)

@@ -14,16 +14,17 @@ from typing import Any, Callable
 import anthropic
 from anthropic.types.beta import BetaTextBlock
 
+from ..config import ASSISTANT_EFFORTS, ASSISTANT_MODELS, AssistantSettings
 from ..secret_store import ANTHROPIC_API_KEY
+from .permissions import ToolPermissions
 from .prompt import SYSTEM_PROMPT
 from .tools import Toolbox
+from .usage import UsageMeter
 
 log = logging.getLogger(__name__)
 
-MODEL = "claude-opus-5-5"
-MODEL_NAME = "Claude Opus 5.5"
+DEFAULTS = AssistantSettings()
 MAX_TOKENS = 16000  # incluye el razonamiento del modelo
-EFFORT = "medium"
 MAX_STEPS = 24  # llamadas al modelo por cada mensaje del usuario
 # Si un filtro de seguridad rechaza una petición legítima, la API la repite con otro modelo recomendado.
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
@@ -37,15 +38,27 @@ class AssistantError(Exception):
     """Problema que se muestra tal cual en el chat."""
 
 
-def friendly_error(exc: BaseException) -> str:
+def model_name(model: str) -> str:
+    return ASSISTANT_MODELS.get(model, model).split(" · ")[0]
+
+
+def chosen_model(settings: AssistantSettings) -> str:
+    return settings.model if settings.model in ASSISTANT_MODELS else DEFAULTS.model
+
+
+def chosen_effort(settings: AssistantSettings) -> str:
+    return settings.effort if settings.effort in ASSISTANT_EFFORTS else DEFAULTS.effort
+
+
+def friendly_error(exc: BaseException, model: str = DEFAULTS.model) -> str:
     if isinstance(exc, AssistantError):
         return str(exc)
     if isinstance(exc, anthropic.AuthenticationError):
         return "La clave de API del asistente no es válida o fue revocada. Cámbiala con el botón «Clave de API»."
     if isinstance(exc, anthropic.PermissionDeniedError):
-        return f"Tu clave de API no tiene permiso para usar {MODEL_NAME}. Revisa tu cuenta en platform.claude.com."
+        return f"Tu clave de API no tiene permiso para usar {model_name(model)}. Revisa tu cuenta en platform.claude.com."
     if isinstance(exc, anthropic.NotFoundError):
-        return f"{MODEL_NAME} no está disponible para tu cuenta de Anthropic."
+        return f"{model_name(model)} no está disponible para tu cuenta de Anthropic."
     if isinstance(exc, anthropic.RateLimitError):
         return "Tu cuenta de Anthropic llegó a su límite de uso por ahora. Espera un minuto y vuelve a intentarlo."
     if isinstance(exc, anthropic.APIStatusError):
@@ -65,10 +78,10 @@ def default_client(api_key: str) -> anthropic.Anthropic:
     return anthropic.Anthropic(api_key=api_key, max_retries=2, timeout=anthropic.Timeout(600.0, connect=15.0))
 
 
-def validate_key(api_key: str, client_factory: Callable[[str], Any] = default_client) -> str:
+def validate_key(api_key: str, client_factory: Callable[[str], Any] = default_client, model: str = DEFAULTS.model) -> str:
     """Comprueba la clave sin gastar tokens. Devuelve el nombre del modelo."""
-    model = client_factory(api_key).models.retrieve(MODEL)
-    return getattr(model, "display_name", "") or MODEL_NAME
+    info = client_factory(api_key).models.retrieve(model)
+    return getattr(info, "display_name", "") or model_name(model)
 
 
 def _kept_after_fallback(content: list) -> list:
@@ -81,17 +94,41 @@ def _kept_after_fallback(content: list) -> list:
 
 
 class Conversation:
+    """Una conversación. El modelo y el nivel de razonamiento se fijan al empezarla (cambiarlos a mitad
+    invalidaría la caché del prompt); los límites se leen de Ajustes en cada mensaje."""
+
     def __init__(self, toolbox: Toolbox, secrets, client_factory: Callable[[str], Any] = default_client) -> None:
         self.toolbox = toolbox
         self.secrets = secrets
         self.client_factory = client_factory
+        settings = toolbox.ctx.cfg.data.assistant
+        self.model = chosen_model(settings)
+        self.effort = chosen_effort(settings)
         self.messages: list[dict] = []
         self.carry: list[dict] = []  # bloques de un turno interrumpido que acompañan al siguiente mensaje
+        self.turns = 0
         self.use_fallbacks = True
         self.system = [{"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}]
         self.tools = toolbox.definitions()
+        self.permissions = ToolPermissions(toolbox.ctx, toolbox.ui)
+        self.meter = UsageMeter(toolbox.ctx.store)
         self._client = None
         self._client_key = ""
+
+    @property
+    def settings(self) -> AssistantSettings:
+        return self.toolbox.ctx.cfg.data.assistant
+
+    def admit(self, text: str) -> str:
+        """Middleware de entrada: "" si el mensaje puede enviarse; si no, el motivo (no se gasta nada)."""
+        s = self.settings
+        if not s.enabled:
+            return "El asistente está desactivado en Ajustes → Asistente."
+        if len(text) > max(200, s.max_message_chars):
+            return f"El mensaje es muy largo (máximo {s.max_message_chars} caracteres). Resúmelo un poco."
+        if self.turns >= max(1, s.max_turns):
+            return "Esta conversación ya es larga. Pulsa «Nueva conversación» para seguir (gasta menos tokens)."
+        return self.meter.admit_message(s)
 
     # --- estado ------------------------------------------------------------------------------
     def reset(self) -> None:
@@ -112,7 +149,18 @@ class Conversation:
 
     # --- turno -------------------------------------------------------------------------------
     def send(self, text: str, emit: Emit, cancel: threading.Event) -> None:
-        """Procesa un mensaje del usuario (ya sin secretos). Bloquea hasta terminar."""
+        """Procesa un mensaje del usuario. Bloquea hasta terminar.
+
+        Los secretos se apartan siempre aquí (aunque quien llame ya lo haya hecho): nada que parezca una clave
+        sale de este PC, venga el mensaje de donde venga.
+        """
+        text = self.toolbox.guard.clean(text).model_text
+        problem = self.admit(text)
+        if problem:
+            self.toolbox.ctx.engine.policy.audit.record("asistente", "mensaje", "deny", detail=problem)
+            emit("error", {"message": problem})
+            return
+        self.turns += 1
         self.toolbox.cancel = cancel
         self.messages.append({"role": "user", "content": [*self.carry, {"type": "text", "text": text}]})
         self.carry = []
@@ -124,7 +172,7 @@ class Conversation:
                 log.exception("Asistente: error inesperado")
             else:
                 log.warning("Asistente: %s", exc)
-            emit("error", {"message": friendly_error(exc)})
+            emit("error", {"message": friendly_error(exc, self.model)})
         finally:
             self._settle(keep_text=not refused)
 
@@ -160,7 +208,7 @@ class Conversation:
                     output, is_error = "El usuario detuvo el asistente antes de ejecutar esta herramienta.", True
                 else:
                     emit("tool", {"id": block.id, "name": block.name, "activity": self.toolbox.activity(block.name)})
-                    output, is_error = self.toolbox.run(block.name, block.input)
+                    output, is_error = self.toolbox.run(block.name, block.input, self.permissions)
                     emit("tool_done", {"id": block.id, "name": block.name, "ok": not is_error, "detail": output if is_error else ""})
                 result = {"type": "tool_result", "tool_use_id": block.id, "content": output}
                 if is_error:
@@ -170,6 +218,9 @@ class Conversation:
             if cancel.is_set():
                 emit("stopped", {})
                 return False
+            budget = float(self.settings.daily_budget_usd or 0)
+            if budget > 0 and self.meter.today()["cost"] >= budget:
+                raise AssistantError("Se alcanzó el límite diario de gasto del asistente (Ajustes → Asistente).")
         raise AssistantError("El asistente dio demasiados pasos seguidos. Dime cómo quieres seguir.")
 
     def _settle(self, keep_text: bool) -> None:
@@ -226,13 +277,13 @@ class Conversation:
     def _create(self, messages: list[dict]):
         client = self.client()
         params = dict(
-            model=MODEL,
+            model=self.model,
             max_tokens=MAX_TOKENS,
             system=self.system,
             tools=self.tools,
             messages=messages,
             thinking={"type": "adaptive"},
-            output_config={"effort": EFFORT},
+            output_config={"effort": self.effort},
             cache_control={"type": "ephemeral"},
         )
         if self.use_fallbacks:
@@ -245,16 +296,17 @@ class Conversation:
                 self.use_fallbacks = False
         return self._log_usage(client.beta.messages.create(**params))
 
-    @staticmethod
-    def _log_usage(response):
+    def _log_usage(self, response):
         usage = getattr(response, "usage", None)
         if usage is not None:
-            log.debug(
-                "Asistente: %s · entrada %s (caché leída %s, escrita %s) · salida %s",
+            cost = self.meter.record(self.model, usage)
+            log.info(
+                "Asistente: %s · entrada %s (caché leída %s, escrita %s) · salida %s · ≈ %.4f USD",
                 response.stop_reason,
                 usage.input_tokens,
                 usage.cache_read_input_tokens,
                 usage.cache_creation_input_tokens,
                 usage.output_tokens,
+                cost,
             )
         return response

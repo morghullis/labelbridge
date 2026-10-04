@@ -7,11 +7,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, QTimer, QUrl
-from PySide6.QtGui import QColor, QDesktopServices, QPixmap
+from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, QTimer
+from PySide6.QtGui import QColor, QPixmap
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
+    QFileDialog,
     QHBoxLayout,
     QHeaderView,
     QLineEdit,
@@ -21,6 +22,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from ...jobstore import PayloadUnavailable
 from ...labels.order import normalize_order
 from ...labels.qt_label import draw_order_label
 from ...models import SOURCE_LABELS, STATUS_LABELS, status_text
@@ -220,31 +222,41 @@ class PreviewDialog(QDialog):
             details.append(f"URL: {job['url'][:90]}")
         layout.addWidget(label("<br>".join(details), wrap=True, selectable=True))
 
-        path = Path(job["payload_path"]) if job["payload_path"] else None
-        if path is None or not path.exists():
-            layout.addWidget(label("El archivo todavía no se descargó o ya no existe.", "Muted"))
-        else:
-            self._render(layout, ctx, job, path)
+        try:
+            raw = ctx.store.read_payload(job)  # en disco va cifrado
+        except PayloadUnavailable as exc:
+            raw = None
+            layout.addWidget(label(f"{exc}. Si es una URL, todavía no se descargó.", "Muted", wrap=True))
+        if raw is not None:
+            self._render(layout, ctx, job, raw)
         row = QHBoxLayout()
-        if path is not None and path.exists():
-            open_btn = button("Abrir archivo", "folder")
-            open_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(path))))
-            row.addWidget(open_btn)
+        if raw is not None and job["format"] != "order":
+            save_btn = button("Guardar copia…", "download")
+            save_btn.clicked.connect(lambda: self._save_copy(job, raw))
+            row.addWidget(save_btn)
         row.addStretch(1)
         close = button("Cerrar")
         close.clicked.connect(self.accept)
         row.addWidget(close)
         layout.addLayout(row)
 
-    def _render(self, layout: QVBoxLayout, ctx: AppContext, job: dict[str, Any], path: Path) -> None:
+    def _save_copy(self, job: dict[str, Any], raw: bytes) -> None:
+        """Exporta el contenido descifrado a donde el usuario elija (los datos de la cola siguen cifrados)."""
+        fmt = job["format"] if job["format"] != "auto" else detect_format(raw)
+        extension = {"pdf": "pdf", "zpl": "zpl", "image": "png"}.get(fmt, "bin")
+        name = "".join(c if c.isalnum() or c in "-_ " else "_" for c in job["title"]).strip() or "etiqueta"
+        target, _ = QFileDialog.getSaveFileName(self, "Guardar copia", f"{name}.{extension}")
+        if target:
+            Path(target).write_bytes(raw)
+
+    def _render(self, layout: QVBoxLayout, ctx: AppContext, job: dict[str, Any], raw: bytes) -> None:
         source = None
         try:
             if job["format"] == "order":
-                order = json.loads(path.read_text(encoding="utf-8"))
+                order = json.loads(raw.decode("utf-8"))
                 data = normalize_order(order, ctx.cfg.data.labels, ctx.cfg.data.shopify.shop)
                 source = VectorSource((101.6, 152.4), lambda p, r, dpi: draw_order_label(p, r, dpi, data, ctx.cfg.data.labels.show_items))
             else:
-                raw = path.read_bytes()
                 fmt = job["format"] if job["format"] != "auto" else detect_format(raw)
                 if fmt == "pdf":
                     source = PdfSource(raw)

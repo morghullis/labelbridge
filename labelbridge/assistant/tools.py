@@ -11,9 +11,14 @@ from __future__ import annotations
 import ipaddress
 import json
 import logging
+import re
+import socket
+import sys
 import threading
+import time
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Callable, Protocol
 
 from .. import __version__
@@ -24,11 +29,21 @@ from ..models import SOURCE_LABELS, status_text
 from ..printing.hints import looks_like_label_printer, looks_like_zpl, suggest_alias
 from ..printing.outputs import list_system_printers
 from ..secret_store import MQTT_PASSWORD, SHOPIFY_ACCESS_TOKEN, SHOPIFY_CLIENT_SECRET
-from ..system import autostart
+from ..system import autostart, windows_printers
 from ..updater import UPDATES_PAGE
 from .secrets_guard import SecretsGuard
 
 log = logging.getLogger(__name__)
+
+MAX_LISTED = 30  # elementos máximos en una lista devuelta al modelo
+PRINTER_STATUS_PROBLEMS = {  # win32print: bits de Status
+    0x00000002: "con error",
+    0x00000008: "con papel atascado",
+    0x00000010: "sin papel",
+    0x00000080: "fuera de línea",
+    0x00001000: "no disponible",
+    0x00400000: "con la tapa abierta",
+}
 
 # tipo -> (nombre en el almacén seguro, título de la ventana, de dónde se saca)
 SECRET_KINDS = {
@@ -54,10 +69,24 @@ class ToolError(Exception):
     """Error que se devuelve al modelo (is_error) para que lo explique o lo corrija."""
 
 
+_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f\u200b-\u200f\u202a-\u202e\u2066-\u2069]")
+
+
+def untrusted(value: Any, limit: int = 80) -> str:
+    """Texto que viene de fuera (nombres de impresoras, mensajes de error…): sin caracteres de control ni
+    saltos de línea y recortado, para que no pueda colar instrucciones largas al modelo."""
+    text = " ".join(_CONTROL.sub(" ", str(value or "")).split())
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
 class AssistantUI(Protocol):
     """Lo que las herramientas necesitan de la interfaz (en las pruebas se usa una versión falsa)."""
 
     def confirm(self, title: str, text: str, accept: str) -> bool: ...
+
+    def approve(self, title: str, text: str) -> str:
+        """Permiso para un cambio: "once", "session" (resto de la conversación) o "deny"."""
+        ...
 
     def ask_secret(self, title: str, hint: str) -> str | None: ...
 
@@ -140,13 +169,21 @@ class Toolbox:
         tool = self.by_name.get(name)
         return tool.activity if tool else name
 
-    def run(self, name: str, args: Any) -> tuple[str, bool]:
-        """Ejecuta una herramienta. Devuelve (contenido para el modelo, es_error)."""
+    def run(self, name: str, args: Any, permissions=None) -> tuple[str, bool]:
+        """Ejecuta una herramienta. Devuelve (contenido para el modelo, es_error).
+
+        `permissions` (ToolPermissions de la conversación) aprueba o rechaza la llamada antes de ejecutarla.
+        """
         tool = self.by_name.get(name)
         if tool is None:
             return f"No existe la herramienta {name}", True
         try:
-            result = tool.handler(validate(tool.schema, args))
+            args = validate(tool.schema, args)
+            if permissions is not None:
+                allowed, reason = permissions.authorize(name, args)
+                if not allowed:
+                    return reason, True
+            result = tool.handler(args)
         except ToolError as exc:
             return str(exc), True
         except Exception as exc:  # el modelo recibe el error y se lo explica al usuario
@@ -175,19 +212,20 @@ class Toolbox:
             return ""
         return self._printer(value).alias
 
-    def _printer_summary(self, p: PrinterProfile) -> dict:
+    def _printer_summary(self, p: PrinterProfile, full: bool = True) -> dict:
         default = self.ctx.cfg.default_printer()
-        return {
+        summary = {
             "alias": p.alias,
             "connection": {"system": "windows", "network": "network", "file": "file (pruebas)"}.get(p.kind, p.kind),
-            "target": p.target_text(),
+            "target": untrusted(p.target_text()),
             "language": p.language,
             "media": p.media,
-            "dpi": p.dpi,
-            "rotate": p.rotate,
             "enabled": p.enabled,
             "default": bool(default and default.id == p.id),
         }
+        if full:
+            summary.update(dpi=p.dpi, rotate=p.rotate)
+        return summary
 
     def _shop_key(self, suffix: str) -> str | None:
         try:
@@ -196,77 +234,106 @@ class Toolbox:
             return None
 
     # --- lectura ---------------------------------------------------------------------------------
-    def get_status(self, _args: dict) -> dict:
+    def get_status(self, args: dict) -> dict:
+        """Estado compacto por secciones: pedir solo lo necesario ahorra tokens."""
+        section = args.get("section", "summary")
+        everything = section == "all"
+        data = self.ctx.cfg.data
+        result: dict[str, Any] = {}
+        if section == "summary" or everything:
+            result["app"] = {
+                "version": __version__,
+                "computer": untrusted(data.general.agent_name, 40),
+                "automatic_printing": "en pausa" if data.general.paused else "activa",
+                "start_with_windows": data.general.start_with_windows,
+                "jobs": self.ctx.store.counts(),
+            }
+        if section in ("summary", "printers") or everything:
+            result["printers"] = [self._printer_summary(p, full=section != "summary") for p in data.printers]
+        if section in ("summary", "shopify") or everything:
+            result["shopify"] = self._shopify_status(full=section != "summary")
+        if section in ("n8n",) or everything or (section == "summary" and data.mqtt.enabled):
+            mqtt = data.mqtt
+            result["n8n"] = {
+                "enabled": mqtt.enabled,
+                "host": untrusted(mqtt.host),
+                "username": untrusted(mqtt.username, 40),
+                "channel": mqtt.channel,
+                "password_saved": bool(self.ctx.secrets.get(MQTT_PASSWORD)),
+                "state": self.ctx.services.mqtt.state,
+            }
+        if section in ("summary", "guide") or everything:
+            result["guide"] = self._guide_status(full=section != "summary")
+        if section == "sender" or everything:
+            result["sender_for_order_label"] = {
+                "store_name": untrusted(data.labels.store_name),
+                "address": untrusted(data.labels.sender_address, 200),
+            }
+        return result
+
+    def _shopify_status(self, full: bool) -> dict:
+        s = self.ctx.cfg.data.shopify
+        service = self.ctx.services.shopify
+        prefix = self._shop_key("fo:")
+        status = {
+            "connector_enabled": s.enabled,
+            "shop": s.shop,
+            "credentials_missing": self._shopify_missing(),
+            "connection_state": service.state,
+            "connection_message": untrusted(service.message, 160),
+            "buy_shipping_label": s.buy_shipping_label,
+            "shipping_label_printer": s.shipping_label_printer or "(predeterminada)",
+            "labels_bought_today": self.ctx.store.count_seen(prefix, self.ctx.store.start_of_today()) if prefix else 0,
+            "max_labels_per_day": s.max_labels_per_day,
+            "print_order_label": s.print_order_label,
+        }
+        if full:
+            status.update(
+                auth_mode=s.auth_mode,
+                client_id=s.client_id,
+                client_secret_saved=bool(self.ctx.secrets.get(SHOPIFY_CLIENT_SECRET)),
+                access_token_saved=bool(self.ctx.secrets.get(SHOPIFY_ACCESS_TOKEN)),
+                api_version=s.api_version,
+                notify_customer=s.notify_customer,
+                order_label_printer=s.order_label_printer or "(predeterminada)",
+                metafield_label=s.metafield_label,
+                only_paid=s.only_paid,
+                only_unfulfilled=s.only_unfulfilled,
+                required_tag=untrusted(s.required_tag, 40),
+                tag_after_print=untrusted(s.tag_after_print, 40),
+                poll_seconds=s.poll_seconds,
+            )
+        return status
+
+    def _guide_status(self, full: bool) -> dict:
         from ..ui.pages.guide import STEPS
 
-        data = self.ctx.cfg.data
-        s = data.shopify
-        shop_service = self.ctx.services.shopify
-        prefix = self._shop_key("fo:")
-        bought_today = self.ctx.store.count_seen(prefix, self.ctx.store.start_of_today()) if prefix else 0
         steps = []
-        for number, step in enumerate(STEPS, start=1):
+        for step in STEPS:
             try:
                 done = bool(step.check(self.ctx))
             except Exception:
                 done = False
-            steps.append({"step": number, "key": step.key, "title": step.title, "done": done, "optional": step.optional})
-        mqtt = data.mqtt
-        return {
-            "app_version": __version__,
-            "computer": data.general.agent_name,
-            "automatic_printing": "en pausa" if data.general.paused else "activa",
-            "printers": [self._printer_summary(p) for p in data.printers],
-            "shopify": {
-                "connector_enabled": s.enabled,
-                "shop": s.shop,
-                "auth_mode": s.auth_mode,
-                "client_id": s.client_id,
-                "client_secret_saved": bool(self.ctx.secrets.get(SHOPIFY_CLIENT_SECRET)),
-                "access_token_saved": bool(self.ctx.secrets.get(SHOPIFY_ACCESS_TOKEN)),
-                "api_version": s.api_version,
-                "connection_state": shop_service.state,
-                "connection_message": shop_service.message,
-                "buy_shipping_label": s.buy_shipping_label,
-                "shipping_label_printer": s.shipping_label_printer or "(predeterminada)",
-                "notify_customer": s.notify_customer,
-                "max_labels_per_day": s.max_labels_per_day,
-                "labels_bought_today": bought_today,
-                "print_order_label": s.print_order_label,
-                "order_label_printer": s.order_label_printer or "(predeterminada)",
-                "metafield_label": s.metafield_label,
-                "only_paid": s.only_paid,
-                "only_unfulfilled": s.only_unfulfilled,
-                "required_tag": s.required_tag,
-                "tag_after_print": s.tag_after_print,
-                "poll_seconds": s.poll_seconds,
-            },
-            "sender_for_order_label": {
-                "store_name": data.labels.store_name,
-                "address": data.labels.sender_address,
-            },
-            "n8n_mqtt": {
-                "enabled": mqtt.enabled,
-                "host": mqtt.host,
-                "username": mqtt.username,
-                "channel": mqtt.channel,
-                "password_saved": bool(self.ctx.secrets.get(MQTT_PASSWORD)),
-                "state": self.ctx.services.mqtt.state,
-            },
-            "start_with_windows": data.general.start_with_windows,
-            "guide_steps": steps,
-            "jobs": self.ctx.store.counts(),
+            steps.append({"key": step.key, "title": step.title, "done": done, "optional": step.optional})
+        required = [s for s in steps if not s["optional"]]
+        status = {
+            "done": sum(1 for s in required if s["done"]),
+            "total": len(required),
+            "pending": [s["title"] for s in required if not s["done"]],
         }
+        if full:
+            status["steps"] = steps
+        return status
 
     def list_windows_printers(self, _args: dict) -> dict:
-        printers = list_system_printers()
+        printers = list_system_printers()[:MAX_LISTED]
         configured = {p.system_name.casefold() for p in self.ctx.cfg.data.printers if p.kind == "system"}
         return {
             "printers": [
                 {
-                    "windows_name": p["name"],
-                    "model_or_driver": p["model"] or p["driver"] or p["description"],
-                    "port": p["port"] or p["location"],
+                    "windows_name": untrusted(p["name"], 120),
+                    "model_or_driver": untrusted(p["model"] or p["driver"] or p["description"]),
+                    "port": untrusted(p["port"] or p["location"], 60),
                     "windows_default": p["is_default"],
                     "looks_like_label_printer": looks_like_label_printer(f"{p['name']} {p['model']} {p['driver']}"),
                     "speaks_zpl": looks_like_zpl(f"{p['name']} {p['model']} {p['driver']}"),
@@ -285,14 +352,14 @@ class Toolbox:
             "found": [
                 {
                     "ip": p.ip,
-                    "name": p.title,
-                    "model": p.model,
+                    "name": untrusted(p.title),
+                    "model": untrusted(p.model),
                     "protocols": p.protocols,
                     "speaks_zpl": p.is_zpl,
                     "suggested": p.suggested(),
                     "already_in_labelbridge": p.ip in configured,
                 }
-                for p in found
+                for p in found[:MAX_LISTED]
             ]
         }
 
@@ -303,13 +370,13 @@ class Toolbox:
             "jobs": [
                 {
                     "job_id": job["id"],
-                    "title": job["title"],
+                    "title": untrusted(job["title"]),
                     "status": status_text(job),
                     "source": SOURCE_LABELS.get(job["source"], job["source"]),
-                    "printer": job["printer_used"] or job["printer"] or "(predeterminada)",
+                    "printer": untrusted(job["printer_used"] or job["printer"] or "(predeterminada)"),
                     "created": datetime.fromtimestamp(job["created_at"]).strftime("%d/%m %H:%M"),
-                    "error": (job["error"] or "")[:300],
-                    "tracking": (job.get("meta") or {}).get("tracking"),
+                    "error": untrusted(job["error"], 300),
+                    "tracking": untrusted((job.get("meta") or {}).get("tracking"), 40),
                 }
                 for job in jobs
             ]
@@ -691,6 +758,122 @@ class Toolbox:
         self.ctx.engine.wake()
         return {"queued": updated["title"], "job_id": updated["id"]}
 
+    # --- diagnóstico ---------------------------------------------------------------------------
+    def _check_printer(self, p: PrinterProfile) -> tuple[bool, str]:
+        """Comprueba la impresora sin imprimir nada."""
+        if p.kind == "network":
+            try:
+                with socket.create_connection((p.host, p.port), timeout=2.5):
+                    return True, f"«{p.alias}» responde en {p.host}:{p.port}"
+            except OSError:
+                return False, f"«{p.alias}» no responde en {p.host}:{p.port} (¿apagada, sin red o IP cambiada?)"
+        if p.kind == "system":
+            if sys.platform == "win32":
+                try:
+                    import win32print
+
+                    handle = win32print.OpenPrinter(p.system_name)
+                    try:
+                        info = win32print.GetPrinter(handle, 2)
+                    finally:
+                        win32print.ClosePrinter(handle)
+                except Exception:
+                    return False, f"«{p.alias}»: Windows no encuentra la impresora «{untrusted(p.system_name)}»"
+                states = [text for bit, text in PRINTER_STATUS_PROBLEMS.items() if info.get("Status", 0) & bit]
+                if info.get("Attributes", 0) & 0x400:
+                    states.append("marcada «usar sin conexión»")
+                if states:
+                    return False, f"«{p.alias}» está " + ", ".join(states)
+                return True, f"«{p.alias}» lista en Windows"
+            names = {x["name"].casefold() for x in list_system_printers()}
+            if p.system_name.casefold() not in names:
+                return False, f"«{p.alias}»: el sistema no tiene la impresora «{untrusted(p.system_name)}»"
+            return True, f"«{p.alias}» instalada en el sistema"
+        folder = Path(p.output_dir) if p.output_dir else None
+        return (True, f"«{p.alias}» guarda archivos (pruebas)") if folder is None or folder.parent.exists() else (
+            False, f"«{p.alias}»: la carpeta de salida no existe")
+
+    def diagnose_setup(self, _args: dict) -> dict:
+        """Revisa todo de una vez (impresoras, Shopify, n8n, inicio, fallos recientes) sin imprimir nada."""
+        data = self.ctx.cfg.data
+        s = data.shopify
+        problems: list[str] = []
+        ok: list[str] = []
+        notes: list[str] = []
+        printers = [p for p in data.printers if p.enabled]
+        if not printers:
+            problems.append("No hay ninguna impresora activa.")
+        for p in printers[:8]:
+            good, text = self._check_printer(p)
+            (ok if good else problems).append(text)
+        if s.enabled or s.shop:
+            missing = self._shopify_missing()
+            if missing:
+                problems.append("Shopify: falta " + "; ".join(missing) + ".")
+            else:
+                try:
+                    info = self.ctx.services.shopify.test_connection()
+                    ok.append(f"Shopify conecta con «{untrusted(info.get('name'))}»")
+                    if info.get("missing"):
+                        problems.append("Shopify: faltan permisos " + ", ".join(info["missing"]) + ".")
+                except Exception as exc:
+                    problems.append(f"Shopify no conecta: {untrusted(exc, 200)}")
+            if not s.enabled:
+                problems.append("El conector de Shopify está apagado: los pedidos no se imprimen.")
+            if not (s.buy_shipping_label or s.print_order_label or s.metafield_label):
+                problems.append("No hay nada elegido para imprimir en cada pedido (lo normal: la guía de Shopify Shipping).")
+            if s.buy_shipping_label and s.print_order_label:
+                notes.append("Cada pedido imprime 2 etiquetas: la guía y la etiqueta interna.")
+        else:
+            problems.append("La tienda de Shopify no está configurada.")
+        if data.mqtt.enabled and self.ctx.services.mqtt.state != "ok":
+            problems.append(f"n8n: {untrusted(self.ctx.services.mqtt.message, 160) or 'sin conexión'}.")
+        if data.general.paused:
+            problems.append("La impresión automática está en pausa.")
+        if not data.general.start_with_windows:
+            problems.append("No inicia con Windows: si el PC se reinicia no imprime hasta abrir la app.")
+        since = time.time() - 86400
+        failed = [j for j in self.ctx.store.list(limit=50, status="failed") if j["created_at"] >= since]
+        if failed:
+            problems.append(
+                f"{len(failed)} etiqueta(s) fallaron en las últimas 24 h; la última: "
+                f"{untrusted(failed[0]['title'], 60)} — {untrusted(failed[0]['error'], 160)}"
+            )
+        return {"problems": problems, "ok": ok, "notes": notes}
+
+    def install_windows_printer(self, a: dict) -> dict:
+        """Instala en Windows una impresora de red (puerto TCP/IP + driver). Pide permiso de administrador."""
+        if not windows_printers.supported():
+            raise ToolError("Instalar impresoras solo es posible en Windows.")
+        ip = a["ip"].strip()
+        try:
+            ipaddress.ip_address(ip)
+        except ValueError:
+            raise ToolError("La IP no es válida.") from None
+        drivers = windows_printers.list_drivers()
+        driver = a.get("driver", "").strip()
+        if not driver or driver not in drivers:
+            preferred = [d for d in drivers if any(k in d.lower() for k in ("zdesigner", "generic", "ipp class"))]
+            return {
+                "installed": False,
+                "choose_driver": [untrusted(d, 80) for d in (preferred + [d for d in drivers if d not in preferred])][:MAX_LISTED],
+                "hint": "Zebra: driver ZDesigner (o «Generic / Text Only» solo para ZPL). Otras: «Microsoft IPP Class Driver».",
+            }
+        name = untrusted(a.get("name") or f"Impresora {ip}", 60)
+        port = a.get("port", 9100)
+        if not self.ui.confirm(
+            "Instalar impresora en Windows",
+            f"El asistente quiere instalar «{name}» ({ip}:{port}) con el driver «{driver}».\n\n"
+            "Windows pedirá permiso de administrador. ¿Continuar?",
+            "Instalar",
+        ):
+            return {"installed": False, "reason": "El usuario no lo aprobó en la ventana de confirmación."}
+        try:
+            windows_printers.install_network_printer(name, ip, driver, port)
+        except Exception as exc:
+            raise ToolError(f"Windows no pudo instalarla: {untrusted(exc, 200)}") from None
+        return {"installed": True, "windows_name": name, "next": "Agrégala con add_printer(connection=windows)."}
+
     # --- n8n en tiempo real (MQTT) ------------------------------------------------------------------
     def set_n8n_connection(self, a: dict) -> dict:
         m = self.ctx.cfg.data.mqtt
@@ -755,12 +938,21 @@ class Toolbox:
         return [
             Tool(
                 "get_status",
-                "Estado actual de LabelBridge en este PC: impresoras, conexión con Shopify y qué se imprime en cada "
-                "pedido, remitente, n8n, pasos de la guía y conteo de trabajos. Los secretos solo aparecen como "
-                "guardados o no. Llámala al empezar y siempre antes de afirmar cómo está configurado algo.",
-                _obj(),
+                "Estado de LabelBridge en este PC. section=summary (por defecto) da lo esencial: impresoras, Shopify, "
+                "pasos pendientes de la guía y trabajos. Pide otra sección solo si necesitas el detalle. Los secretos "
+                "aparecen solo como guardados o no. Llámala al empezar y antes de afirmar cómo está algo.",
+                _obj({"section": _s("Qué parte.", ["summary", "printers", "shopify", "n8n", "guide", "sender", "all"])}),
                 self.get_status,
                 "Revisando la configuración",
+            ),
+            Tool(
+                "diagnose_setup",
+                "Revisa todo de una vez sin imprimir: que cada impresora responda, la conexión y permisos de Shopify, "
+                "qué se imprime, n8n, pausa, inicio con Windows y fallos de las últimas 24 h. Úsala al terminar de "
+                "configurar y cuando algo no se imprimió.",
+                _obj(),
+                self.diagnose_setup,
+                "Revisando que todo funcione",
             ),
             Tool(
                 "list_windows_printers",
@@ -806,6 +998,23 @@ class Toolbox:
                 ),
                 self.add_printer,
                 "Agregando la impresora",
+            ),
+            Tool(
+                "install_windows_printer",
+                "Instala en Windows una impresora de red por IP (puerto TCP/IP + driver) para usarla con driver. Sin "
+                "driver devuelve la lista para elegir. Pide confirmación y permiso de administrador. Úsala solo si el "
+                "usuario quiere la impresora instalada en Windows; para imprimir por IP basta add_printer(network).",
+                _obj(
+                    {
+                        "ip": _s("IP de la impresora."),
+                        "driver": _s("Nombre exacto del driver instalado en Windows."),
+                        "name": _s("Nombre para la impresora en Windows."),
+                        "port": _i("Puerto TCP (normalmente 9100)."),
+                    },
+                    ("ip",),
+                ),
+                self.install_windows_printer,
+                "Instalando la impresora en Windows",
             ),
             Tool(
                 "update_printer",

@@ -117,9 +117,9 @@ STEPS: list[Step] = [
         "Anthropic</b> (platform.claude.com → API Keys) y pulsa <b>Guardar y probar</b>. Se paga por uso: configurar "
         "todo suele costar menos de un dólar.</li>"
         "<li>② Escríbele con tus palabras, por ejemplo: <i>«Tengo una Zebra por USB y quiero imprimir las guías de "
-        "Shopify Shipping de pedroyorubajewelry»</i>. Él agrega la impresora, conecta la tienda y te dice qué falta.</li>"
-        "<li>Las claves se piden en una ventana segura (o con ③ <b>Dato secreto</b>) y se quedan en este PC. Antes de "
-        "comprar guías siempre te pide confirmación.</li>"
+        "Shopify Shipping de mi tienda»</i>. Él agrega la impresora, conecta la tienda y te dice qué falta.</li>"
+        "<li>Antes de cada cambio te pide permiso. Las claves se piden en una ventana segura (o con ③ <b>Dato "
+        "secreto</b>) y se quedan en este PC. Comprar guías siempre pide confirmación.</li>"
         "</ol>",
         _assistant_ready,
         [("Abrir el asistente", "chat", "nav:assistant")],

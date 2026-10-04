@@ -79,12 +79,12 @@ QPushButton[variant="chip"] {{
 QPushButton[variant="chip"]:hover {{ background: #E0E7FF; border-color: #A5B4FC; }}
 QPushButton[variant="chip"]:disabled {{ color: #94A3B8; background: #F8FAFC; border-color: {BORDER}; }}
 
-QLineEdit, QSpinBox, QComboBox, QPlainTextEdit, QTextEdit {{
+QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox, QPlainTextEdit, QTextEdit {{
     background: white; color: {TEXT}; border: 1px solid #CBD5E1; border-radius: 8px;
     padding: 6px 8px; selection-background-color: {ACCENT}; selection-color: white;
 }}
-QLineEdit:focus, QSpinBox:focus, QComboBox:focus, QPlainTextEdit:focus {{ border: 1px solid {ACCENT}; }}
-QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled {{ background: #F8FAFC; color: #94A3B8; }}
+QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus, QPlainTextEdit:focus {{ border: 1px solid {ACCENT}; }}
+QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled {{ background: #F8FAFC; color: #94A3B8; }}
 QComboBox::drop-down {{ border: none; width: 22px; }}
 QComboBox QAbstractItemView {{ background: white; border: 1px solid {BORDER}; selection-background-color: #EEF2FF; selection-color: {TEXT}; }}
 QPlainTextEdit#Code {{

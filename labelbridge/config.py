@@ -158,6 +158,45 @@ class LocalApiSettings:
     port: int = 7300
     allow_lan: bool = False
     cors_origins: str = ""
+    allowed_hosts: str = ""  # nombres extra aceptados en la cabecera Host (p. ej. pc-bodega.miempresa.lan)
+
+
+@dataclass
+class SecuritySettings:
+    """Límites y reglas de seguridad. Se aplican al momento al guardarlos (Ajustes → Seguridad)."""
+
+    api_requests_per_minute: int = 120  # peticiones a la API local por minuto y por equipo
+    api_max_auth_failures: int = 10  # claves incorrectas seguidas antes de bloquear a ese equipo
+    api_block_minutes: int = 15
+    api_max_connections: int = 16  # conexiones simultáneas a la API local
+    jobs_per_minute: int = 60  # trabajos nuevos por minuto desde la API local o n8n
+    max_copies: int = 20  # copias máximas por trabajo
+    private_urls: str = "local_api"  # descargas desde la red interna: never | local_api | always
+    require_https: bool = True  # descargas desde internet solo por https
+    max_message_mb: int = 30  # tamaño máximo de un mensaje de n8n (MQTT)
+
+
+ASSISTANT_MODELS = {
+    "claude-opus-5-5": "Claude Opus 5.5 · el más preciso",
+    "claude-sonnet-5-5": "Claude Sonnet 5.5 · más económico",
+}
+ASSISTANT_EFFORTS = {"low": "Rápido (menos tokens)", "medium": "Equilibrado", "high": "Profundo (más tokens)"}
+
+
+@dataclass
+class AssistantSettings:
+    """Asistente de configuración (Ajustes → Asistente)."""
+
+    enabled: bool = True
+    model: str = "claude-opus-5-5"
+    # low | medium | high: cuánto razona (y cuántos tokens gasta). Con las pruebas reales (devtools/assistant_eval.py)
+    # «low» acertó igual que «medium» con ~25 % menos tokens.
+    effort: str = "low"
+    approval: str = "changes"  # changes: pide permiso para cualquier cambio · critical: solo compras y borrados
+    daily_budget_usd: float = 2.0  # gasto estimado máximo por día (0 = sin límite)
+    messages_per_hour: int = 40
+    max_message_chars: int = 4000
+    max_turns: int = 40  # mensajes por conversación antes de pedir empezar una nueva
 
 
 @dataclass
@@ -169,6 +208,8 @@ class Settings:
     shopify: ShopifySettings = field(default_factory=ShopifySettings)
     mqtt: MqttSettings = field(default_factory=MqttSettings)
     local_api: LocalApiSettings = field(default_factory=LocalApiSettings)
+    security: SecuritySettings = field(default_factory=SecuritySettings)
+    assistant: AssistantSettings = field(default_factory=AssistantSettings)
 
 
 def _coerce(value: Any, default: Any) -> Any:
@@ -207,37 +248,66 @@ def _from_dict(cls: type, raw: Any) -> Any:
 
 
 class ConfigManager:
-    """Carga/guarda la configuración y avisa a los suscriptores cuando cambia."""
+    """Carga/guarda la configuración y avisa a los suscriptores cuando cambia.
 
-    def __init__(self, path: Path) -> None:
+    Con `protector` la configuración se guarda cifrada en config.enc (una config.json antigua se migra y
+    se borra). Sin él (pruebas, herramientas) se usa config.json en texto.
+    """
+
+    CONTEXT = "config"
+
+    def __init__(self, path: Path, protector=None) -> None:
         self.path = path
+        self.protector = protector
+        self.store_path = path.with_suffix(".enc") if protector is not None else path
         self._lock = threading.RLock()
         self._listeners: list[Callable[[str], None]] = []
         self.data: Settings = self._load()
 
+    def _read(self, path: Path) -> dict:
+        raw = path.read_bytes()
+        if self.protector is not None:
+            raw = self.protector.decrypt(raw, self.CONTEXT)
+        return json.loads(raw.decode("utf-8"))
+
     def _load(self) -> Settings:
-        if not self.path.exists():
+        source = self.store_path if self.store_path.exists() else self.path
+        if not source.exists():
             return Settings()
         try:
-            raw = json.loads(self.path.read_text(encoding="utf-8"))
-            return _from_dict(Settings, raw)
+            data = _from_dict(Settings, self._read(source))
         except Exception:
-            backup = self.path.with_suffix(f".corrupt-{int(time.time())}.json")
-            log.exception("config.json dañado; se guarda copia en %s y se usan valores por defecto", backup)
+            backup = source.with_name(f"{source.stem}.corrupt-{int(time.time())}{source.suffix}")
+            log.exception("%s dañado o ilegible; se guarda copia en %s y se usan valores por defecto", source.name, backup)
             try:
-                self.path.replace(backup)
+                source.replace(backup)
             except OSError:
                 pass
             return Settings()
+        if source != self.store_path:  # config.json en texto de una versión anterior: se cifra y se borra
+            self.data = data
+            self._write()
+            try:
+                source.unlink()
+            except OSError:
+                log.warning("No se pudo borrar %s después de cifrarla", source.name)
+            log.info("Configuración cifrada en %s", self.store_path.name)
+        return data
+
+    def _write(self) -> None:
+        with self._lock:
+            raw = json.dumps(asdict(self.data), indent=2, ensure_ascii=False).encode("utf-8")
+            if self.protector is not None:
+                raw = self.protector.encrypt(raw, self.CONTEXT)
+            tmp = self.store_path.with_suffix(".tmp")
+            tmp.write_bytes(raw)
+            os.replace(tmp, self.store_path)
 
     def subscribe(self, callback: Callable[[str], None]) -> None:
         self._listeners.append(callback)
 
     def save(self, section: str = "all") -> None:
-        with self._lock:
-            tmp = self.path.with_suffix(".tmp")
-            tmp.write_text(json.dumps(asdict(self.data), indent=2, ensure_ascii=False), encoding="utf-8")
-            os.replace(tmp, self.path)
+        self._write()
         for callback in list(self._listeners):
             try:
                 callback(section)

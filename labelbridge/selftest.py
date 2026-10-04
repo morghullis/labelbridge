@@ -120,7 +120,7 @@ def run(argv: list[str]) -> int:
         import httpx2
 
         from . import paths
-        from .assistant.agent import MODEL, Conversation, default_client
+        from .assistant.agent import DEFAULTS, Conversation, default_client
         from .assistant.secrets_guard import SecretsGuard
         from .assistant.tools import Toolbox
         from .config import ConfigManager
@@ -144,6 +144,9 @@ def run(argv: list[str]) -> int:
             def confirm(self, *_args) -> bool:
                 return False
 
+            def approve(self, *_args) -> str:
+                return "once"
+
             def ask_secret(self, *_args):
                 return None
 
@@ -157,7 +160,7 @@ def run(argv: list[str]) -> int:
                 pass
 
         def message(content: list, stop_reason: str) -> dict:
-            return {"id": "msg_autoprueba", "type": "message", "role": "assistant", "model": MODEL, "content": content,
+            return {"id": "msg_autoprueba", "type": "message", "role": "assistant", "model": DEFAULTS.model, "content": content,
                     "stop_reason": stop_reason, "stop_sequence": None, "usage": {"input_tokens": 1, "output_tokens": 1}}
 
         replies = [
@@ -186,6 +189,33 @@ def run(argv: list[str]) -> int:
         store.close()
         return f"{len(conversation.tools)} herramientas · SDK anthropic {anthropic.__version__}"
 
+    def security() -> str:
+        """Cifrado de datos (AES-256-GCM) y política de descargas en el ejecutable empaquetado."""
+        from . import paths
+        from .config import ConfigManager
+        from .jobstore import JobStore
+        from .models import JobRequest
+        from .secret_store import SecretStore
+        from .security.crypto import DataProtector
+        from .security.policy import PolicyDenied, SecurityPolicy
+
+        folder = paths.data_dir()
+        protector = DataProtector.from_secrets(SecretStore(folder / "secrets-autoprueba.json", backend="file"))
+        cfg = ConfigManager(folder / "config-autoprueba.json", protector)
+        cfg.save()
+        assert b"general" not in (folder / "config-autoprueba.enc").read_bytes(), "la configuración no se cifró"
+        store = JobStore(folder / "autoprueba.db", paths.spool_dir(), protector)
+        job, _ = store.add(JobRequest(external_id="autoprueba", order={"name": "#1001"}), "test")
+        assert store.read_order(job)["name"] == "#1001"
+        store.close()
+        try:
+            SecurityPolicy(cfg).check_url("http://169.254.169.254/latest/meta-data", "api")
+        except PolicyDenied:
+            pass
+        else:
+            raise AssertionError("la política de descargas no bloqueó una dirección reservada")
+        return "AES-256-GCM · política de seguridad activa"
+
     def guide_and_updates() -> str:
         from . import updater
         from .paths import resource_path
@@ -199,6 +229,7 @@ def run(argv: list[str]) -> int:
     check("guía y actualizaciones", guide_and_updates)
     check("impresión de Windows", windows_printing)
     check("etiqueta → PDF → ZPL", label_pipeline)
+    check("seguridad", security)
     check("interfaz", interface)
     check("asistente", assistant)
     lines.append("RESULTADO: " + ("OK" if ok else "FALLO"))
