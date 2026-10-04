@@ -17,6 +17,7 @@ permissions:
 jobs:
   update:
     runs-on: windows-latest
+    timeout-minutes: 20
     env:
       QT_QPA_PLATFORM: offscreen
       GH_TOKEN: ${{ github.token }}
@@ -45,7 +46,8 @@ jobs:
         shell: pwsh
         run: |
           $setup = (Get-ChildItem old\*.exe)[0].FullName
-          Start-Process $setup -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/LOG=old-install.log' -Wait
+          # -Wait esperaría también a la app que abre el instalador: se espera solo al instalador.
+          (Start-Process $setup -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/LOG=old-install.log' -PassThru).WaitForExit()
           Start-Sleep 20
           (Get-ItemProperty $env:APPKEY).DisplayVersion
           Get-Process LabelBridge -ErrorAction SilentlyContinue | Format-Table Id, Path, StartTime -AutoSize
@@ -76,7 +78,7 @@ jobs:
         run: |
           Get-Process LabelBridge -ErrorAction SilentlyContinue | Stop-Process -Force
           Start-Sleep 3
-          Start-Process (Get-ChildItem old\*.exe)[0].FullName -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait
+          (Start-Process (Get-ChildItem old\*.exe)[0].FullName -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -PassThru).WaitForExit()
           Start-Sleep 15
           Get-Process LabelBridge -ErrorAction SilentlyContinue | Stop-Process -Force
           "Antes: " + (Get-ItemProperty $env:APPKEY).DisplayVersion
