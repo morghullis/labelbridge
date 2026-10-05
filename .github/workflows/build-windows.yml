@@ -19,6 +19,8 @@ jobs:
   build:
     runs-on: windows-latest
     timeout-minutes: 60
+    env:
+      PYTHONUTF8: "1"  # la consola de Windows (cp1252) no imprime ✓ ni ·: los scripts fallaban a mitad
     permissions:
       contents: write  # solo para el Release del tag
     steps:

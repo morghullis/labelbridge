@@ -21,6 +21,7 @@ jobs:
     timeout-minutes: 40
     env:
       QT_QPA_PLATFORM: offscreen
+      PYTHONUTF8: "1"
       GH_TOKEN: ${{ github.token }}
       FROM_VERSION: ${{ inputs.from_version }}
       APPKEY: HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{8B5C6F1E-3C2A-4E7B-9C1D-2F4A6B8C0D1E}_is1
