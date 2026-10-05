@@ -695,6 +695,7 @@ class ShopifyService(BackgroundService):
                 documents_with_url += 1
                 kind = "aduana" if doc.get("documentType") == "CUSTOMS_FORM" else "envío"
                 fmt = "zpl" if str(doc.get("format", "")).upper() == "ZPL" else "pdf"
+                size = {"label_size": self.cfg.data.shopify.label_size} if kind == "envío" else {}
                 label_id = str(label.get("id", "")).rsplit("/", 1)[-1]
                 queued += self._enqueue(
                     JobRequest(
@@ -707,6 +708,7 @@ class ShopifyService(BackgroundService):
                             **{k: v for k, v in info.items() if k != "started"},
                             "tracking": tracking.get("number"),
                             "carrier": tracking.get("company"),
+                            **size,
                         },
                     )
                 )

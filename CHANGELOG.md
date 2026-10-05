@@ -2,6 +2,12 @@
 
 Cada versión publicada muestra estas notas en la ventana de actualización de la app y en la página de descargas.
 
+## 1.5.3
+
+- La guía de envío de Shopify Shipping sale siempre a 4 × 6 in reales, en cualquier papel: en un rollo de etiquetas 4×6 lo llena y en una hoja carta o A4 va arriba y centrada para recortarla, sin agrandarse. Si Shopify la entrega en formato carta, se toma solo la guía, a tamaño real.
+- Nuevo ajuste en **Shopify → Qué imprimir → Tamaño**: 4 × 6 in (predeterminado), 100 × 150 mm o «Ajustar a la hoja». El asistente también puede cambiarlo.
+- En impresoras de red por IPP la guía se envía pidiendo tamaño real (sin «ajustar a la página»).
+
 ## 1.5.2
 
 - La máscara del asistente es el logo original tal cual (oro sobre negro, con su corona de seis gemas) y cobra vida encima: parpadea, mueve las pupilas hacia donde está el cursor, entrecierra o sonríe con los párpados, abre la boca al responder y enciende las gemas de la corona.

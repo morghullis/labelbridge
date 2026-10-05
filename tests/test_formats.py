@@ -158,10 +158,14 @@ def test_ipp_print_job_against_fake_server():
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
         job_id, fingerprint = ipp.print_job("127.0.0.1", server.server_address[1], "/ipp/print", b"%PDF-1.4 fake")
+        plain = captured["body"]
+        ipp.print_job("127.0.0.1", server.server_address[1], "/ipp/print", b"%PDF-1.4 fake", scaling="none")
     finally:
         server.shutdown()
     assert job_id == 42 and fingerprint == ""
     assert captured["path"] == "/ipp/print"
-    assert captured["body"].endswith(b"%PDF-1.4 fake")
-    _, attrs = ipp.decode_response(captured["body"])
+    assert plain.endswith(b"%PDF-1.4 fake") and b"print-scaling" not in plain
+    _, attrs = ipp.decode_response(plain)
     assert attrs["document-format"] == ["application/pdf"]
+    _, attrs = ipp.decode_response(captured["body"])
+    assert attrs["print-scaling"] == ["none"]  # la guía a tamaño real, sin «ajustar a la página»

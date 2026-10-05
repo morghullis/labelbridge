@@ -31,6 +31,12 @@ MEDIA_PRESETS: dict[str, tuple[str, float, float]] = {
 }
 
 LABEL_MEDIA = {"4x6", "4x4", "4x3", "4x2", "100x150", "100x100", "2.25x1.25"}
+# Tamaño de la guía de envío: se imprime a ese tamaño real en cualquier papel (rollo, carta o A4).
+LABEL_SIZES = {
+    "4x6": "4 × 6 in (tamaño real)",
+    "100x150": "100 × 150 mm (tamaño real)",
+    "fit": "Ajustar a la hoja",
+}
 
 PRINTER_KINDS = {"system": "Windows (driver)", "network": "Red (IP directa)", "file": "Archivo (pruebas)"}
 LANGUAGES = {"driver": "Driver del sistema", "zpl": "ZPL (Zebra y compatibles)", "pdf": "PDF directo"}
@@ -121,6 +127,7 @@ class ShopifySettings:
     order_label_printer: str = ""  # alias; vacío = predeterminada
     buy_shipping_label: bool = False
     shipping_label_printer: str = ""
+    label_size: str = "4x6"  # LABEL_SIZES: la guía sale a 4×6 in aunque la impresora tenga hojas carta o A4
     notify_customer: bool = False
     max_labels_per_day: int = 50
     metafield_label: bool = False

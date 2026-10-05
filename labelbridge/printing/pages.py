@@ -222,10 +222,24 @@ def render_fitted(
         probe_w, probe_h = max(1, round(page_w * probe_ppm)), max(1, round(page_h * probe_ppm))
         box = content_bbox(source.render(index, probe_w, probe_h, crisp))
         if box is not None:
-            pad = round(1.5 * probe_ppm)
-            box = box.adjusted(-pad, -pad, pad, pad).intersected(QRect(0, 0, probe_w, probe_h))
-            fx, fy = box.x() / probe_w, box.y() / probe_h
-            fw, fh = box.width() / probe_w, box.height() / probe_h
+            tw, th = target_mm
+            bw, bh = box.width() / probe_ppm, box.height() / probe_ppm
+            if (bw > bh * 1.02 and th > tw * 1.02) or (bh > bw * 1.02 and tw > th * 1.02):
+                tw, th = th, tw  # la etiqueta está girada dentro de la hoja
+            if bw <= tw * 1.03 and bh <= th * 1.03:
+                # La hoja trae una etiqueta de ese tamaño (p. ej. la guía de Shopify en formato carta): se toma un
+                # recorte del tamaño de la etiqueta alrededor de ella, así sale a tamaño real.
+                tw, th = min(tw, page_w), min(th, page_h)
+                cx = (box.x() + box.width() / 2) / probe_ppm
+                cy = (box.y() + box.height() / 2) / probe_ppm
+                x0 = min(max(0.0, cx - tw / 2), page_w - tw)
+                y0 = min(max(0.0, cy - th / 2), page_h - th)
+                fx, fy, fw, fh = x0 / page_w, y0 / page_h, tw / page_w, th / page_h
+            else:
+                pad = round(1.5 * probe_ppm)
+                box = box.adjusted(-pad, -pad, pad, pad).intersected(QRect(0, 0, probe_w, probe_h))
+                fx, fy = box.x() / probe_w, box.y() / probe_h
+                fw, fh = box.width() / probe_w, box.height() / probe_h
 
     region_w, region_h = page_w * fw, page_h * fh
     angle = decide_rotation(region_w, region_h, target_w, target_h, rotate)

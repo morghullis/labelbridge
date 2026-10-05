@@ -161,6 +161,7 @@ def test_shopify_cycle_enqueues_labels(core, monkeypatch):
     shipping = next(j for j in core.store.list() if j["external_id"].startswith("shipping-"))
     assert shipping["format"] == "zpl" and shipping["url"].endswith(".zpl")
     assert shipping["meta"]["tracking"] == "1Z999"
+    assert shipping["meta"]["label_size"] == "4x6"  # la guía sale a 4×6 in en cualquier papel
     assert len(fake.purchases) == 1 and fake.purchases[0]["fulfillmentOrderId"].endswith("/77")
     assert fake.calls[0] == "token"
 

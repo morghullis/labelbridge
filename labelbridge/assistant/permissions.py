@@ -61,6 +61,7 @@ LIMITS: dict[str, int] = {
 FIELD_NAMES = {
     "buy_shipping_label": "comprar e imprimir guías de Shopify Shipping",
     "shipping_label_printer": "impresora de guías",
+    "label_size": "tamaño de la guía",
     "notify_customer": "avisar al cliente",
     "max_labels_per_day": "máximo de guías por día",
     "print_order_label": "etiqueta interna de pedido",

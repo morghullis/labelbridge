@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ...config import LABEL_SIZES
 from ...connectors.shopify import ShopifyError, normalize_shop
 from ...events import CONFIG_EXTERNAL
 from ...paths import resource_path
@@ -132,6 +133,17 @@ class ShopifyPage(Page):
         self.max_per_day.setRange(1, 5000)
         self.max_per_day.setValue(s.max_labels_per_day)
         buy_opts.addWidget(self.max_per_day)
+        buy_opts.addSpacing(16)
+        buy_opts.addWidget(label("Tamaño:"))
+        self.label_size = QComboBox()
+        for key, text in LABEL_SIZES.items():
+            self.label_size.addItem(text, key)
+        self.label_size.setCurrentIndex(max(0, self.label_size.findData(s.label_size)))
+        self.label_size.setToolTip(
+            "La guía sale a este tamaño real en cualquier papel: en un rollo de etiquetas 4×6 lo llena, y en una hoja "
+            "carta o A4 va arriba y centrada para recortarla. «Ajustar a la hoja» la agranda hasta llenar el papel."
+        )
+        buy_opts.addWidget(self.label_size)
         buy_opts.addStretch(1)
         grid.addLayout(buy_opts, 1, 0, 1, 2)
         self.buy_warning = label(
@@ -238,6 +250,7 @@ class ShopifyPage(Page):
         self.label_printer.setEnabled(on)
         self.notify_customer.setEnabled(on)
         self.max_per_day.setEnabled(on)
+        self.label_size.setEnabled(on)
 
     def _on_event(self, kind: str, data) -> None:
         if kind == "connector" and isinstance(data, dict) and data.get("name") == "shopify":
@@ -258,6 +271,7 @@ class ShopifyPage(Page):
         self.buy_label.setChecked(s.buy_shipping_label)
         self.notify_customer.setChecked(s.notify_customer)
         self.max_per_day.setValue(s.max_labels_per_day)
+        self.label_size.setCurrentIndex(max(0, self.label_size.findData(s.label_size)))
         self.print_order.setChecked(s.print_order_label)
         self.metafield.setChecked(s.metafield_label)
         self.mf_namespace.setText(s.metafield_namespace)
@@ -338,6 +352,7 @@ class ShopifyPage(Page):
         s.shipping_label_printer = self.label_printer.currentData() or ""
         s.notify_customer = self.notify_customer.isChecked()
         s.max_labels_per_day = self.max_per_day.value()
+        s.label_size = self.label_size.currentData() or "4x6"
         s.metafield_label = self.metafield.isChecked()
         s.metafield_printer = self.metafield_printer.currentData() or ""
         s.metafield_namespace = self.mf_namespace.text().strip() or "custom"

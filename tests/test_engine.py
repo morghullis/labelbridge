@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 
+import pytest
 from conftest import wait_for
 
 from labelbridge.config import PrinterProfile
@@ -108,3 +109,89 @@ def test_qt_label_renders_all_sizes(qapp):
         image = source.render(0, round(size[0] / 25.4 * 203), round(size[1] / 25.4 * 203), True)
         assert not image.isNull()
         assert image.pixelColor(image.width() // 2, image.height() // 2).isValid()
+
+
+# --- la guía de envío a 4×6 in en cualquier papel ------------------------------------------------
+
+def _pdf_page(size_mm: tuple[float, float], ink_mm: tuple[float, float, float, float] | None = None) -> bytes:
+    """PDF de una página de `size_mm` con tinta negra en `ink_mm` (x, y, ancho, alto) o en toda la página."""
+    from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QMarginsF, QRectF, QSizeF
+    from PySide6.QtGui import QColor, QPageLayout, QPageSize, QPainter, QPdfWriter
+
+    data = QByteArray()
+    buffer = QBuffer(data)
+    buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+    writer = QPdfWriter(buffer)
+    writer.setResolution(300)
+    writer.setPageSize(QPageSize(QSizeF(*size_mm), QPageSize.Unit.Millimeter, "", QPageSize.SizeMatchPolicy.ExactMatch))
+    writer.setPageMargins(QMarginsF(0, 0, 0, 0), QPageLayout.Unit.Millimeter)
+    painter = QPainter(writer)
+    px = 300 / 25.4
+    x, y, w, h = ink_mm or (0.0, 0.0, *size_mm)
+    painter.fillRect(QRectF(x * px, y * px, w * px, h * px), QColor("black"))
+    painter.end()
+    buffer.close()
+    return bytes(data)
+
+
+def _ink_mm(pdf: bytes) -> tuple[tuple[float, float], tuple[float, float, float, float]]:
+    """Tamaño de la página y rectángulo con tinta (en mm) de un PDF generado."""
+    from labelbridge.printing.pages import PdfSource, content_bbox
+
+    source = PdfSource(pdf)
+    try:
+        w_mm, h_mm = source.size_mm(0)
+        ppm = 100 / 25.4
+        box = content_bbox(source.render(0, round(w_mm * ppm), round(h_mm * ppm), True))
+    finally:
+        source.close()
+    return (w_mm, h_mm), (box.x() / ppm, box.y() / ppm, box.width() / ppm, box.height() / ppm)
+
+
+def test_shipping_label_is_4x6_on_any_paper(core):
+    """La guía sale a 4×6 in reales en cualquier papel: llena un rollo 4×6 y en carta o A4 va arriba y centrada."""
+    from labelbridge.printing.engine import label_size_mm
+
+    four_by_six = label_size_mm({"label_size": "4x6"})
+    assert four_by_six == (101.6, 152.4) and label_size_mm({"label_size": "fit"}) is None and label_size_mm({}) is None
+    label_pdf = _pdf_page((101.6, 152.4))
+    sheet_pdf = _pdf_page((215.9, 279.4), (20, 30, 101.6, 152.4))  # Shopify en formato carta: la guía dentro de la hoja
+    for media in ("letter", "a4", "4x6"):
+        profile = PrinterProfile(alias=media, kind="file", media=media)
+        for source in (label_pdf, sheet_pdf):
+            out = core.engine._as_pdf(Document("pdf", data=source, size_mm=four_by_six), profile)
+            page, (x, y, w, h) = _ink_mm(out)
+            assert abs(w - 101.6) < 1.5 and abs(h - 152.4) < 1.5, (media, page, w, h)  # 4×6 reales
+            if media == "4x6":
+                assert page == pytest.approx((101.6, 152.4), abs=0.5)
+            else:
+                assert abs(x - (page[0] - w) / 2) < 2 and y < 10, (media, x, y)  # arriba y centrada
+
+    # Sin tamaño fijo («Ajustar a la hoja» y el resto de trabajos) llena el papel, como siempre.
+    page, (_x, _y, _w, h) = _ink_mm(
+        core.engine._as_pdf(Document("pdf", data=label_pdf), PrinterProfile(alias="carta", kind="file", media="letter"))
+    )
+    assert page == pytest.approx((215.9, 279.4), abs=0.5) and h > 250
+
+    # En una térmica ZPL de 4×6 ocupa la etiqueta entera.
+    zpl = core.engine._as_zpl(
+        Document("pdf", data=label_pdf, size_mm=four_by_six), PrinterProfile(kind="network", language="zpl"), 1
+    )
+    assert zpl.startswith(b"^XA") and b"^PW812" in zpl
+
+
+def test_shipping_label_size_reaches_the_printer(core):
+    """El tamaño elegido viaja con el trabajo (también en las reimpresiones) hasta la impresora."""
+    core.cfg.data.printers.append(PrinterProfile(alias="carta", kind="file", media="letter", output_dir=str(core.home / "out")))
+    core.cfg.save("printers")
+    pdf = _pdf_page((101.6, 152.4))
+    core.store.add(
+        parse_job({"id": "guia-1", "printer": "carta", "content_base64": base64.b64encode(pdf).decode(),
+                   "meta": {"label_size": "4x6"}}),
+        "api",
+    )
+    core.engine.start()
+    assert wait_for(lambda: all(j["status"] == "done" for j in core.store.list()))
+    printed = next((core.home / "out").glob("*.pdf")).read_bytes()
+    page, (_x, y, w, h) = _ink_mm(printed)
+    assert page == pytest.approx((215.9, 279.4), abs=0.5) and abs(w - 101.6) < 1.5 and abs(h - 152.4) < 1.5 and y < 10

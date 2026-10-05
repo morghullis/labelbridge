@@ -23,7 +23,7 @@ flowchart LR
 - **Impresoras**: lista las instaladas en Windows y **busca en la red** (puertos 9100/631/515 y Bonjour) automáticamente cada vez que el PC se conecta a una red Wi‑Fi/LAN, avisando si aparece una impresora nueva. Imprime por driver, por **IP directa sin driver** (RAW 9100 o IPP) y puede **instalar en Windows** una impresora de red encontrada.
 - **Formatos**: PDF, PNG/JPG, **ZPL**, RAW (EPL/TSPL/ESC‑POS). Convierte PDF a ZPL para cualquier Zebra, **rota** etiquetas apaisadas y **recorta** una 4×6 dentro de una hoja carta/A4.
 - **Shopify directo** (sin n8n):
-  - **guía de envío de Shopify Shipping** (la etiqueta principal): la compra por API (`shippingLabelPurchase`, nueva en 2026‑07) para cada pedido pagado y la imprime en PDF/ZPL, con límite diario y sin compras duplicadas;
+  - **guía de envío de Shopify Shipping** (la etiqueta principal): la compra por API (`shippingLabelPurchase`, nueva en 2026‑07) para cada pedido pagado y la imprime en PDF/ZPL, con límite diario y sin compras duplicadas. Sale siempre a **4 × 6 in reales** en cualquier papel (llena un rollo 4×6; en carta o A4 va arriba y centrada), configurable en *Tamaño*;
   - etiqueta interna de pedido opcional (dirección, productos, código de barras Code 128 y QR al pedido, sin franqueo);
   - impresión de la URL guardada en un **metafield** del pedido (etiquetas de cualquier paquetería creadas por n8n o tu web).
 - **n8n por eventos**: n8n se ejecuta **solo cuando ocurre algo** (pedido pagado) y envía la etiqueta al PC al instante por un canal MQTT cifrado. Si el PC está apagado, la etiqueta espera y se imprime al encenderlo. 1 ejecución por pedido, sin consultas periódicas.

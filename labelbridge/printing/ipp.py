@@ -199,9 +199,13 @@ def print_job(
     tls: bool = False,
     pin: str = "",
     timeout: float = 60.0,
+    scaling: str = "",
 ) -> tuple[int, str]:
-    """Envía un trabajo. Devuelve (job-id, huella del certificado si hay TLS)."""
-    job_attrs = [(INTEGER, "copies", [copies])] if copies > 1 else None
+    """Envía un trabajo. Devuelve (job-id, huella del certificado si hay TLS). `scaling="none"` pide tamaño real
+    (las impresoras que no lo entienden lo ignoran)."""
+    job_attrs = [(INTEGER, "copies", [copies])] if copies > 1 else []
+    if scaling:
+        job_attrs.append((KEYWORD, "print-scaling", [scaling]))
     body = encode_request(
         OP_PRINT_JOB,
         printer_uri(host, port, path, tls),
@@ -210,7 +214,7 @@ def print_job(
             (NAME, "job-name", [job_name[:255] or "LabelBridge"]),
             (MIME, "document-format", [mime]),
         ],
-        job_attrs=job_attrs,
+        job_attrs=job_attrs or None,
     )
     payload, fingerprint = _post(host, port, path, body + document, tls, timeout, pin)
     status, attrs = decode_response(payload)

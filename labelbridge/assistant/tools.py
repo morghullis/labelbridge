@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any, Callable, Protocol
 
 from .. import __version__
-from ..config import MEDIA_PRESETS, PrinterProfile, slugify
+from ..config import LABEL_SIZES, MEDIA_PRESETS, PrinterProfile, slugify
 from ..connectors.shopify import DEV_DASHBOARD_URL, SCOPES_BASIC, SCOPES_LABELS, ShopifyError, admin_url, normalize_shop
 from ..discovery import discover
 from ..models import SOURCE_LABELS, status_text
@@ -283,6 +283,7 @@ class Toolbox:
             "connection_message": untrusted(service.message, 160),
             "buy_shipping_label": s.buy_shipping_label,
             "shipping_label_printer": s.shipping_label_printer or "(predeterminada)",
+            "shipping_label_size": s.label_size,
             "labels_bought_today": self.ctx.store.count_seen(prefix, self.ctx.store.start_of_today()) if prefix else 0,
             "max_labels_per_day": s.max_labels_per_day,
             "print_order_label": s.print_order_label,
@@ -626,7 +627,7 @@ class Toolbox:
         result: dict[str, Any] = {"applied": True}
         for key in (
             "buy_shipping_label", "notify_customer", "max_labels_per_day", "print_order_label", "metafield_label",
-            "only_paid", "only_unfulfilled", "poll_seconds",
+            "only_paid", "only_unfulfilled", "poll_seconds", "label_size",
         ):
             if key in a:
                 setattr(s, key, a[key])
@@ -640,6 +641,7 @@ class Toolbox:
             {
                 "buy_shipping_label": s.buy_shipping_label,
                 "shipping_label_printer": s.shipping_label_printer or "(predeterminada)",
+                "label_size": s.label_size,
                 "notify_customer": s.notify_customer,
                 "max_labels_per_day": s.max_labels_per_day,
                 "print_order_label": s.print_order_label,
@@ -1126,6 +1128,11 @@ class Toolbox:
                     {
                         "buy_shipping_label": _b("Comprar e imprimir la guía de Shopify Shipping de cada pedido."),
                         "shipping_label_printer": label_printer,
+                        "label_size": _s(
+                            "Tamaño real de la guía en cualquier papel: 4x6 (recomendado; en hoja carta o A4 va arriba "
+                            "y centrada), 100x150 o fit (ajustar a la hoja).",
+                            list(LABEL_SIZES),
+                        ),
                         "notify_customer": _b("Shopify avisa al cliente por correo al comprar la guía."),
                         "max_labels_per_day": _i("Límite de guías compradas por día (seguridad)."),
                         "print_order_label": _b("Imprimir también la etiqueta interna de pedido (sin franqueo)."),

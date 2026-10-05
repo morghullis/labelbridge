@@ -16,7 +16,7 @@ from urllib.parse import urlparse
 
 from .. import events as ev
 from .. import net
-from ..config import ConfigManager, PrinterProfile
+from ..config import LABEL_MEDIA, MEDIA_PRESETS, ConfigManager, PrinterProfile
 from ..jobstore import JobStore
 from ..labels.order import normalize_order
 from ..labels.qt_label import draw_order_label
@@ -39,6 +39,16 @@ class Document:
     format: str  # pdf | image | zpl | raw | order
     data: bytes = b""
     order: dict[str, Any] | None = None
+    size_mm: tuple[float, float] | None = None  # tamaño real pedido (la guía a 4×6 in en cualquier papel)
+
+
+def label_size_mm(meta: dict[str, Any] | None) -> tuple[float, float] | None:
+    """El tamaño fijo con el que se pidió imprimir el trabajo (meta «label_size», p. ej. "4x6"), si hay."""
+    key = str((meta or {}).get("label_size") or "")
+    if key not in LABEL_MEDIA:
+        return None
+    _, w, h = MEDIA_PRESETS[key]
+    return (w, h)
 
 
 def resolve_printer(requested: str, cfg: ConfigManager) -> PrinterProfile:
@@ -256,7 +266,7 @@ class PrintEngine:
         if fmt == "auto":
             fmt = detect_format(data)
             self.store.set_format(job["id"], fmt)
-        return Document(fmt, data=data)
+        return Document(fmt, data=data, size_mm=label_size_mm(job.get("meta")))
 
     # --- conversión + salida -------------------------------------------------------------
     def _sources(self, document: Document, profile: PrinterProfile) -> list[PageSource]:
@@ -304,7 +314,7 @@ class PrintEngine:
                 return "ZPL"
             sources = self._sources(document, profile)
             try:
-                outputs.print_with_driver(profile, sources, copies, title)
+                outputs.print_with_driver(profile, sources, copies, title, document.size_mm)
             finally:
                 for source in sources:
                     source.close()
@@ -316,15 +326,15 @@ class PrintEngine:
             if profile.protocol in ("ipp", "ipps"):
                 if fmt in raw_formats:
                     raise PermanentPrintError("Las impresoras IPP no aceptan ZPL/RAW; usa una conexión RAW 9100")
-                pdf = document.data if fmt == "pdf" else self._as_pdf(document, profile)
-                fingerprint = outputs.send_ipp(profile, pdf, title, copies)
+                pdf = document.data if fmt == "pdf" and not document.size_mm else self._as_pdf(document, profile)
+                fingerprint = outputs.send_ipp(profile, pdf, title, copies, actual_size=bool(document.size_mm))
                 self._pin_certificate(profile, fingerprint)
                 return "IPP"
             if fmt in raw_formats:
                 outputs.send_tcp(profile.host, profile.port, document.data * copies)
                 return "RAW 9100"
             if profile.language == "pdf":
-                pdf = document.data if fmt == "pdf" else self._as_pdf(document, profile)
+                pdf = document.data if fmt == "pdf" and not document.size_mm else self._as_pdf(document, profile)
                 outputs.send_tcp(profile.host, profile.port, pdf * copies)
                 return "PDF 9100"
             outputs.send_tcp(profile.host, profile.port, self._as_zpl(document, profile, copies))
@@ -337,17 +347,17 @@ class PrintEngine:
             return self.order_zpl(document.order or {}, profile, copies)
         sources = self._sources(document, profile)
         try:
-            return outputs.build_zpl_raster(sources, profile, copies)
+            return outputs.build_zpl_raster(sources, profile, copies, document.size_mm)
         finally:
             for source in sources:
                 source.close()
 
     def _as_pdf(self, document: Document, profile: PrinterProfile) -> bytes:
-        if document.format == "pdf" and profile.media == "auto":
+        if document.format == "pdf" and profile.media == "auto" and not document.size_mm:
             return document.data
         sources = self._sources(document, profile)
         try:
-            return outputs.build_pdf(sources, profile.media_mm(), profile.rotate, profile.crop)
+            return outputs.build_pdf(sources, profile.media_mm(), profile.rotate, profile.crop, label_mm=document.size_mm)
         finally:
             for source in sources:
                 source.close()

@@ -10,8 +10,8 @@ import sys
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QMarginsF, QRectF, QSizeF
-from PySide6.QtGui import QPageLayout, QPageSize, QPainter, QPdfWriter
+from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QMarginsF, QRectF, QSizeF, Qt
+from PySide6.QtGui import QImage, QPageLayout, QPageSize, QPainter, QPdfWriter
 from PySide6.QtPrintSupport import QPrinter, QPrinterInfo
 
 from ..config import LABEL_MEDIA, PrinterProfile
@@ -21,6 +21,21 @@ from .pages import MM_PER_INCH, PageSource, render_fitted
 log = logging.getLogger(__name__)
 
 DEFAULT_LABEL_MM = (101.6, 152.4)
+LABEL_TOP_MM = 6.35  # en una hoja grande la etiqueta va arriba (a ¼ in del borde, fuera del margen no imprimible)
+
+
+def label_box(page: QRectF, px_per_mm: float, label_mm: tuple[float, float]) -> QRectF:
+    """Dónde va una etiqueta de tamaño fijo: a tamaño real, arriba y centrada. En un rollo de su tamaño la ocupa
+    entera; en una hoja apaisada se gira con ella; si no cabe (rollo más chico) se reduce lo justo."""
+    w, h = label_mm[0] * px_per_mm, label_mm[1] * px_per_mm
+    if (w > page.width() * 1.02 or h > page.height() * 1.02) and h <= page.width() * 1.02 and w <= page.height() * 1.02:
+        w, h = h, w  # rollo apaisado (6 × 4): la etiqueta también
+    if abs(page.width() - w) <= page.width() * 0.03 and abs(page.height() - h) <= page.height() * 0.03:
+        return QRectF(page)
+    scale = min(1.0, page.width() / w, page.height() / h)
+    w, h = w * scale, h * scale
+    top = max(0.0, min(LABEL_TOP_MM * px_per_mm, page.height() - h))
+    return QRectF(page.left() + (page.width() - w) / 2, page.top() + top, w, h)
 
 
 # --- impresoras del sistema ------------------------------------------------------------
@@ -80,6 +95,7 @@ def _draw_sources(
     crop: str,
     crisp: bool,
     target_mm: tuple[float, float] | None,
+    label_mm: tuple[float, float] | None = None,
 ) -> None:
     first = True
     for _ in range(copies):
@@ -96,17 +112,25 @@ def _draw_sources(
                     rect = QRectF(device_rect.left() + (device_rect.width() - w) / 2, device_rect.top(), w, h)
                     source.paint(painter, rect, dpi * scale)
                 else:
+                    # Con tamaño fijo (la guía de envío a 4×6 in) va a tamaño real; si no, ocupa la hoja.
+                    box = label_box(device_rect, dpi / MM_PER_INCH, label_mm) if label_mm else device_rect
                     render_dpi = min(dpi, 300.0)
                     factor = render_dpi / dpi
-                    target_w = max(1, round(device_rect.width() * factor))
-                    target_h = max(1, round(device_rect.height() * factor))
+                    target_w = max(1, round(box.width() * factor))
+                    target_h = max(1, round(box.height() * factor))
                     image = render_fitted(
-                        source, index, target_w, target_h, render_dpi, rotate, crop, crisp, target_mm
+                        source, index, target_w, target_h, render_dpi, rotate, crop, crisp, label_mm or target_mm
                     )
-                    painter.drawImage(device_rect, image)
+                    painter.drawImage(box, image)
 
 
-def print_with_driver(profile: PrinterProfile, sources: list[PageSource], copies: int, title: str) -> None:
+def print_with_driver(
+    profile: PrinterProfile,
+    sources: list[PageSource],
+    copies: int,
+    title: str,
+    label_mm: tuple[float, float] | None = None,
+) -> None:
     with QT_PRINT_LOCK:
         info = QPrinterInfo.printerInfo(profile.system_name)
         if info.isNull():
@@ -132,8 +156,9 @@ def print_with_driver(profile: PrinterProfile, sources: list[PageSource], copies
                 new_page=printer.newPage,
                 rotate=profile.rotate,
                 crop=profile.crop,
-                crisp=profile.media in LABEL_MEDIA,
+                crisp=profile.media in LABEL_MEDIA or label_mm is not None,
                 target_mm=media,
+                label_mm=label_mm,
             )
         finally:
             painter.end()
@@ -225,7 +250,7 @@ def send_tcp(host: str, port: int, data: bytes, timeout: float = 20.0) -> None:
         raise PrintError(f"No se pudo conectar con {host}:{port} ({exc.strerror or exc})") from None
 
 
-def send_ipp(profile: PrinterProfile, pdf: bytes, title: str, copies: int) -> str:
+def send_ipp(profile: PrinterProfile, pdf: bytes, title: str, copies: int, actual_size: bool = False) -> str:
     """Imprime un PDF por IPP. Devuelve la huella TLS (para fijarla en el primer uso)."""
     tls = profile.protocol == "ipps"
     fingerprint = ""
@@ -239,6 +264,7 @@ def send_ipp(profile: PrinterProfile, pdf: bytes, title: str, copies: int) -> st
                 job_name=title,
                 tls=tls,
                 pin=profile.tls_fingerprint,
+                scaling="none" if actual_size else "",
             )
     except ipp.CertificateMismatch as exc:
         raise PermanentPrintError(str(exc)) from None
@@ -252,11 +278,17 @@ def send_ipp(profile: PrinterProfile, pdf: bytes, title: str, copies: int) -> st
 # --- conversión ------------------------------------------------------------------------------
 
 def build_pdf(
-    sources: list[PageSource], media_mm: tuple[float, float] | None, rotate: str, crop: str, dpi: int = 300
+    sources: list[PageSource],
+    media_mm: tuple[float, float] | None,
+    rotate: str,
+    crop: str,
+    dpi: int = 300,
+    label_mm: tuple[float, float] | None = None,
 ) -> bytes:
-    """Genera un PDF (una página por página de origen) del tamaño de la etiqueta."""
+    """Genera un PDF (una página por página de origen) del tamaño del papel; con `label_mm`, la etiqueta va a ese
+    tamaño real dentro de la hoja."""
     if media_mm is None:
-        media_mm = sources[0].size_mm(0) or DEFAULT_LABEL_MM
+        media_mm = label_mm or sources[0].size_mm(0) or DEFAULT_LABEL_MM
     buffer_data = QByteArray()
     buffer = QBuffer(buffer_data)
     buffer.open(QIODevice.OpenModeFlag.WriteOnly)
@@ -277,8 +309,9 @@ def build_pdf(
                 new_page=writer.newPage,
                 rotate=rotate,
                 crop=crop,
-                crisp=max(media_mm) < 160,
+                crisp=max(media_mm) < 160 or label_mm is not None,
                 target_mm=media_mm,
+                label_mm=label_mm,
             )
         finally:
             painter.end()
@@ -286,9 +319,11 @@ def build_pdf(
     return bytes(buffer_data)
 
 
-def build_zpl_raster(sources: list[PageSource], profile: PrinterProfile, copies: int) -> bytes:
+def build_zpl_raster(
+    sources: list[PageSource], profile: PrinterProfile, copies: int, label_mm: tuple[float, float] | None = None
+) -> bytes:
     """PDF/imagen → mapa de bits ZPL (^GFA). Sirve para cualquier Zebra sin driver."""
-    media = profile.media_mm() or (sources[0].size_mm(0) if sources else None) or DEFAULT_LABEL_MM
+    media = profile.media_mm() or label_mm or (sources[0].size_mm(0) if sources else None) or DEFAULT_LABEL_MM
     dpi = max(150, int(profile.dpi or 203))
     width = round(media[0] / MM_PER_INCH * dpi)
     height = round(media[1] / MM_PER_INCH * dpi)
@@ -297,6 +332,17 @@ def build_zpl_raster(sources: list[PageSource], profile: PrinterProfile, copies:
         for index in range(source.count()):
             if source.vector:
                 images.append(source.render(index, width, height, True))
+            elif label_mm:
+                box = label_box(QRectF(0, 0, width, height), dpi / MM_PER_INCH, label_mm)
+                label = render_fitted(
+                    source, index, round(box.width()), round(box.height()), dpi, profile.rotate, profile.crop, True, label_mm
+                )
+                canvas = QImage(width, height, QImage.Format.Format_RGB32)
+                canvas.fill(Qt.GlobalColor.white)
+                painter = QPainter(canvas)
+                painter.drawImage(round(box.left()), round(box.top()), label)
+                painter.end()
+                images.append(canvas)
             else:
                 images.append(render_fitted(source, index, width, height, dpi, profile.rotate, profile.crop, True, media))
     return zpl.raster_label(images, copies)
