@@ -190,6 +190,8 @@ class PackageSettings:
 @dataclass
 class ShopifySettings:
     enabled: bool = False
+    # La primera prueba de conexión que sale bien activa el conector (después lo decide la persona).
+    activated_once: bool = False
     shop: str = ""  # mi-tienda.myshopify.com
     auth_mode: str = "client_credentials"  # client_credentials | token
     client_id: str = ""
@@ -217,6 +219,40 @@ class ShopifySettings:
     metafield_key: str = "label_url"
     metafield_printer: str = ""
     tag_after_print: str = ""
+
+
+# Correos comunes: servidor, puerto y seguridad (Gmail e iCloud piden una contraseña de aplicación).
+EMAIL_PROVIDERS = {
+    "gmail": ("Gmail", "smtp.gmail.com", 587, "starttls"),
+    "icloud": ("iCloud", "smtp.mail.me.com", 587, "starttls"),
+    "yahoo": ("Yahoo", "smtp.mail.yahoo.com", 465, "ssl"),
+    "custom": (N_("Otro"), "", 587, "starttls"),
+}
+
+
+@dataclass
+class EmailSettings:
+    """Avisos por email a los dueños de la tienda (Ajustes → Avisos por email). La contraseña va en el almacén seguro.
+    Los correos solo salen hacia `recipients`: ni el asistente ni un pedido pueden escribirle a nadie más."""
+
+    enabled: bool = False
+    provider: str = "gmail"  # EMAIL_PROVIDERS
+    host: str = "smtp.gmail.com"
+    port: int = 587
+    security: str = "starttls"  # starttls | ssl
+    username: str = ""  # la cuenta que envía (también el remitente)
+    sender_name: str = "LabelBridge"
+    recipients: str = ""  # los dueños: direcciones separadas por comas
+    alerts: dict = field(default_factory=dict)  # evento de NOTIFY_EVENTS → también por email
+    assistant: bool = True  # el asistente puede escribirles
+    per_hour: int = 20  # tope de correos por hora (avisos y asistente juntos)
+
+    def recipient_list(self) -> list[str]:
+        return [part.strip() for part in re.split(r"[,;\s]+", self.recipients or "") if "@" in part]
+
+    def alert_on(self, event: str) -> bool:
+        chosen = self.alerts if isinstance(self.alerts, dict) else {}
+        return bool(chosen.get(event, False))
 
 
 def slugify(text: str, fallback: str = "pc") -> str:
@@ -288,6 +324,9 @@ class AssistantSettings:
     messages_per_hour: int = 40
     max_message_chars: int = 4000
     max_turns: int = 40  # mensajes por conversación antes de pedir empezar una nueva
+    # Reglas del dueño: instrucciones permanentes que el asistente sigue siempre (Ajustes → Asistente). Solo las
+    # escribe la persona; el asistente no tiene herramientas para cambiarlas.
+    rules: str = ""
 
 
 @dataclass
@@ -302,6 +341,7 @@ class Settings:
     security: SecuritySettings = field(default_factory=SecuritySettings)
     assistant: AssistantSettings = field(default_factory=AssistantSettings)
     notifications: NotificationSettings = field(default_factory=NotificationSettings)
+    email: EmailSettings = field(default_factory=EmailSettings)
 
 
 def _coerce(value: Any, default: Any) -> Any:

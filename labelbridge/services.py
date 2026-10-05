@@ -11,6 +11,7 @@ from . import events as ev
 from .config import ConfigManager
 from .discovery import DiscoveredPrinter, discover, local_ipv4_addresses
 from .connectors.base import BackgroundService
+from .connectors.email import EmailSender
 from .connectors.local_api import LocalApiService
 from .connectors.mqtt import MqttService
 from .connectors.shopify import ShopifyService
@@ -90,6 +91,7 @@ class Services:
         self.shopify = ShopifyService(cfg, secrets, store, engine, events)
         self.network = NetworkWatcher(cfg, events)
         self.updates = UpdateService(cfg, events)
+        self.email = EmailSender(cfg, secrets, events)  # avisos por email a los dueños (y el asistente)
         self.by_section: dict[str, BackgroundService] = {
             "local_api": self.local_api,
             "mqtt": self.mqtt,

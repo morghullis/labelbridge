@@ -2,6 +2,17 @@
 
 English version of [CHANGELOG.md](CHANGELOG.md). Each published version shows these notes in the app's update window when the app is in English, and on the English download page.
 
+## 1.10.0
+
+- **View order.** In Orders, double-click (or **View order**) shows what each order has without leaving the app: products with their photo, variant, SKU and personalization (engravings, sizes), shipping address and method, totals, the customer's note, the gift message and tracking.
+- **Instructions on each order** (packing, gift, signature…): write them in **View order** or let the assistant add them; they go in the order note in Shopify (shown there and on the packing slip) without touching the customer's note.
+- **New manual label.** For a shipment that didn't come from the online store (a replacement, a sale by message): type who it goes to and what it contains (store products or a custom item); LabelBridge creates an order marked “Manual · LabelBridge” in Shopify, paid and with nothing charged to the customer, then you choose the box and its label is bought and printed. Automatic purchasing leaves these orders alone.
+- **Email alerts** to the owners from your email account (Gmail, iCloud or another): choose which alerts are also emailed (**Email** column in Notifications), with a button to send a test and an hourly limit. Emails only go to the addresses in Settings.
+- **The assistant works with orders:** it tells you what each one has, writes their instructions and emails the owners without asking (with a limit), and creates manual orders and buys labels always with your confirmation.
+- **Owner's rules** (Settings → Assistant): standing instructions the assistant always follows, for example “orders over $500 get a signature”. They can't skip confirmations or security limits.
+- **Installer:** it also asks, if you want, for your Shopify app's Client secret; when the app opens it stores it in the secure store, tests the connection and leaves the store active. The first working connection also activates the store from the app (and on the Mac).
+- **Copy scopes** includes read_products, to choose store products in the manual label.
+
 ## 1.9.1
 
 - **Windows: the installer no longer asks for administrator permission.** It always installs LabelBridge just for your user, without the “for me / for everyone” question.

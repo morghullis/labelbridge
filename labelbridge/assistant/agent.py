@@ -154,9 +154,11 @@ class Conversation:
         key = self.secrets.get(endpoint.key_name)
         if endpoint.needs_key and not key:
             raise AssistantError(tr("Falta la clave de API de {0}. Agrégala en Asistente → Conectar IA.", endpoint.provider.short))
-        identity = (endpoint, key)
+        rules = self.settings.rules
+        identity = (endpoint, key, rules)
         if self._client is None or identity != self._client_id:
-            self._client = self.connector(endpoint, key, system=system_prompt(), tools=self.tools, session=self.session)
+            self._client = self.connector(endpoint, key, system=system_prompt(rules), tools=self.tools,
+                                          session=self.session)
             self._client_id = identity
         return self._client
 

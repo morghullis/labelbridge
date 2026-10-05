@@ -56,6 +56,7 @@ QLabel#PageSubtitle {{ color: {MUTED}; font-size: 13px; }}
 QLabel#Muted {{ color: {MUTED}; }}
 QLabel#Small {{ color: {MUTED}; font-size: 11px; }}
 QLabel#SectionTitle {{ font-size: 14px; font-weight: 600; }}
+QLabel#ItemTitle {{ font-weight: 600; }}
 QLabel#StatValue {{ font-size: 26px; font-weight: 700; }}
 QLabel#StatLabel {{ color: {MUTED}; font-size: 11px; font-weight: 600; letter-spacing: 0.5px; }}
 QLabel#Warning {{ background: #FFFBEB; color: #92400E; border: 1px solid #FDE68A; border-radius: 8px; padding: 8px 10px; }}

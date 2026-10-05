@@ -28,6 +28,7 @@ MQTT_PASSWORD = "mqtt_password"
 LOCAL_API_KEY = "local_api_key"
 ANTHROPIC_API_KEY = "anthropic_api_key"  # asistente de configuración (Claude)
 DATA_KEY = "data_encryption_key"  # cifrado de los datos en disco (ver security/crypto.py)
+EMAIL_PASSWORD = "email_password"  # la cuenta que envía los avisos por email
 
 FILE_FORMAT = 2  # 1 = base64 sin cifrar (versiones antiguas); 2 = protegido con DPAPI en Windows
 

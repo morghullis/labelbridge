@@ -127,7 +127,7 @@ def _b(description: str) -> dict:
     return {"type": "boolean", "description": description}
 
 
-_TYPES = {"string": str, "integer": int, "boolean": bool, "object": dict, "array": list}
+_TYPES = {"string": str, "integer": int, "number": (int, float), "boolean": bool, "object": dict, "array": list}
 
 
 def validate(schema: dict, args: Any) -> dict:
@@ -146,7 +146,7 @@ def validate(schema: dict, args: Any) -> dict:
         expected = _TYPES[spec["type"]]
         if expected is int and isinstance(value, float) and value.is_integer():
             value = args[key] = int(value)
-        if not isinstance(value, expected) or (expected is int and isinstance(value, bool)):
+        if not isinstance(value, expected) or (spec["type"] in ("integer", "number") and isinstance(value, bool)):
             raise ToolError(f"«{key}» debe ser de tipo {spec['type']}")
         if "enum" in spec and value not in spec["enum"]:
             raise ToolError(f"«{key}» debe ser uno de: {', '.join(map(str, spec['enum']))}")
@@ -1326,7 +1326,13 @@ class Toolbox:
                 self.copy_shopify_scopes,
                 N_("Copiando los permisos"),
             ),
-        ]
+        ] + self._order_tools()
+
+    def _order_tools(self) -> list[Tool]:
+        """Pedidos, instrucciones, avisos a los dueños y pedidos manuales (assistant/order_tools.py)."""
+        from .order_tools import definitions
+
+        return definitions(self)
 
 
 def _loggable(args: Any) -> Any:

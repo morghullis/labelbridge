@@ -1,0 +1,502 @@
+"""Pedidos en detalle, pedidos manuales e instrucciones de cada pedido (Pedidos → «Ver pedido», «Nueva guía manual» y
+el asistente).
+
+- El detalle se pide a Shopify al abrir un pedido (productos, cliente, dirección, totales, notas y envíos). Solo
+  datos protegidos que la app ya tiene aprobados (nombre, dirección y teléfono de envío): sin el cliente ni su email,
+  que pedirían otros permisos y harían fallar toda la consulta.
+- Una guía manual necesita un pedido: Shopify Shipping solo vende guías de pedidos. Se crea uno marcado MANUAL_TAG,
+  pagado y sin cobrar al cliente (precios en 0), con productos de la tienda o un artículo libre; la compra automática
+  lo deja pasar (la guía la compra quien la pidió, con confirmación).
+- Las instrucciones (empaque, regalo, cuidado…) van al final de la nota del pedido, después de NOTE_MARK: se ven en
+  Shopify y en la hoja de empaque, y la nota que dejó el cliente no se toca.
+Las consultas y lo que no depende de la pantalla viven aquí para poder probarlo.
+"""
+
+from __future__ import annotations
+
+import re
+import time
+from dataclasses import dataclass, field
+from typing import Any
+
+from ..i18n import N_, tr
+
+MANUAL_TAG = "LabelBridge-manual"
+NOTE_MARK = "— Instrucciones (LabelBridge) —"
+MAX_INSTRUCTIONS = 2000  # caracteres: es una nota, no un documento
+MAX_ITEMS = 50
+
+ORDER_DETAIL_QUERY = """
+query LabelBridgeOrderDetail($id: ID!) {
+  order(id: $id) {
+    id legacyResourceId name createdAt cancelledAt
+    displayFinancialStatus displayFulfillmentStatus
+    note tags
+    shippingAddress { name company address1 address2 city province provinceCode zip country countryCodeV2 phone }
+    shippingLine { title }
+    customAttributes { key value }
+    subtotalPriceSet { shopMoney { amount currencyCode } }
+    totalShippingPriceSet { shopMoney { amount } }
+    totalTaxSet { shopMoney { amount } }
+    totalDiscountsSet { shopMoney { amount } }
+    totalPriceSet { shopMoney { amount currencyCode } }
+    lineItems(first: 100) {
+      nodes {
+        title variantTitle sku quantity currentQuantity requiresShipping
+        originalUnitPriceSet { shopMoney { amount } }
+        image { url(transform: {maxWidth: 160, maxHeight: 160}) }
+        customAttributes { key value }
+      }
+    }
+    fulfillments(first: 10) { status createdAt displayStatus trackingInfo { company number url } }
+  }
+}
+"""
+
+# Sin permiso de órdenes de preparación (apps solo con read_orders): todo menos el seguimiento.
+ORDER_DETAIL_QUERY_BASIC = ORDER_DETAIL_QUERY.replace(
+    "    fulfillments(first: 10) { status createdAt displayStatus trackingInfo { company number url } }\n", ""
+)
+
+ORDER_LOOKUP_QUERY = """
+query LabelBridgeOrderLookup($query: String!) {
+  orders(first: 1, query: $query) { nodes { id legacyResourceId name } }
+}
+"""
+
+ORDER_NOTE_QUERY = """
+query LabelBridgeOrderNote($id: ID!) { order(id: $id) { id name note } }
+"""
+
+ORDER_NOTE_MUTATION = """
+mutation LabelBridgeOrderNote($input: OrderInput!) {
+  orderUpdate(input: $input) { order { id note } userErrors { field message } }
+}
+"""
+
+PRODUCTS_QUERY = """
+query LabelBridgeProducts($query: String!) {
+  products(first: 10, query: $query, sortKey: RELEVANCE) {
+    nodes {
+      id title status
+      featuredMedia { preview { image { url(transform: {maxWidth: 120, maxHeight: 120}) } } }
+      variants(first: 30) { nodes { id title sku price } }
+    }
+  }
+}
+"""
+
+ORDER_CREATE_MUTATION = """
+mutation LabelBridgeManualOrder($order: OrderCreateOrderInput!, $options: OrderCreateOptionsInput) {
+  orderCreate(order: $order, options: $options) {
+    order { id legacyResourceId name }
+    userErrors { field message }
+  }
+}
+"""
+
+
+# Estados del pedido como los llama Shopify en su admin.
+FINANCIAL_TEXT = {
+    "PAID": N_("Pagado"), "PENDING": N_("Pago pendiente"), "AUTHORIZED": N_("Pago autorizado"),
+    "PARTIALLY_PAID": N_("Pagado en parte"), "PARTIALLY_REFUNDED": N_("Reembolsado en parte"),
+    "REFUNDED": N_("Reembolsado"), "VOIDED": N_("Pago anulado"), "EXPIRED": N_("Pago vencido"),
+}
+FULFILLMENT_TEXT = {
+    "UNFULFILLED": N_("No preparado"), "OPEN": N_("No preparado"), "PARTIALLY_FULFILLED": N_("Preparado en parte"),
+    "FULFILLED": N_("Preparado"), "IN_PROGRESS": N_("En preparación"), "PENDING_FULFILLMENT": N_("En preparación"),
+    "ON_HOLD": N_("En espera"), "SCHEDULED": N_("Programado"), "RESTOCKED": N_("Devuelto al inventario"),
+    "REQUEST_DECLINED": N_("Preparación rechazada"),
+}
+
+
+def status_text(table: dict[str, str], code: str) -> str:
+    return tr(table[code]) if code in table else code.replace("_", " ").capitalize()
+
+
+# --- instrucciones en la nota del pedido -------------------------------------------------------
+
+def split_note(note: str | None) -> tuple[str, str]:
+    """(nota del cliente, instrucciones de LabelBridge)."""
+    text = (note or "").replace("\r\n", "\n")
+    if NOTE_MARK not in text:
+        return text.strip(), ""
+    customer, _mark, ours = text.partition(NOTE_MARK)
+    return customer.strip(), ours.strip()
+
+
+def join_note(customer: str, instructions: str) -> str:
+    customer, instructions = customer.strip(), instructions.strip()
+    if not instructions:
+        return customer
+    return f"{customer}\n\n{NOTE_MARK}\n{instructions}" if customer else f"{NOTE_MARK}\n{instructions}"
+
+
+def with_instructions(note: str | None, text: str, append: bool = False) -> str:
+    """La nota con las instrucciones nuevas (o agregadas a las que había); la del cliente queda igual."""
+    customer, current = split_note(note)
+    text = (text or "").strip()
+    if append and current and text:
+        text = f"{current}\n{text}"
+    if len(text) > MAX_INSTRUCTIONS:
+        raise ValueError(tr("Las instrucciones son demasiado largas (máximo {0} caracteres).", MAX_INSTRUCTIONS))
+    return join_note(customer, text)
+
+
+# --- detalle -----------------------------------------------------------------------------------
+
+def _money(value: Any) -> float:
+    try:
+        return float(((value or {}).get("shopMoney") or {}).get("amount") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+@dataclass
+class OrderItem:
+    title: str
+    variant: str = ""
+    sku: str = ""
+    quantity: int = 0
+    price: float = 0.0
+    image: str = ""
+    properties: list[tuple[str, str]] = field(default_factory=list)  # personalización (grabado, talla…)
+    shipping: bool = True
+
+
+@dataclass
+class OrderDetail:
+    gid: str
+    legacy: str
+    name: str
+    created: str = ""
+    cancelled: bool = False
+    financial: str = ""
+    fulfillment: str = ""
+    customer: str = ""
+    email: str = ""
+    phone: str = ""
+    address: list[str] = field(default_factory=list)  # líneas de la dirección de envío
+    method: str = ""
+    customer_note: str = ""
+    instructions: str = ""
+    attributes: list[tuple[str, str]] = field(default_factory=list)  # mensajes de regalo y datos del carrito
+    tags: list[str] = field(default_factory=list)
+    items: list[OrderItem] = field(default_factory=list)
+    subtotal: float = 0.0
+    shipping: float = 0.0
+    taxes: float = 0.0
+    discounts: float = 0.0
+    total: float = 0.0
+    currency: str = "USD"
+    tracking: list[tuple[str, str, str]] = field(default_factory=list)  # (paquetería, número, enlace)
+
+    @property
+    def manual(self) -> bool:
+        return MANUAL_TAG.lower() in (tag.lower() for tag in self.tags)
+
+    @property
+    def units(self) -> int:
+        return sum(item.quantity for item in self.items)
+
+    def as_text(self) -> str:
+        """Resumen para el asistente (sin datos que no hagan falta para atender el pedido)."""
+        lines = [f"{self.name} · {self.created[:10]} · {self.financial} / {self.fulfillment}"
+                 + (" · cancelado" if self.cancelled else "") + (" · manual" if self.manual else "")]
+        if self.customer or self.address:
+            lines.append("Envío a: " + " · ".join([self.customer] + self.address[1:] if self.customer else self.address))
+        if self.method:
+            lines.append(f"Método: {self.method}")
+        for item in self.items:
+            extra = " · ".join(f"{k}: {v}" for k, v in item.properties)
+            lines.append(f"- {item.quantity} × {item.title}" + (f" ({item.variant})" if item.variant else "")
+                         + (f" · SKU {item.sku}" if item.sku else "") + (f" · {extra}" if extra else ""))
+        lines.append(f"Total: {self.total:.2f} {self.currency}")
+        if self.customer_note:
+            lines.append(f"Nota del cliente: {self.customer_note}")
+        for key, value in self.attributes:
+            lines.append(f"{key}: {value}")
+        if self.instructions:
+            lines.append(f"Instrucciones: {self.instructions}")
+        for company, number, _url in self.tracking:
+            lines.append(f"Seguimiento: {company} {number}".strip())
+        return "\n".join(lines)
+
+
+def parse_detail(order: dict) -> OrderDetail:
+    address = order.get("shippingAddress") or {}
+    place = " ".join(part for part in (address.get("city"), address.get("provinceCode") or address.get("province"),
+                                       address.get("zip")) if part)
+    lines = [part for part in (address.get("name"), address.get("company"), address.get("address1"),
+                               address.get("address2"), place,
+                               address.get("country") or address.get("countryCodeV2")) if part]
+    customer_note, instructions = split_note(order.get("note"))
+    items = []
+    for node in ((order.get("lineItems") or {}).get("nodes") or []):
+        quantity = node.get("currentQuantity")
+        items.append(OrderItem(
+            title=str(node.get("title") or ""),
+            variant=str(node.get("variantTitle") or ""),
+            sku=str(node.get("sku") or ""),
+            quantity=int(node.get("quantity") if quantity is None else quantity),
+            price=_money(node.get("originalUnitPriceSet")),
+            image=str((node.get("image") or {}).get("url") or ""),
+            properties=[(str(a.get("key")), str(a.get("value"))) for a in node.get("customAttributes") or []
+                        if a.get("key") and not str(a.get("key")).startswith("_")],
+            shipping=bool(node.get("requiresShipping", True)),
+        ))
+    tracking = []
+    for fulfillment in order.get("fulfillments") or []:
+        for info in fulfillment.get("trackingInfo") or []:
+            if info.get("number"):
+                tracking.append((str(info.get("company") or ""), str(info["number"]), str(info.get("url") or "")))
+    total = order.get("totalPriceSet") or {}
+    return OrderDetail(
+        gid=str(order.get("id") or ""),
+        legacy=str(order.get("legacyResourceId") or ""),
+        name=str(order.get("name") or ""),
+        created=str(order.get("createdAt") or ""),
+        cancelled=bool(order.get("cancelledAt")),
+        financial=str(order.get("displayFinancialStatus") or ""),
+        fulfillment=str(order.get("displayFulfillmentStatus") or ""),
+        customer=str(address.get("name") or ""),
+        phone=str(address.get("phone") or ""),
+        address=lines,
+        method=str((order.get("shippingLine") or {}).get("title") or ""),
+        customer_note=customer_note,
+        instructions=instructions,
+        attributes=[(str(a.get("key")), str(a.get("value"))) for a in order.get("customAttributes") or []
+                    if a.get("key") and not str(a.get("key")).startswith("_")],
+        tags=[str(tag) for tag in order.get("tags") or []],
+        items=items,
+        subtotal=_money(order.get("subtotalPriceSet")),
+        shipping=_money(order.get("totalShippingPriceSet")),
+        taxes=_money(order.get("totalTaxSet")),
+        discounts=_money(order.get("totalDiscountsSet")),
+        total=_money(total),
+        currency=str((total.get("shopMoney") or {}).get("currencyCode") or "USD"),
+        tracking=tracking,
+    )
+
+
+# --- productos (para el pedido manual) ---------------------------------------------------------
+
+@dataclass
+class ProductChoice:
+    variant_id: str
+    title: str  # producto · variante
+    sku: str = ""
+    price: float = 0.0
+    image: str = ""
+
+
+def parse_products(data: dict) -> list[ProductChoice]:
+    choices = []
+    for product in ((data.get("products") or {}).get("nodes") or []):
+        if str(product.get("status") or "ACTIVE") == "ARCHIVED":
+            continue
+        image = (((product.get("featuredMedia") or {}).get("preview") or {}).get("image") or {}).get("url") or ""
+        for variant in ((product.get("variants") or {}).get("nodes") or []):
+            name = str(product.get("title") or "")
+            if variant.get("title") and variant["title"] != "Default Title":
+                name += f" · {variant['title']}"
+            try:
+                price = float(variant.get("price") or 0)
+            except (TypeError, ValueError):
+                price = 0.0
+            choices.append(ProductChoice(str(variant.get("id") or ""), name, str(variant.get("sku") or ""), price,
+                                         str(image)))
+    return choices
+
+
+def search_terms(text: str) -> str:
+    """Lo que escribe la persona → búsqueda de Shopify (título o SKU, sin operadores raros)."""
+    words = re.findall(r"[\w\-.#]+", text or "", flags=re.UNICODE)[:6]
+    return " ".join(f"{word}*" for word in words)
+
+
+# --- pedido manual -----------------------------------------------------------------------------
+
+@dataclass
+class Recipient:
+    name: str
+    address1: str
+    city: str
+    zip: str
+    country: str = "US"  # código ISO de dos letras
+    province: str = ""  # código del estado (CA, NY…), si el país los usa
+    address2: str = ""
+    company: str = ""
+    phone: str = ""
+    email: str = ""
+
+
+@dataclass
+class ManualItem:
+    quantity: int
+    title: str = ""  # artículo libre
+    variant_id: str = ""  # producto de la tienda
+    weight: float = 0.0  # por unidad (artículo libre)
+    weight_unit: str = "OUNCES"
+
+
+def manual_problem(recipient: Recipient, items: list[ManualItem]) -> str:
+    """Qué falta para crear el pedido manual («» si está todo)."""
+    if not recipient.name.strip():
+        return tr("Escribe el nombre del destinatario.")
+    if not recipient.address1.strip() or not recipient.city.strip():
+        return tr("Escribe la dirección y la ciudad del destinatario.")
+    if not recipient.zip.strip():
+        return tr("Escribe el código postal del destinatario.")
+    if not re.fullmatch(r"[A-Za-z]{2}", recipient.country.strip()):
+        return tr("El país va con su código de dos letras (US, MX, CA…).")
+    if recipient.country.strip().upper() in ("US", "CA", "MX") and not recipient.province.strip():
+        return tr("Escribe el estado o la provincia del destinatario (por ejemplo CA o NY).")
+    if recipient.email.strip() and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", recipient.email.strip()):
+        return tr("El email del destinatario no es válido.")
+    if not items:
+        return tr("Agrega al menos un producto o un artículo.")
+    if len(items) > MAX_ITEMS:
+        return tr("Demasiados artículos para un pedido manual (máximo {0}).", MAX_ITEMS)
+    for item in items:
+        if item.quantity < 1 or item.quantity > 999:
+            return tr("Revisa las cantidades (de 1 a 999).")
+        if not item.variant_id and not item.title.strip():
+            return tr("Escribe qué contiene el envío.")
+    return ""
+
+
+def order_input(recipient: Recipient, items: list[ManualItem], note: str, currency: str = "USD") -> dict[str, Any]:
+    """Lo que pide orderCreate: pagado, sin cobrar al cliente (todo en 0) y marcado como manual."""
+    zero = {"shopMoney": {"amount": "0.00", "currencyCode": currency}}
+    first, _space, last = recipient.name.strip().partition(" ")
+    if not last:  # un solo nombre: va completo (en la guía sale «nombre apellido»)
+        first, last = "", first
+    address = {
+        "firstName": first or None, "lastName": last, "address1": recipient.address1.strip(),
+        "address2": recipient.address2.strip() or None, "city": recipient.city.strip(), "zip": recipient.zip.strip(),
+        "countryCode": recipient.country.strip().upper(), "provinceCode": recipient.province.strip().upper() or None,
+        "company": recipient.company.strip() or None, "phone": recipient.phone.strip() or None,
+    }
+    lines = []
+    for item in items:
+        line: dict[str, Any] = {"quantity": int(item.quantity), "requiresShipping": True, "priceSet": zero,
+                                "taxable": False}
+        if item.variant_id:
+            line["variantId"] = item.variant_id
+        else:
+            line["title"] = item.title.strip()
+            if item.weight > 0:
+                line["weight"] = {"value": float(item.weight), "unit": item.weight_unit}
+        lines.append(line)
+    order: dict[str, Any] = {
+        "lineItems": lines,
+        "shippingAddress": {key: value for key, value in address.items() if value is not None},
+        "shippingLines": [{"title": tr("Envío manual (LabelBridge)"), "priceSet": zero}],
+        "financialStatus": "PAID",
+        "currency": currency,
+        "tags": [MANUAL_TAG],
+    }
+    if note.strip():
+        order["note"] = join_note("", note)
+    if recipient.email.strip():
+        order["email"] = recipient.email.strip()
+    if recipient.phone.strip():
+        order["phone"] = recipient.phone.strip()
+    return order
+
+
+class ManualOrders:
+    """Lo que hace falta de Shopify para el detalle, los pedidos manuales y las instrucciones (con un ShopifyClient)."""
+
+    def __init__(self, client) -> None:
+        self.client = client
+
+    def resolve(self, text: str) -> str:
+        """«#1023», «1023» o el número interno → gid del pedido."""
+        from .shopify import ShopifyError
+
+        text = str(text or "").strip()
+        if text.startswith("gid://shopify/Order/"):
+            return text
+        if text.isdigit() and len(text) >= 9:  # número interno (los nombres de pedido son cortos: #1001)
+            return f"gid://shopify/Order/{text}"
+        name = text if text.startswith("#") else f"#{text}"
+        if not re.fullmatch(r"#[\w\-]{1,30}", name):
+            raise ShopifyError(tr("Pedido no válido: {0}", text))
+        nodes = ((self.client.graphql(ORDER_LOOKUP_QUERY, {"query": f"name:{name}"}) or {}).get("orders") or {}).get("nodes") or []
+        if not nodes:
+            raise ShopifyError(tr("Shopify no encontró el pedido {0}.", name))
+        return str(nodes[0]["id"])
+
+    def detail(self, order_gid: str) -> OrderDetail:
+        from .shopify import ShopifyError
+
+        try:
+            data = self.client.graphql(ORDER_DETAIL_QUERY, {"id": order_gid})
+        except ShopifyError as exc:
+            if exc.code != "access_denied":
+                raise
+            data = self.client.graphql(ORDER_DETAIL_QUERY_BASIC, {"id": order_gid})
+        order = (data or {}).get("order")
+        if not order:
+            raise ShopifyError(tr("Shopify no encontró ese pedido."))
+        return parse_detail(order)
+
+    def products(self, text: str) -> list[ProductChoice]:
+        terms = search_terms(text)
+        if not terms:
+            return []
+        return parse_products(self.client.graphql(PRODUCTS_QUERY, {"query": terms}))
+
+    def set_instructions(self, order_gid: str, text: str, append: bool = False) -> str:
+        """Escribe las instrucciones en la nota del pedido (lee la nota justo antes: lo demás queda igual)."""
+        from .shopify import ShopifyError
+
+        current = (self.client.graphql(ORDER_NOTE_QUERY, {"id": order_gid}) or {}).get("order")
+        if not current:
+            raise ShopifyError(tr("Shopify no encontró ese pedido."))
+        try:
+            note = with_instructions(current.get("note"), text, append=append)
+        except ValueError as exc:
+            raise ShopifyError(str(exc)) from exc
+        data = self.client.graphql(ORDER_NOTE_MUTATION, {"input": {"id": order_gid, "note": note}}, mutation=True)
+        errors = (data.get("orderUpdate") or {}).get("userErrors") or []
+        if errors:
+            raise ShopifyError("; ".join(str(e.get("message")) for e in errors))
+        return split_note(note)[1]
+
+    def create(self, recipient: Recipient, items: list[ManualItem], note: str = "", *, decrement: bool = True,
+               currency: str = "USD") -> dict[str, str]:
+        """Crea el pedido manual (sin avisar al cliente) y espera a que Shopify prepare su envío."""
+        from .shopify import ShopifyError
+
+        problem = manual_problem(recipient, items)
+        if problem:
+            raise ShopifyError(problem)
+        behaviour = "DECREMENT_IGNORING_POLICY" if decrement and any(i.variant_id for i in items) else "BYPASS"
+        data = self.client.graphql(
+            ORDER_CREATE_MUTATION,
+            {"order": order_input(recipient, items, note, currency),
+             "options": {"inventoryBehaviour": behaviour, "sendReceipt": False, "sendFulfillmentReceipt": False}},
+            mutation=True,
+        )
+        result = data.get("orderCreate") or {}
+        errors = result.get("userErrors") or []
+        if errors:
+            raise ShopifyError(tr("Shopify no creó el pedido: {0}", "; ".join(str(e.get("message")) for e in errors)))
+        order = result.get("order") or {}
+        if not order.get("id"):
+            raise ShopifyError(tr("Shopify no devolvió el pedido creado: revisa en Shopify antes de crear otro."),
+                               uncertain=True)
+        self._wait_for_fulfillment(order["id"])
+        return {"gid": str(order["id"]), "legacy": str(order.get("legacyResourceId") or ""),
+                "name": str(order.get("name") or "")}
+
+    def _wait_for_fulfillment(self, order_gid: str, timeout: float = 20.0) -> None:
+        """Shopify prepara la orden de envío unos segundos después de crear el pedido."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if any(fo.get("status") in ("OPEN", "IN_PROGRESS") for fo in self.client.fulfillment_orders(order_gid)):
+                return
+            time.sleep(1.5)

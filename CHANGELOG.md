@@ -2,6 +2,17 @@
 
 Cada versión publicada muestra estas notas en la ventana de actualización de la app y en la página de descargas.
 
+## 1.10.0
+
+- **Ver pedido.** En Pedidos, doble clic (o **Ver pedido**) muestra qué tiene cada pedido sin salir de la app: productos con su foto, variante, SKU y personalización (grabados, tallas), dirección y método de envío, totales, la nota del cliente, el mensaje de regalo y el seguimiento.
+- **Instrucciones en cada pedido** (empaque, regalo, firma…): se escriben en **Ver pedido** o las deja el asistente, y van a la nota del pedido en Shopify (se ven allí y en la hoja de empaque) sin tocar la nota del cliente.
+- **Nueva guía manual.** Para un envío que no vino de la tienda en línea (un reemplazo, una venta por mensaje): escribes a quién va y qué lleva (productos de la tienda o un artículo libre), LabelBridge crea en Shopify un pedido marcado «Manual · LabelBridge», pagado y sin cobrar al cliente, y después eliges la caja y se compra e imprime su guía. La compra automática no toca estos pedidos.
+- **Avisos por email** a los dueños desde tu correo (Gmail, iCloud u otro): eliges qué avisos llegan también por email (columna **Email** en Notificaciones), con botón para enviar una prueba y tope por hora. Solo se escribe a las direcciones de Ajustes.
+- **El asistente trabaja con los pedidos:** te dice qué tiene cada uno, escribe sus instrucciones y avisa a los dueños por email sin pedir permiso (con tope), y crea pedidos manuales y compra guías siempre con tu confirmación.
+- **Reglas del dueño** (Ajustes → Asistente): instrucciones permanentes que el asistente sigue siempre, por ejemplo «los pedidos de más de $500 van con firma». No pueden saltarse confirmaciones ni límites de seguridad.
+- **Instalador:** también pide, si quieres, el Client secret de tu app de Shopify; al abrirse, la app lo guarda en el almacén seguro, prueba la conexión y deja la tienda activa. La primera conexión que funciona activa la tienda también desde la app (y en la Mac).
+- **Copiar permisos** incluye read_products, para elegir productos de la tienda en la guía manual.
+
 ## 1.9.1
 
 - **Windows: el instalador ya no pide permiso de administrador.** Siempre instala LabelBridge solo para tu usuario, sin la pregunta «para mí / para todos».

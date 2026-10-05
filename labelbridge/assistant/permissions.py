@@ -3,8 +3,10 @@
 - Lectura y pruebas: se permiten solas.
 - Cambios de configuración: con el modo «changes» la app pide permiso al usuario en una ventana
   (una vez, o para el resto de la conversación).
-- Acciones críticas (comprar guías, borrar, instalar en Windows): siempre tienen su propia ventana de
-  confirmación dentro de la herramienta.
+- Acciones críticas (comprar guías, crear pedidos, borrar, instalar en Windows): siempre tienen su propia ventana
+  de confirmación dentro de la herramienta.
+- Acciones que el dueño permite sin preguntar (avisarle por email, escribir instrucciones en pedidos): sin ventana,
+  pero con tope por conversación y en la auditoría.
 - Topes por conversación: evitan bucles (p. ej. imprimir pruebas sin fin) y gasto innecesario.
 Todo queda en el registro de auditoría.
 """
@@ -17,6 +19,7 @@ from ..i18n import N_, tr
 from ..system.platform import pick
 
 READ, CHANGE, CRITICAL = "read", "change", "critical"
+AUTO = "auto"  # cambia algo, pero el dueño lo permitió sin preguntar (con tope y auditoría)
 
 TOOL_CLASSES: dict[str, str] = {
     "get_status": READ,
@@ -44,6 +47,13 @@ TOOL_CLASSES: dict[str, str] = {
     "reprocess_shopify_orders": CHANGE,
     "remove_printer": CRITICAL,
     "install_windows_printer": CRITICAL,
+    "find_orders": READ,
+    "get_order": READ,
+    "search_products": READ,
+    "set_order_instructions": AUTO,
+    "notify_owners": AUTO,
+    "create_manual_order": CRITICAL,
+    "buy_shipping_label": CRITICAL,
 }
 
 # Usos máximos por conversación.
@@ -59,6 +69,13 @@ LIMITS: dict[str, int] = {
     "test_shopify_connection": 8,
     "test_n8n_connection": 6,
     "diagnose_setup": 6,
+    "find_orders": 10,
+    "get_order": 25,
+    "search_products": 10,
+    "set_order_instructions": 15,
+    "notify_owners": 5,
+    "create_manual_order": 3,
+    "buy_shipping_label": 5,
 }
 
 FIELD_NAMES = {
@@ -156,6 +173,15 @@ def describe(name: str, args: dict) -> str:
         return tr("Volver a imprimir un trabajo del historial ({0}…).", job)
     if name == "reprocess_shopify_orders":
         return tr("Revisar otra vez los pedidos de Shopify de las últimas {0} horas.", args.get("hours"))
+    if name == "set_order_instructions":
+        return tr("Instrucciones del pedido {0} ({1}): {2}", args.get("order"), args.get("mode", "replace"),
+                  _value(args.get("instructions", "")))
+    if name == "notify_owners":
+        return tr("Email a los dueños: {0}", _value(args.get("subject", "")))
+    if name == "create_manual_order":
+        return tr("Crear un pedido manual para {0} ({1}).", _value(args.get("name", "")), _value(args.get("city", "")))
+    if name == "buy_shipping_label":
+        return tr("Comprar la guía del pedido {0}.", args.get("order"))
     return f"{name}:\n" + _fields(args)
 
 

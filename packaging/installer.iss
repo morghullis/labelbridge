@@ -3,8 +3,9 @@
 ;   (después de PyInstaller y de python packaging\make_installer_images.py, que crea las imágenes de la marca)
 ;
 ; En inglés o en español: se elige al empezar y la app queda en ese idioma (se puede cambiar en Ajustes).
-; La primera vez pregunta la tienda de Shopify (dirección y Client ID) para adelantar: la app los recoge al abrirse
-; y pide la clave secreta, que nunca pasa por el instalador.
+; La primera vez pregunta, si se quiere, la tienda de Shopify (dirección, Client ID y Client secret): al abrirse, la
+; app guarda la clave en el almacén seguro de Windows, borra lo que dejó el instalador, prueba la conexión y, si
+; funciona, activa la tienda.
 
 #ifndef AppVersion
   #define AppVersion "1.0.0"
@@ -67,16 +68,18 @@ english.ShopTitle=Your Shopify store
 spanish.ShopTitle=Tu tienda de Shopify
 english.ShopSubtitle=LabelBridge prints the shipping labels of this store's orders.
 spanish.ShopSubtitle=LabelBridge imprime las guías de envío de los pedidos de esta tienda.
-english.ShopInfo=Type your store now to save time; you can also leave it empty and do it later in the app.%n%nThe Client secret isn't asked here: when LabelBridge opens it asks for it, keeps it in the Windows secure store and tests the connection.
-spanish.ShopInfo=Escribe ya tu tienda para adelantar; también puedes dejarla vacía y hacerlo después en la app.%n%nLa clave secreta (Client secret) no se pide aquí: al abrirse, LabelBridge la pide, la guarda en el almacén seguro de Windows y prueba la conexión.
+english.ShopInfo=Optional: with the three fields, the store is connected and activated as soon as LabelBridge opens. You can also leave them empty and do it later in the app.%n%nThe Client secret goes to the Windows secure store when the app opens.
+spanish.ShopInfo=Opcional: con los tres datos, la tienda queda conectada y activa en cuanto LabelBridge se abre. También puedes dejarlos vacíos y hacerlo después en la app.%n%nLa clave secreta (Client secret) pasa al almacén seguro de Windows al abrirse la app.
 english.ShopDomain=Store address (for example my-store.myshopify.com):
 spanish.ShopDomain=Dirección de la tienda (por ejemplo mi-tienda.myshopify.com):
 english.ShopClientId=Client ID of your app in the Shopify Dev Dashboard (optional):
 spanish.ShopClientId=Client ID de tu app en el Dev Dashboard de Shopify (opcional):
+english.ShopClientSecret=Client secret of that app (optional):
+spanish.ShopClientSecret=Client secret de esa app (opcional):
 english.ShopInvalid=That isn't a Shopify store address. Example: my-store.myshopify.com
 spanish.ShopInvalid=Esa no es la dirección de una tienda de Shopify. Ejemplo: mi-tienda.myshopify.com
-english.FinishConnect=Open LabelBridge and finish connecting the store
-spanish.FinishConnect=Abrir LabelBridge y terminar de conectar la tienda
+english.FinishConnect=Open LabelBridge and connect the store
+spanish.FinishConnect=Abrir LabelBridge y conectar la tienda
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
@@ -262,6 +265,7 @@ begin
     CustomMessage('ShopInfo'));
   ShopPage.Add(CustomMessage('ShopDomain'), False);
   ShopPage.Add(CustomMessage('ShopClientId'), False);
+  ShopPage.Add(CustomMessage('ShopClientSecret'), True);  { se escribe oculta }
 end;
 
 function ShouldSkipPage(PageID: Integer): Boolean;
@@ -276,6 +280,7 @@ begin
   begin
     ShopPage.Values[0] := NormalizeShop(ShopPage.Values[0]);
     ShopPage.Values[1] := Trim(ShopPage.Values[1]);
+    ShopPage.Values[2] := Trim(ShopPage.Values[2]);
     if not ValidShop(ShopPage.Values[0]) then
     begin
       MsgBox(CustomMessage('ShopInvalid'), mbError, MB_OK);
@@ -298,5 +303,8 @@ begin
     RegWriteStringValue(HKEY_CURRENT_USER, 'Software\LabelBridge\Setup', 'ShopDomain', ShopPage.Values[0]);
     if ShopPage.Values[1] <> '' then
       RegWriteStringValue(HKEY_CURRENT_USER, 'Software\LabelBridge\Setup', 'ClientId', ShopPage.Values[1]);
+    { Solo hasta que la app se abre: la pasa al almacén seguro de Windows y borra esta clave. }
+    if ShopPage.Values[2] <> '' then
+      RegWriteStringValue(HKEY_CURRENT_USER, 'Software\LabelBridge\Setup', 'ClientSecret', ShopPage.Values[2]);
   end;
 end;

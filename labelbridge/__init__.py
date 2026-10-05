@@ -2,4 +2,4 @@
 
 APP_NAME = "LabelBridge"
 APP_ID = "LabelBridge"
-__version__ = "1.9.1"
+__version__ = "1.10.0"

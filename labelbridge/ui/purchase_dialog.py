@@ -7,7 +7,7 @@ Shopify: se compra en Shopify con un clic (LabelBridge la imprime sola) o aquí 
 
 from __future__ import annotations
 
-from PySide6.QtCore import QTimer, QUrl
+from PySide6.QtCore import QObject, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -51,6 +51,135 @@ def _units(options: dict[str, str], current: str) -> QComboBox:
     return combo
 
 
+class PackageForm(QObject):
+    """La caja y el peso de una guía: el paquete predeterminado de Shopify o una caja propia (que se puede recordar),
+    y el peso que calcula Shopify o uno escrito. Lo usan «Comprar guía» y «Nueva guía manual»."""
+
+    changed = Signal()
+
+    def __init__(self, parent: QWidget, ctx: AppContext) -> None:
+        super().__init__(parent)
+        self.ctx = ctx
+        p = ctx.cfg.data.shopify.package
+        self.package_default = QRadioButton(tr("El paquete predeterminado de Shopify"))
+        self.package_custom = QRadioButton(tr("Mi caja:"))
+        group = QButtonGroup(parent)
+        group.addButton(self.package_default)
+        group.addButton(self.package_custom)
+        (self.package_custom if p.use_custom else self.package_default).setChecked(True)
+        self.package_type = QComboBox()
+        for code, text in PACKAGE_TYPES.items():
+            self.package_type.addItem(tr(text), code)
+        self.package_type.setCurrentIndex(max(0, self.package_type.findData(p.type)))
+        self.box_length, self.box_width, self.box_height = _spin(p.length), _spin(p.width), _spin(p.height)
+        self.dim_unit = _units(DIM_UNITS, p.dim_unit)
+        self.box_weight = _spin(p.weight)
+        self.box_weight_unit = _units(WEIGHT_UNITS, p.weight_unit)
+        dims = QHBoxLayout()
+        dims.setSpacing(6)
+        dims.addWidget(self.package_type)
+        for index, spin in enumerate((self.box_length, self.box_width, self.box_height)):
+            if index:
+                dims.addWidget(label("×"))
+            dims.addWidget(spin)
+        dims.addWidget(self.dim_unit)
+        dims.addStretch(1)
+        box_weight = QHBoxLayout()
+        box_weight.setSpacing(6)
+        box_weight.addWidget(label(tr("Caja vacía")))
+        box_weight.addWidget(self.box_weight)
+        box_weight.addWidget(self.box_weight_unit)
+        box_weight.addStretch(1)
+        self.remember = QCheckBox(tr("Recordar esta caja para las próximas guías"))
+        self.remember.setChecked(p.use_custom)
+        self.package_box = QVBoxLayout()
+        self.package_box.setSpacing(6)
+        self.package_box.addWidget(self.package_default)
+        self.package_box.addWidget(self.package_custom)
+        self.custom_box = QWidget()
+        custom_layout = QVBoxLayout(self.custom_box)
+        custom_layout.setContentsMargins(24, 0, 0, 0)
+        custom_layout.setSpacing(6)
+        custom_layout.addLayout(dims)
+        custom_layout.addLayout(box_weight)
+        custom_layout.addWidget(self.remember)
+        self.package_box.addWidget(self.custom_box)
+
+        # Peso total: lo calcula Shopify (productos + paquete) o se indica.
+        self.weight_auto = QRadioButton(tr("Que lo calcule Shopify (productos + paquete)"))
+        self.weight_manual = QRadioButton(tr("Indicarlo:"))
+        weights = QButtonGroup(parent)
+        weights.addButton(self.weight_auto)
+        weights.addButton(self.weight_manual)
+        self.weight_auto.setChecked(True)
+        self.total_weight = _spin(1.0)
+        self.total_weight_unit = _units(WEIGHT_UNITS, "POUNDS")
+        manual_weight = QHBoxLayout()
+        manual_weight.setSpacing(6)
+        manual_weight.addWidget(self.weight_manual)
+        manual_weight.addWidget(self.total_weight)
+        manual_weight.addWidget(self.total_weight_unit)
+        manual_weight.addStretch(1)
+        self.weight_box = QVBoxLayout()
+        self.weight_box.setSpacing(6)
+        self.weight_box.addWidget(self.weight_auto)
+        self.weight_box.addLayout(manual_weight)
+        for widget in (self.package_default, self.package_custom, self.weight_auto, self.weight_manual):
+            widget.toggled.connect(lambda _on: self.update())
+        self.update()
+
+    def add_rows(self, form: QFormLayout) -> None:
+        form.addRow(tr("Paquete"), self.package_box)
+        form.addRow(tr("Peso total"), self.weight_box)
+
+    def update(self) -> None:
+        self.custom_box.setEnabled(self.package_custom.isChecked())
+        self.total_weight.setEnabled(self.weight_manual.isChecked())
+        self.total_weight_unit.setEnabled(self.weight_manual.isChecked())
+        self.changed.emit()
+
+    def options(self) -> tuple[dict | None, dict | None]:
+        """(paquete, peso total) como los pide Shopify; None = el de Shopify / que lo calcule Shopify."""
+        package = None
+        if self.package_custom.isChecked():
+            package = {
+                "type": self.package_type.currentData(),
+                "dimensions": {"length": self.box_length.value(), "width": self.box_width.value(),
+                               "height": self.box_height.value(),
+                               "unit": self.dim_unit.currentData()},
+                "weight": {"value": self.box_weight.value(), "unit": self.box_weight_unit.currentData()},
+            }
+        weight = None
+        if self.weight_manual.isChecked():
+            weight = {"value": self.total_weight.value(), "unit": self.total_weight_unit.currentData()}
+        return package, weight
+
+    def problem(self) -> str:
+        if self.package_custom.isChecked() and min(self.box_length.value(), self.box_width.value(), self.box_height.value()) <= 0:
+            return tr("Escribe las medidas de la caja.")
+        if self.weight_manual.isChecked() and self.total_weight.value() <= 0:
+            return tr("Escribe el peso total del paquete.")
+        return ""
+
+    def remember_box(self) -> None:
+        s = self.ctx.cfg.data.shopify
+        p = s.package
+        p.use_custom = self.package_custom.isChecked() and self.remember.isChecked()
+        if self.package_custom.isChecked():
+            p.type = self.package_type.currentData()
+            p.length, p.width, p.height = self.box_length.value(), self.box_width.value(), self.box_height.value()
+            p.dim_unit = self.dim_unit.currentData()
+            p.weight, p.weight_unit = self.box_weight.value(), self.box_weight_unit.currentData()
+        self.ctx.cfg.save("shopify_package")  # solo la caja: no hace falta reiniciar la conexión con Shopify
+
+    def set_enabled(self, enabled: bool) -> None:
+        for widget in (self.package_default, self.package_custom, self.custom_box, self.weight_auto,
+                       self.weight_manual, self.total_weight, self.total_weight_unit):
+            widget.setEnabled(enabled)
+        if enabled:
+            self.update()
+
+
 class PurchaseDialog(QDialog):
     """Compra confirmada de la guía de un pedido (Pedidos → «Comprar guía»)."""
 
@@ -61,7 +190,6 @@ class PurchaseDialog(QDialog):
         self.bought = False
         self.busy = False  # comprando: la ventana no se cierra hasta saber el resultado
         s = ctx.cfg.data.shopify
-        p = s.package
         self.setWindowTitle(tr("Comprar guía · {0}", row.name))
         self.setMinimumWidth(600)
         layout = QVBoxLayout(self)
@@ -103,72 +231,9 @@ class PurchaseDialog(QDialog):
         form.setSpacing(10)
         form.addRow(tr("Paquetería"), label(tr("La que elija Shopify: el servicio que pagó el cliente o el recomendado"), wrap=True))
 
-        # Paquete: el de Shopify o una caja propia (se puede recordar para la próxima).
-        self.package_default = QRadioButton(tr("El paquete predeterminado de Shopify"))
-        self.package_custom = QRadioButton(tr("Mi caja:"))
-        group = QButtonGroup(self)
-        group.addButton(self.package_default)
-        group.addButton(self.package_custom)
-        (self.package_custom if p.use_custom else self.package_default).setChecked(True)
-        self.package_type = QComboBox()
-        for code, text in PACKAGE_TYPES.items():
-            self.package_type.addItem(tr(text), code)
-        self.package_type.setCurrentIndex(max(0, self.package_type.findData(p.type)))
-        self.box_length, self.box_width, self.box_height = _spin(p.length), _spin(p.width), _spin(p.height)
-        self.dim_unit = _units(DIM_UNITS, p.dim_unit)
-        self.box_weight = _spin(p.weight)
-        self.box_weight_unit = _units(WEIGHT_UNITS, p.weight_unit)
-        dims = QHBoxLayout()
-        dims.setSpacing(6)
-        dims.addWidget(self.package_type)
-        for index, spin in enumerate((self.box_length, self.box_width, self.box_height)):
-            if index:
-                dims.addWidget(label("×"))
-            dims.addWidget(spin)
-        dims.addWidget(self.dim_unit)
-        dims.addStretch(1)
-        box_weight = QHBoxLayout()
-        box_weight.setSpacing(6)
-        box_weight.addWidget(label(tr("Caja vacía")))
-        box_weight.addWidget(self.box_weight)
-        box_weight.addWidget(self.box_weight_unit)
-        box_weight.addStretch(1)
-        self.remember = QCheckBox(tr("Recordar esta caja para las próximas guías"))
-        self.remember.setChecked(p.use_custom)
-        package_box = QVBoxLayout()
-        package_box.setSpacing(6)
-        package_box.addWidget(self.package_default)
-        package_box.addWidget(self.package_custom)
-        self.custom_box = QWidget()
-        custom_layout = QVBoxLayout(self.custom_box)
-        custom_layout.setContentsMargins(24, 0, 0, 0)
-        custom_layout.setSpacing(6)
-        custom_layout.addLayout(dims)
-        custom_layout.addLayout(box_weight)
-        custom_layout.addWidget(self.remember)
-        package_box.addWidget(self.custom_box)
-        form.addRow(tr("Paquete"), package_box)
-
-        # Peso total: lo calcula Shopify (productos + paquete) o se indica.
-        self.weight_auto = QRadioButton(tr("Que lo calcule Shopify (productos + paquete)"))
-        self.weight_manual = QRadioButton(tr("Indicarlo:"))
-        weights = QButtonGroup(self)
-        weights.addButton(self.weight_auto)
-        weights.addButton(self.weight_manual)
-        self.weight_auto.setChecked(True)
-        self.total_weight = _spin(1.0)
-        self.total_weight_unit = _units(WEIGHT_UNITS, "POUNDS")
-        manual_weight = QHBoxLayout()
-        manual_weight.setSpacing(6)
-        manual_weight.addWidget(self.weight_manual)
-        manual_weight.addWidget(self.total_weight)
-        manual_weight.addWidget(self.total_weight_unit)
-        manual_weight.addStretch(1)
-        weight_box = QVBoxLayout()
-        weight_box.setSpacing(6)
-        weight_box.addWidget(self.weight_auto)
-        weight_box.addLayout(manual_weight)
-        form.addRow(tr("Peso total"), weight_box)
+        self.package = PackageForm(self, ctx)
+        self.package.add_rows(form)
+        self.package.changed.connect(self._update)
 
         self.notify = QCheckBox(tr("Avisar al cliente por correo con el número de seguimiento"))
         self.notify.setChecked(s.notify_customer)
@@ -209,8 +274,6 @@ class PurchaseDialog(QDialog):
         buttons.addWidget(self.buy_btn)
         layout.addLayout(buttons)
 
-        for widget in (self.package_default, self.package_custom, self.weight_auto, self.weight_manual):
-            widget.toggled.connect(lambda _on: self._update())
         self.tracking_url = ""
         self._update()
 
@@ -243,53 +306,21 @@ class PurchaseDialog(QDialog):
         self.money_note.setVisible(usable)
         self.buy_btn.setVisible(not self.bought)
         self.buy_btn.setEnabled(usable)
-        self.custom_box.setEnabled(self.package_custom.isChecked())
-        self.total_weight.setEnabled(self.weight_manual.isChecked())
-        self.total_weight_unit.setEnabled(self.weight_manual.isChecked())
         if self.isVisible():
             QTimer.singleShot(0, self._fit)
 
     def options(self) -> dict:
         """Lo elegido, como lo pide Shopify."""
-        package = None
-        if self.package_custom.isChecked():
-            package = {
-                "type": self.package_type.currentData(),
-                "dimensions": {"length": self.box_length.value(), "width": self.box_width.value(),
-                               "height": self.box_height.value(),
-                               "unit": self.dim_unit.currentData()},
-                "weight": {"value": self.box_weight.value(), "unit": self.box_weight_unit.currentData()},
-            }
-        weight = None
-        if self.weight_manual.isChecked():
-            weight = {"value": self.total_weight.value(), "unit": self.total_weight_unit.currentData()}
+        package, weight = self.package.options()
         return {"package": package, "total_weight": weight, "notify": self.notify.isChecked()}
-
-    def _problem(self) -> str:
-        if self.package_custom.isChecked() and min(self.box_length.value(), self.box_width.value(), self.box_height.value()) <= 0:
-            return tr("Escribe las medidas de la caja.")
-        if self.weight_manual.isChecked() and self.total_weight.value() <= 0:
-            return tr("Escribe el peso total del paquete.")
-        return ""
-
-    def _remember_box(self) -> None:
-        s = self.ctx.cfg.data.shopify
-        p = s.package
-        p.use_custom = self.package_custom.isChecked() and self.remember.isChecked()
-        if self.package_custom.isChecked():
-            p.type = self.package_type.currentData()
-            p.length, p.width, p.height = self.box_length.value(), self.box_width.value(), self.box_height.value()
-            p.dim_unit = self.dim_unit.currentData()
-            p.weight, p.weight_unit = self.box_weight.value(), self.box_weight_unit.currentData()
-        self.ctx.cfg.save("shopify_package")  # solo la caja: no hace falta reiniciar la conexión con Shopify
 
     # --- acciones ------------------------------------------------------------------------------
     def _buy(self) -> None:
-        problem = self._problem()
+        problem = self.package.problem()
         if problem:
             self._show(problem, "Warning")
             return
-        self._remember_box()
+        self.package.remember_box()
         chosen = self.options()
         self.busy = True
         self.buy_btn.setEnabled(False)

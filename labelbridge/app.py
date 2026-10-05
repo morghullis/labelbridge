@@ -171,8 +171,10 @@ def main(argv: list[str] | None = None) -> int:
         _install_spanish_translator(app)  # botones estándar de Qt (Sí, No, Cancelar…)
     log.info("Idioma de la interfaz: %s", language)
     connect_store = "--connect-store" in argv or installer_hints.apply(cfg, hints)
-    if hints.get("shop"):
-        installer_hints.forget_store()
+    # Con la clave del instalador la tienda se prueba y se activa sola al abrirse (ver ShopifyPage.connected).
+    auto_connect = installer_hints.apply_secret(secrets, cfg, hints)
+    if hints.get("shop") or hints.get("client_secret"):
+        installer_hints.forget_store()  # también la clave: ya está en el almacén seguro (o no se usó)
     store = JobStore(db_path(), spool_dir(), protector)
     events = Events()
     policy = SecurityPolicy(cfg, AuditLog(logs_dir() / "seguridad.log"))
@@ -246,8 +248,8 @@ def main(argv: list[str] | None = None) -> int:
     wants_hidden = "--minimized" in argv or cfg.data.general.start_minimized
     if "--show" in argv or "--updated" in argv or not guide_complete(ctx) or not wants_hidden or connect_store:
         window.show()
-    if connect_store:  # recién instalada con la tienda: directo a terminar de conectarla
-        QTimer.singleShot(700, window.connect_store)
+    if connect_store:  # recién instalada con la tienda: directo a conectarla (y probarla, si vino la clave)
+        QTimer.singleShot(700, lambda: window.connect_store(test=auto_connect))
     not_installed = failed_update(store.kv_get)
     if not_installed is not None:
         store.kv_set("update:installed", "")

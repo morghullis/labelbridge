@@ -33,17 +33,19 @@ from ...assistant.providers import (
     resolve,
     valid_model,
 )
-from ...config import ASSISTANT_EFFORTS, NOTIFY_EVENTS
+from ...config import ASSISTANT_EFFORTS, EMAIL_PROVIDERS, NOTIFY_EVENTS
 from ...events import CONFIG_EXTERNAL
 from ...i18n import LANGUAGES, N_, tr
 from ...paths import data_dir, logs_dir, output_dir
+from ...secret_store import EMAIL_PASSWORD
 from ...system import autostart, sounds
 from ...system.platform import pick
 from ...updater import UPDATES_PAGE
 from ..alerts import play_async
 from ..context import AppContext
-from ..widgets import Card, Page, button, confirm, info, label, run_async
+from ..widgets import Card, Page, SecretField, button, confirm, error, info, label, run_async
 
+GMAIL_APP_PASSWORDS = "https://myaccount.google.com/apppasswords"
 REMIND_OPTIONS = {0: N_("No recordar"), 15: N_("Cada 15 minutos"), 30: N_("Cada 30 minutos"), 60: N_("Cada hora"),
                   120: N_("Cada 2 horas")}
 
@@ -120,6 +122,7 @@ class SettingsPage(Page):
         general.add(layout=form)
         self.add(general)
         self.add(self._notifications_card())
+        self.add(self._email_card())
 
         label_card = Card(
             tr("Etiqueta de pedido generada"),
@@ -216,6 +219,15 @@ class SettingsPage(Page):
         form.addRow(tr("Límite de gasto por día"), self.assistant_budget)
         self.assistant_rate = _spin(1, 1000, tr(" mensajes"))
         form.addRow(tr("Máximo por hora"), self.assistant_rate)
+        self.assistant_rules = QPlainTextEdit()
+        self.assistant_rules.setPlaceholderText(tr(
+            "Instrucciones que el asistente sigue siempre, una por línea. Por ejemplo:\n"
+            "Los pedidos de más de $500 van con instrucciones de firma al entregar.\n"
+            "Si un pedido trae mensaje de regalo, deja la instrucción «tarjeta de regalo» en el pedido."))
+        self.assistant_rules.setFixedHeight(110)
+        form.addRow(tr("Reglas del dueño"), self.assistant_rules)
+        form.addRow("", label(tr("Solo tú las cambias, aquí. No pueden saltarse las confirmaciones ni los límites de "
+                                 "seguridad."), "Small", wrap=True))
         assistant.add(layout=form)
         self.add(assistant)
 
@@ -431,24 +443,29 @@ class SettingsPage(Page):
         grid.setHorizontalSpacing(14)
         grid.setVerticalSpacing(8)
         grid.addWidget(label(tr("Avisar"), "Small"), 0, 1)
-        grid.addWidget(label(tr("Sonido"), "Small"), 0, 2)
+        grid.addWidget(label(tr("Email"), "Small"), 0, 2)
+        grid.addWidget(label(tr("Sonido"), "Small"), 0, 3)
         self.alert_toasts: dict[str, QCheckBox] = {}
+        self.alert_emails: dict[str, QCheckBox] = {}
         self.alert_sounds: dict[str, QComboBox] = {}
         for row, (event, text) in enumerate(NOTIFY_EVENTS.items(), start=1):
             grid.addWidget(label(tr(text)), row, 0)
             toast = QCheckBox()
             toast.setToolTip(tr("Mostrar el aviso junto al reloj"))
             grid.addWidget(toast, row, 1, alignment=Qt.AlignmentFlag.AlignCenter)
+            email = QCheckBox()
+            email.setToolTip(tr("Enviarlo también por email a los dueños (Avisos por email)"))
+            grid.addWidget(email, row, 2, alignment=Qt.AlignmentFlag.AlignCenter)
             sound = QComboBox()
             for key, name in sounds.SOUNDS.items():
                 sound.addItem(tr(name), key)
             sound.setMinimumWidth(190)
-            grid.addWidget(sound, row, 2)
+            grid.addWidget(sound, row, 3)
             test = button("", "play", "ghost", tr("Probar el sonido"))
             test.clicked.connect(lambda _checked=False, combo=sound: self._test_sound(combo.currentData()))
-            grid.addWidget(test, row, 3)
-            self.alert_toasts[event], self.alert_sounds[event] = toast, sound
-        grid.setColumnStretch(4, 1)
+            grid.addWidget(test, row, 4)
+            self.alert_toasts[event], self.alert_emails[event], self.alert_sounds[event] = toast, email, sound
+        grid.setColumnStretch(5, 1)
         # Los de imprimir son los ajustes de siempre (el asistente también los cambia).
         self.notify_printed, self.notify_errors = self.alert_toasts["printed"], self.alert_toasts["print_error"]
         card.add(layout=grid)
@@ -510,12 +527,139 @@ class SettingsPage(Page):
         self._load_notifications()
         return card
 
+    def _email_card(self) -> Card:
+        card = Card(
+            tr("Avisos por email"),
+            tr("LabelBridge escribe a los dueños de la tienda desde tu correo: los avisos que marques en «Email» y lo que "
+               "les quiera contar el asistente. Solo a las direcciones de aquí."),
+        )
+        form = QFormLayout()
+        form.setSpacing(10)
+        self.email_on = QCheckBox(tr("Enviar avisos por email"))
+        form.addRow("", self.email_on)
+        self.email_provider = QComboBox()
+        for key, (name, _host, _port, _security) in EMAIL_PROVIDERS.items():
+            self.email_provider.addItem(tr(name), key)
+        self.email_provider.currentIndexChanged.connect(lambda _i: self._email_provider_changed(user=True))
+        form.addRow(tr("Correo"), self.email_provider)
+        server_row = QHBoxLayout()
+        self.email_host = QLineEdit()
+        self.email_host.setPlaceholderText("smtp.example.com")
+        self.email_port = QSpinBox()
+        self.email_port.setRange(1, 65535)
+        self.email_security = _combo({"starttls": "STARTTLS", "ssl": "SSL/TLS"})
+        server_row.addWidget(self.email_host, 1)
+        server_row.addWidget(label(tr("puerto")))
+        server_row.addWidget(self.email_port)
+        server_row.addWidget(self.email_security)
+        self.email_server_label = label(tr("Servidor"))
+        form.addRow(self.email_server_label, server_row)
+        self.email_user = QLineEdit()
+        self.email_user.setPlaceholderText(tr("tucorreo@gmail.com"))
+        form.addRow(tr("Cuenta que envía"), self.email_user)
+        password_row = QHBoxLayout()
+        self.email_password = SecretField(tr("Contraseña de aplicación"), copyable=False)
+        password_row.addWidget(self.email_password, 1)
+        self.email_help = button(tr("Crear contraseña de aplicación"), "link", "ghost")
+        self.email_help.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(GMAIL_APP_PASSWORDS)))
+        password_row.addWidget(self.email_help)
+        form.addRow(tr("Contraseña"), password_row)
+        form.addRow("", label(tr("Gmail e iCloud piden una «contraseña de aplicación» (con la verificación en dos pasos "
+                                 "activa), no tu contraseña normal. Se guarda cifrada en este equipo."), "Small", wrap=True))
+        self.email_name = QLineEdit()
+        form.addRow(tr("Nombre del remitente"), self.email_name)
+        self.email_to = QLineEdit()
+        self.email_to.setPlaceholderText(tr("dueno@tienda.com, socia@tienda.com"))
+        form.addRow(tr("Avisar a"), self.email_to)
+        self.email_assistant = QCheckBox(tr("El asistente puede escribirles (sin pedir permiso, solo a estas direcciones)"))
+        form.addRow("", self.email_assistant)
+        self.email_per_hour = _spin(1, 200, tr(" correos"))
+        self.email_per_hour.setMaximumWidth(160)
+        form.addRow(tr("Máximo por hora"), self.email_per_hour)
+        card.add(layout=form)
+        actions = QHBoxLayout()
+        self.email_test = button(tr("Guardar y enviar prueba"), "mail", "primary")
+        self.email_test.clicked.connect(self._email_test)
+        actions.addWidget(self.email_test)
+        actions.addStretch(1)
+        card.add(layout=actions)
+        self._load_email()
+        return card
+
+    def _email_provider_changed(self, user: bool = False) -> None:
+        key = self.email_provider.currentData() or "custom"
+        _name, host, port, security = EMAIL_PROVIDERS.get(key, EMAIL_PROVIDERS["custom"])
+        custom = key == "custom"
+        if user and not custom:
+            self.email_host.setText(host)
+            self.email_port.setValue(port)
+            _select(self.email_security, security)
+        for widget in (self.email_host, self.email_port, self.email_security):
+            widget.setEnabled(custom)
+        self.email_help.setVisible(key == "gmail")
+
+    def _load_email(self) -> None:
+        e = self.ctx.cfg.data.email
+        self.email_on.setChecked(e.enabled)
+        self.email_provider.blockSignals(True)
+        _select(self.email_provider, e.provider if e.provider in EMAIL_PROVIDERS else "custom")
+        self.email_provider.blockSignals(False)
+        self.email_host.setText(e.host)
+        self.email_port.setValue(int(e.port or 587))
+        _select(self.email_security, e.security)
+        self.email_user.setText(e.username)
+        self.email_password.setText(self.ctx.secrets.get(EMAIL_PASSWORD))
+        self.email_name.setText(e.sender_name)
+        self.email_to.setText(e.recipients)
+        self.email_assistant.setChecked(e.assistant)
+        self.email_per_hour.setValue(e.per_hour)
+        self._email_provider_changed()
+
+    def _save_email(self) -> None:
+        e = self.ctx.cfg.data.email
+        e.enabled = self.email_on.isChecked()
+        e.provider = self.email_provider.currentData() or "custom"
+        e.host = self.email_host.text().strip()
+        e.port = self.email_port.value()
+        e.security = self.email_security.currentData() or "starttls"
+        e.username = self.email_user.text().strip()
+        e.sender_name = self.email_name.text().strip() or "LabelBridge"
+        e.recipients = self.email_to.text().strip()
+        e.assistant = self.email_assistant.isChecked()
+        e.per_hour = self.email_per_hour.value()
+        self.ctx.secrets.set(EMAIL_PASSWORD, self.email_password.text())
+        self.ctx.cfg.save("email")
+
+    def _email_test(self) -> None:
+        self._save_email()
+        self._save_notifications()  # las casillas «Email» de los avisos
+        sender = self.ctx.services.email
+        problem = sender.problem()
+        if problem:
+            error(self, tr("Avisos por email"), problem)
+            return
+        self.email_test.setEnabled(False)
+        self.email_test.setText(tr("Enviando…"))
+
+        def finished() -> None:
+            self.email_test.setEnabled(True)
+            self.email_test.setText(tr("Guardar y enviar prueba"))
+
+        run_async(
+            lambda: sender.send(tr("Correo de prueba"), tr("Los avisos de LabelBridge llegarán así a: {0}.",
+                                                           ", ".join(self.ctx.cfg.data.email.recipient_list()))),
+            lambda count: (finished(), info(self, tr("Avisos por email"), tr("✓ Enviado a {0} dirección(es). Revisa la bandeja "
+                                                                              "de entrada (y la de spam).", count))),
+            lambda message: (finished(), error(self, tr("Avisos por email"), message)),
+        )
+
     def _load_notifications(self) -> None:
         g, n = self.ctx.cfg.data.general, self.ctx.cfg.data.notifications
         toasts = {"new_order": n.new_order, "action": n.action, "delivery": n.delivery,
                   "printed": g.notify_printed, "print_error": g.notify_errors}
         for event in NOTIFY_EVENTS:
             self.alert_toasts[event].setChecked(bool(toasts[event]))
+            self.alert_emails[event].setChecked(self.ctx.cfg.data.email.alert_on(event))
             _select(self.alert_sounds[event], n.sound(event))
         self.volume.setValue(max(0, min(100, n.volume)))
         self.volume_text.setText(f"{self.volume.value()} %")
@@ -536,6 +680,7 @@ class SettingsPage(Page):
         g.notify_printed = self.alert_toasts["printed"].isChecked()
         g.notify_errors = self.alert_toasts["print_error"].isChecked()
         n.sounds = {event: self.alert_sounds[event].currentData() or "" for event in NOTIFY_EVENTS}
+        self.ctx.cfg.data.email.alerts = {event: self.alert_emails[event].isChecked() for event in NOTIFY_EVENTS}
         n.volume = self.volume.value()
         n.custom_sound = self.custom_sound.text().strip()
         n.quiet = self.quiet.isChecked()
@@ -567,6 +712,7 @@ class SettingsPage(Page):
         self.minimized.setChecked(g.start_minimized)
         self.auto_discover.setChecked(g.auto_discover)
         self._load_notifications()
+        self._load_email()
         self.retries.setValue(g.max_retries)
         self.retention.setValue(g.retention_days)
         self.auto_update.setChecked(g.auto_update_check)
@@ -593,6 +739,7 @@ class SettingsPage(Page):
         _select(self.assistant_approval, a.approval)
         self.assistant_budget.setValue(float(a.daily_budget_usd))
         self.assistant_rate.setValue(a.messages_per_hour)
+        self.assistant_rules.setPlainText(a.rules)
         self.api_rate.setValue(s.api_requests_per_minute)
         self.api_failures.setValue(s.api_max_auth_failures)
         self.api_block.setValue(s.api_block_minutes)
@@ -622,6 +769,7 @@ class SettingsPage(Page):
         a.approval = self.assistant_approval.currentData()
         a.daily_budget_usd = round(self.assistant_budget.value(), 2)
         a.messages_per_hour = self.assistant_rate.value()
+        a.rules = self.assistant_rules.toPlainText().strip()[:4000]
         s.api_requests_per_minute = self.api_rate.value()
         s.api_max_auth_failures = self.api_failures.value()
         s.api_block_minutes = self.api_block.value()
@@ -653,6 +801,7 @@ class SettingsPage(Page):
         lb.show_qr = self.show_qr.isChecked()
         lb.show_price = self.show_price.isChecked()
         self.ctx.cfg.save("general")
+        self._save_email()
         self._save_notifications()
         try:
             autostart.apply(g.start_with_windows)

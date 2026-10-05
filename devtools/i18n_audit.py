@@ -223,6 +223,26 @@ def visible_leftovers() -> list[str]:
             dialog._done({"state": "purchased", "carrier": "USPS", "tracking": "9200"})
             found += [f"[comprar guía] {item}" for item in leftovers_in(dialog, translated)]
             dialog.close()
+        # «Ver pedido» con un pedido de ejemplo (sin Shopify) y «Nueva guía manual».
+        from labelbridge.connectors.shopify_orders import OrderDetail, OrderItem
+        from labelbridge.ui.manual_label_dialog import ManualLabelDialog
+        from labelbridge.ui.order_dialog import OrderDialog
+
+        detail = OrderDetail(
+            gid="gid://shopify/Order/1", legacy="1", name="#1001", financial="PAID", fulfillment="UNFULFILLED",
+            customer="Ana", address=["Ana", "1 Main St", "Miami FL 33101"], method="Express", customer_note="x",
+            instructions="y", tags=["LabelBridge-manual"], items=[OrderItem("Ring", "7", "R-7", 1, 60.0, shipping=False)],
+            total=60.0, discounts=5.0, tracking=[("USPS", "9400", "https://t")],
+        )
+        view = OrderDialog(window, window.ctx, rows[0], detail=detail)
+        view._show(detail)
+        found += [f"[ver pedido] {item}" for item in leftovers_in(view, translated)]
+        view.close()
+        manual = ManualLabelDialog(window, window.ctx)
+        found += [f"[guía manual] {item}" for item in leftovers_in(manual, translated)]
+        manual.use_free.setChecked(True)
+        found += [f"[guía manual] {item}" for item in leftovers_in(manual, translated)]
+        manual.close()
         import time
 
         from labelbridge.updater import UpdateInfo

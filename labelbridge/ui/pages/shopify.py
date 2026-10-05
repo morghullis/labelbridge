@@ -341,6 +341,7 @@ class ShopifyPage(Page):
             ):
                 self.buy_label.setChecked(False)
         s.enabled = self.enabled.isChecked()
+        s.activated_once = s.activated_once or s.enabled  # ya decidió la persona: no se vuelve a activar solo
         s.shop = shop
         s.auth_mode = "token" if self.mode_token.isChecked() else "client_credentials"
         s.client_id = self.client_id.text().strip()
@@ -374,6 +375,10 @@ class ShopifyPage(Page):
         self.refresh()
         return True
 
+    def test_now(self) -> None:
+        """Probar la conexión ya (la tienda del instalador, con su clave): si funciona, la tienda queda activa."""
+        self._test()
+
     def _test(self) -> None:
         if not self._save():
             return
@@ -392,6 +397,8 @@ class ShopifyPage(Page):
             self.ctx.cfg.save("general")
         scopes = ", ".join(sorted(data.get("scopes") or [])) or "—"
         text = tr("✓ Conectado a «{0}» ({1}).\nPermisos: {2}", data.get('name'), data.get('myshopifyDomain'), scopes)
+        if self._activate_first_time():
+            text += tr("\n✓ La tienda quedó activa: LabelBridge ya revisa sus pedidos.")
         if data.get("missing"):
             text += tr("\n⚠ Faltan permisos: ") + ", ".join(data["missing"])
         self.result.setObjectName("Warning" if data.get("missing") else "Hint")
@@ -400,6 +407,19 @@ class ShopifyPage(Page):
         self.result.setVisible(True)
         self.result.style().unpolish(self.result)
         self.result.style().polish(self.result)
+
+    def _activate_first_time(self) -> bool:
+        """La primera conexión que funciona activa el conector (instalador, guía o Mac). Si la persona ya lo activó o
+        lo apagó alguna vez, se respeta lo que eligió."""
+        s = self.ctx.cfg.data.shopify
+        if s.enabled or s.activated_once:
+            return False
+        s.enabled = s.activated_once = True
+        self.ctx.cfg.save("shopify")
+        self.enabled.setChecked(True)
+        self.ctx.events.notify(tr("Tienda conectada"), tr("LabelBridge ya revisa los pedidos de {0}.", s.shop))
+        self.refresh()
+        return True
 
     def _test_failed(self, message: str) -> None:
         self.test_btn.setEnabled(True)

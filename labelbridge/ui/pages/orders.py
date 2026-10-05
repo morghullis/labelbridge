@@ -355,6 +355,10 @@ class OrdersPage(Page):
         self.refresh_btn = button(tr("Actualizar"), "refresh")
         self.refresh_btn.clicked.connect(self.reload)
         self.header_actions.addWidget(self.refresh_btn)
+        self.manual_btn = button(tr("Nueva guía manual"), "plus", "primary",
+                                 tooltip=tr("Crear un pedido manual en Shopify y comprar su guía"))
+        self.manual_btn.clicked.connect(self.new_manual_label)
+        self.header_actions.addWidget(self.manual_btn)
         rules_btn = button(tr("Reglas de paquetería"), "sliders")
         rules_btn.clicked.connect(self.edit_rules)
         self.header_actions.addWidget(rules_btn)
@@ -431,7 +435,7 @@ class OrdersPage(Page):
         self.view.verticalHeader().setDefaultSectionSize(34)
         self.view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.view.customContextMenuRequested.connect(self._menu)
-        self.view.doubleClicked.connect(lambda _i: self._selected_action("open"))
+        self.view.doubleClicked.connect(lambda _i: self._selected_action("details"))
         header = self.view.horizontalHeader()
         header.setStretchLastSection(False)
         for col, width in enumerate((104, 92, 0, 140, 150, 140, 190)):
@@ -443,6 +447,7 @@ class OrdersPage(Page):
         table_card.add(self.view, stretch=1)
         bottom = QHBoxLayout()
         for text, icon_name, action in (
+            (tr("Ver pedido"), "eye", "details"),
             (tr("Abrir en Shopify"), "link", "open"),
             (tr("Rastrear"), "truck", "track"),
             (tr("Reimprimir guía"), "printer", "reprint"),
@@ -665,6 +670,7 @@ class OrdersPage(Page):
         if row is None:
             return
         menu = QMenu(self)
+        menu.addAction(icons.icon("eye"), tr("Ver pedido"), lambda: self.run_action(row, "details"))
         menu.addAction(icons.icon("link"), tr("Abrir en Shopify"), lambda: self.run_action(row, "open"))
         if row.tracking:
             menu.addAction(icons.icon("truck"), tr("Rastrear el envío"), lambda: self.run_action(row, "track"))
@@ -677,7 +683,9 @@ class OrdersPage(Page):
 
     def run_action(self, row: OrderRow, action: str) -> None:
         shop = self.ctx.cfg.data.shopify.shop
-        if action in ("open", "void", "buy"):
+        if action == "details":
+            self._details(row)
+        elif action in ("open", "void", "buy"):
             QDesktopServices.openUrl(QUrl(admin_url(shop, f"orders/{row.legacy}")))
         elif action == "track":
             url = next((u for _c, _n, u in row.tracking if u), "")
@@ -716,6 +724,22 @@ class OrdersPage(Page):
         if self.ctx.store.reprint(latest["id"]):
             self.ctx.engine.wake()
             info(self, tr("Reimprimir"), tr("La guía de {0} está otra vez en la cola de impresión.", row.name))
+
+    def _details(self, row: OrderRow) -> None:
+        """«Ver pedido»: qué tiene el pedido, sin salir de LabelBridge."""
+        from ..order_dialog import OrderDialog
+
+        run_dialog(OrderDialog(self, self.ctx, row, self.run_action))
+
+    def new_manual_label(self) -> None:
+        """«Nueva guía manual»: pedido manual en Shopify y, después, «Comprar guía» para ese pedido."""
+        from ..manual_label_dialog import run_manual_label
+
+        if not self.ctx.cfg.data.shopify.shop.strip():
+            info(self, tr("Nueva guía manual"), tr("Primero conecta tu tienda en la pantalla Shopify."))
+            return
+        if run_manual_label(self, self.ctx):
+            self.reload()
 
     def _retry(self, row: OrderRow) -> None:
         """«Comprar guía…»: los datos que hagan falta, confirmar, y se compra, se imprime y Shopify queda al día."""

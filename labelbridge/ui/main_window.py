@@ -361,11 +361,15 @@ class MainWindow(QMainWindow):
             QProcess.startDetached(sys.executable, ["-m", "labelbridge", *args], str(Path(__file__).resolve().parents[2]))
         self.quit_app()
 
-    def connect_store(self) -> None:
-        """Pantalla Shopify con la tienda del instalador ya escrita: falta pegar la clave secreta y probar."""
+    def connect_store(self, test: bool = False) -> None:
+        """Pantalla Shopify con la tienda del instalador ya escrita. Con la clave también (test=True), se prueba la
+        conexión y, si funciona, la tienda queda activa; si no, falta pegar la clave secreta y probar."""
         self.show_and_raise()
         self.navigate("shopify")
         page = self.pages["shopify"]
+        if test:
+            page.test_now()
+            return
         field = page.client_secret if not page.client_secret.text() else page.client_id
         field_widget = getattr(field, "edit", field)
         field_widget.setFocus()

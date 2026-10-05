@@ -32,6 +32,7 @@ from ..printing.engine import PrintEngine
 from ..secret_store import SHOPIFY_ACCESS_TOKEN, SHOPIFY_CLIENT_SECRET, SecretStore
 from ..security.policy import PolicyDenied
 from .base import BackgroundService
+from .shopify_orders import MANUAL_TAG, ManualItem, ManualOrders, OrderDetail, ProductChoice, Recipient
 from .orders_overview import (
     ACTION_STATES,
     OVERVIEW_QUERY,
@@ -160,8 +161,10 @@ mutation LabelBridgeTagsAdd($id: ID!, $tags: [String!]!) {
 # App de LabelBridge en el Dev Dashboard de Shopify: permisos para leer pedidos y para comprar guías.
 DEV_DASHBOARD_URL = "https://dev.shopify.com/dashboard"
 SCOPES_BASIC = "read_orders"
+# read_products: elegir productos de la tienda en la guía manual (sin él, solo artículo libre).
 SCOPES_LABELS = (
-    "read_orders,write_orders,read_merchant_managed_fulfillment_orders,write_merchant_managed_fulfillment_orders"
+    "read_orders,write_orders,read_merchant_managed_fulfillment_orders,write_merchant_managed_fulfillment_orders,"
+    "read_products"
 )
 
 
@@ -659,6 +662,9 @@ class ShopifyService(BackgroundService):
         tags = [t.lower() for t in order.get("tags") or []]
         if s.required_tag.strip() and s.required_tag.strip().lower() not in tags:
             return 0
+        # Pedido manual (Nueva guía manual o el asistente): su guía la compra quien lo creó, con confirmación. Lo
+        # automático no lo toca (ni aviso de pedido nuevo, ni etiqueta interna, ni compra).
+        manual = MANUAL_TAG.lower() in tags
         paid_ok = not s.only_paid or order.get("displayFinancialStatus") in PAID_STATUSES
         open_ok = not s.only_unfulfilled or order.get("displayFulfillmentStatus") in OPEN_FULFILLMENT
         is_new = _iso_to_ts(order.get("createdAt", "")) >= since
@@ -666,7 +672,7 @@ class ShopifyService(BackgroundService):
         queued = 0
         announced = self._key(f"order:{legacy}:announced")
         fresh = _iso_to_ts(order.get("createdAt", "")) >= self._announce_since()
-        if is_new and paid_ok and fresh and not self.store.seen(announced):
+        if is_new and paid_ok and fresh and not manual and not self.store.seen(announced):
             self.store.mark_seen(announced)
             self._announce(order, s)
         noted = self.ledger(legacy).get("state")
@@ -677,7 +683,7 @@ class ShopifyService(BackgroundService):
             self._note(legacy, "resolved", name=name)
             noted = "resolved"
 
-        if s.print_order_label and is_new and paid_ok and open_ok:
+        if s.print_order_label and is_new and paid_ok and open_ok and not manual:
             key = self._key(f"order:{legacy}:label")
             if not self.store.seen(key):
                 queued += self._enqueue(
@@ -692,7 +698,7 @@ class ShopifyService(BackgroundService):
                 )
                 self.store.mark_seen(key)
 
-        if s.metafield_label:
+        if s.metafield_label and not manual:
             for url in extract_urls(str((order.get("metafield") or {}).get("value") or "")):
                 digest = hashlib.sha1(url.encode()).hexdigest()[:16]
                 key = self._key(f"order:{legacy}:mf:{digest}")
@@ -709,7 +715,7 @@ class ShopifyService(BackgroundService):
                 )
                 self.store.mark_seen(key)
 
-        if s.buy_shipping_label and is_new and paid_ok and open_ok:
+        if s.buy_shipping_label and is_new and paid_ok and open_ok and not manual:
             rule = rule_for(s.shipping_rules, (order.get("shippingLine") or {}).get("title") or "", subtotal_of(order))
             if rule is not None and not rule.auto:
                 # FedEx (y lo que se marque «en Shopify»): Shopify no deja comprarla por API, nunca otra paquetería.
@@ -933,6 +939,45 @@ class ShopifyService(BackgroundService):
         if queued:
             self.engine.wake()
         return {**self.ledger(legacy), "queued": queued}
+
+    # --- detalle, instrucciones y pedidos manuales (ver shopify_orders) -------------------------
+    @staticmethod
+    def order_gid(order: str) -> str:
+        """«1234», «#1001» no: el número interno o el gid del pedido → gid."""
+        text = str(order).strip()
+        if text.startswith("gid://shopify/Order/"):
+            return text
+        if not text.isdigit():
+            raise ShopifyError(tr("Pedido no válido: {0}", text))
+        return f"gid://shopify/Order/{text}"
+
+    def resolve_order(self, order: str) -> str:
+        """«#1023», «1023» o el número interno → número interno (legacyResourceId)."""
+        return ManualOrders(self.client()).resolve(order).rsplit("/", 1)[-1]
+
+    def order_detail(self, order: str) -> OrderDetail:
+        return ManualOrders(self.client()).detail(self.order_gid(order))
+
+    def set_instructions(self, order: str, text: str, append: bool = False) -> str:
+        """Las instrucciones del pedido (en su nota de Shopify). Devuelve cómo quedaron."""
+        return ManualOrders(self.client()).set_instructions(self.order_gid(order), text, append=append)
+
+    def search_products(self, text: str) -> list[ProductChoice]:
+        return ManualOrders(self.client()).products(text)
+
+    def shop_currency(self) -> str:
+        if not getattr(self, "_currency", ""):
+            self._currency = str(self.client().shop_info().get("currencyCode") or "USD")
+        return self._currency
+
+    def create_manual_order(self, recipient: Recipient, items: list[ManualItem], note: str = "",
+                            decrement: bool = True) -> dict[str, str]:
+        """Crea el pedido manual (marcado, pagado y sin cobrar al cliente). La guía se compra después con
+        buy_label_now, como cualquier pedido: lo automático no lo toca."""
+        created = ManualOrders(self.client()).create(recipient, items, note, decrement=decrement,
+                                                     currency=self.shop_currency())
+        log.info("Pedido manual creado: %s", created.get("name"))
+        return created
 
     def _pending(self) -> dict[str, dict]:
         try:
