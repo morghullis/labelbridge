@@ -216,13 +216,33 @@ def visible_leftovers() -> list[str]:
         orders._render()
         app.processEvents()
         found += [f"[pedidos con datos] {item}" for item in leftovers_in(orders, translated)]
+        from labelbridge.connectors import shipping_services as ss
+
         for row in rows[:2]:
             dialog = PurchaseDialog(window, window.ctx, row)
-            dialog.other_carrier.setChecked(True)
-            found += [f"[comprar guía] {item}" for item in leftovers_in(dialog, translated)]
-            dialog._done({"state": "purchased", "carrier": "USPS", "tracking": "9200"})
-            found += [f"[comprar guía] {item}" for item in leftovers_in(dialog, translated)]
+            for key in (ss.FEDEX, "usps:GroundAdvantage", ss.AUTO):
+                dialog.services.combo.setCurrentIndex(max(0, dialog.services.combo.findData(key)))
+                dialog.package.choice.setCurrentIndex(dialog.package.choice.count() - 1)  # «Otra caja…»
+                dialog.package.weight_choice.setCurrentIndex(1)
+                found += [f"[imprimir guía] {item}" for item in leftovers_in(dialog, translated)]
+            dialog._done({"state": "failed", "reason": "RATES_NOT_FOUND x"})
+            found += [f"[imprimir guía] {item}" for item in leftovers_in(dialog, translated)]
+            dialog._done({"state": "purchased", "carrier": "USPS", "tracking": "9200", "cost": 5.34})
+            found += [f"[imprimir guía] {item}" for item in leftovers_in(dialog, translated)]
             dialog.close()
+        # «Imprimir N guías» con varios pedidos, antes y después de la tanda.
+        from labelbridge.connectors import label_batch as lb
+        from labelbridge.ui.bulk_print_dialog import BulkPrintDialog
+
+        bulk = BulkPrintDialog(window, window.ctx, rows)
+        found += [f"[imprimir guías] {item}" for item in leftovers_in(bulk, translated)]
+        for index, item in enumerate(bulk.items):
+            item.state = {lb.REPRINT: "done", lb.BUY: "failed"}.get(item.plan, "skipped")
+            item.detail = item.detail or item.why or "x"
+            bulk._step(index, item)
+        bulk._finished(lb.BatchSummary(bought=1, reprinted=1, failed=1, skipped=1, cost=5.34, stopped=True))
+        found += [f"[imprimir guías] {item}" for item in leftovers_in(bulk, translated)]
+        bulk.close()
         # «Ver pedido» con un pedido de ejemplo (sin Shopify) y «Nueva guía manual».
         from labelbridge.connectors.shopify_orders import OrderDetail, OrderItem
         from labelbridge.ui.manual_label_dialog import ManualLabelDialog
@@ -232,9 +252,10 @@ def visible_leftovers() -> list[str]:
             gid="gid://shopify/Order/1", legacy="1", name="#1001", financial="PAID", fulfillment="UNFULFILLED",
             customer="Ana", address=["Ana", "1 Main St", "Miami FL 33101"], method="Express", customer_note="x",
             instructions="y", tags=["LabelBridge-manual"], items=[OrderItem("Ring", "7", "R-7", 1, 60.0, shipping=False)],
-            total=60.0, discounts=5.0, tracking=[("USPS", "9400", "https://t")],
+            total=60.0, discounts=5.0, tracking=[("USPS", "9400", "https://t")], orders_count=3, spent=180.0,
+            customer_since="2025-01-01T00:00:00Z", email="ana@example.com",
         )
-        view = OrderDialog(window, window.ctx, rows[0], detail=detail)
+        view = OrderDialog(window, window.ctx, rows[0], orders.run_action, detail=detail)
         view._show(detail)
         found += [f"[ver pedido] {item}" for item in leftovers_in(view, translated)]
         view.close()

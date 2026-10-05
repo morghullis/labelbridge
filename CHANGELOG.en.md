@@ -2,6 +2,16 @@
 
 English version of [CHANGELOG.md](CHANGELOG.md). Each published version shows these notes in the app's update window when the app is in English, and on the English download page.
 
+## 1.11.0
+
+- **Print label, with one button.** In Orders, choose an order and press **Print label**: if it already has a label it reprints it; if not, a short window opens to buy and print it with one click. Orders that don't take a label (store pickup, cancelled, already shipped) say why.
+- **Choose the carrier and service:** USPS Ground Advantage, Priority Mail or Priority Mail Express; UPS Ground, 3 Day Select, 2nd Day Air or Next Day Air; and DHL Express for abroad. Or **Automatic**, which uses the service the customer paid for or your preferred carrier in Shopify. If Shopify doesn't offer that service for the shipment, it says so and charges nothing.
+- **FedEx from the same list:** since Shopify doesn't let apps buy it, choosing it opens the order in Shopify (1 click to buy it) and LabelBridge prints it by itself as soon as it sees it.
+- **Several orders at once:** choose several in the table (Ctrl or Shift + click) and press **Print N labels**. One confirmation: the ones that already have a label are reprinted, the rest are bought with the service and box you choose, and you see each result and the total spent (up to 25 purchases per batch; it can be stopped).
+- More compact buttons in Orders: **Print label**, **View order** and **More** (open in Shopify, track, copy the tracking number). The box is chosen from a list: Shopify's package, **My box** (the one you saved) or another.
+- **New optional permissions** (add them with **Copy permissions** in the Dev Dashboard): `read_shipping` shows only the services Shopify offers for each shipment, `read_inventory` shows the stock in the manual label and `read_customers` tells you in **View order** whether the customer bought before (and their email, if you check **Email** in *Protected customer data*). Without them everything else works the same, and the Shopify screen says which ones are missing.
+- The assistant can also choose the service when buying a label (always with your confirmation) and check which services Shopify offers for an order.
+
 ## 1.10.0
 
 - **View order.** In Orders, double-click (or **View order**) shows what each order has without leaving the app: products with their photo, variant, SKU and personalization (engravings, sizes), shipping address and method, totals, the customer's note, the gift message and tracking.

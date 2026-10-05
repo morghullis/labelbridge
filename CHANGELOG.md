@@ -2,6 +2,16 @@
 
 Cada versión publicada muestra estas notas en la ventana de actualización de la app y en la página de descargas.
 
+## 1.11.0
+
+- **Imprimir guía, con un botón.** En Pedidos eliges un pedido y pulsas **Imprimir guía**: si ya tiene guía la reimprime; si no, abre una ventana corta para comprarla e imprimirla con un clic. Los pedidos sin guía (retiro en tienda, cancelados, ya enviados) dicen por qué.
+- **Elige la paquetería y el servicio:** USPS Ground Advantage, Priority Mail o Priority Mail Express; UPS Ground, 3 Day Select, 2nd Day Air o Next Day Air; y DHL Express para el extranjero. O **Automático**, que usa el servicio que pagó el cliente o tu paquetería preferida en Shopify. Si Shopify no ofrece ese servicio para el envío, avisa y no cobra nada.
+- **FedEx desde la misma lista:** como Shopify no deja que las apps la compren, al elegirla se abre el pedido en Shopify (1 clic para comprarla) y LabelBridge la imprime sola en cuanto la ve.
+- **Varios pedidos a la vez:** eliges varios en la tabla (Ctrl o Mayús + clic) y pulsas **Imprimir N guías**. Una sola confirmación: las que ya tienen guía se reimprimen, las demás se compran con el servicio y la caja que elijas, y ves el resultado de cada una y el total gastado (hasta 25 compras por tanda; se puede detener).
+- Botones más compactos en Pedidos: **Imprimir guía**, **Ver pedido** y **Más** (abrir en Shopify, rastrear, copiar el seguimiento). La caja se elige en una lista: el paquete de Shopify, **Mi caja** (la que guardaste) u otra.
+- **Permisos nuevos opcionales** (agrégalos con **Copiar permisos** en el Dev Dashboard): `read_shipping` muestra solo los servicios que Shopify ofrece para cada envío, `read_inventory` muestra las existencias en la guía manual y `read_customers` dice en **Ver pedido** si el cliente ya compró antes (y su email, si marcas **Email** en *Protected customer data*). Sin ellos todo lo demás funciona igual, y la pantalla Shopify dice cuáles faltan.
+- El asistente también puede elegir el servicio al comprar una guía (siempre con tu confirmación) y consultar qué servicios ofrece Shopify para un pedido.
+
 ## 1.10.0
 
 - **Ver pedido.** En Pedidos, doble clic (o **Ver pedido**) muestra qué tiene cada pedido sin salir de la app: productos con su foto, variante, SKU y personalización (grabados, tallas), dirección y método de envío, totales, la nota del cliente, el mensaje de regalo y el seguimiento.

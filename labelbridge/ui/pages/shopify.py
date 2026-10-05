@@ -19,13 +19,25 @@ from PySide6.QtWidgets import (
 )
 
 from ...config import LABEL_SIZES
-from ...connectors.shopify import ShopifyError, normalize_shop
+from ...connectors.shopify import SCOPES_LABELS, ShopifyError, normalize_shop
 from ...events import CONFIG_EXTERNAL
 from ...i18n import date_text, tr
 from ...paths import resource_path
 from ...secret_store import SHOPIFY_ACCESS_TOKEN, SHOPIFY_CLIENT_SECRET
 from ..context import AppContext
-from ..widgets import Card, Page, Pill, SecretField, SwitchRow, button, confirm, error, label, run_async
+from ..widgets import (
+    Card,
+    Page,
+    Pill,
+    SecretField,
+    SwitchRow,
+    button,
+    confirm,
+    copy_to_clipboard,
+    error,
+    label,
+    run_async,
+)
 
 
 def printer_combo(ctx: AppContext, current: str) -> QComboBox:
@@ -97,8 +109,14 @@ class ShopifyPage(Page):
         self.test_btn.clicked.connect(self._test)
         guide = button(tr("Cómo crear la app en Shopify"), "file", "ghost")
         guide.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(resource_path("docs", "SHOPIFY.md")))))
+        # Permisos que le faltan a la app: se copian para pegarlos en el Dev Dashboard.
+        self.scopes_btn = button(tr("Copiar permisos"), "copy", "ghost",
+                                 tr("Copia la lista de permisos para pegarla en la app del Dev Dashboard"))
+        self.scopes_btn.clicked.connect(lambda: copy_to_clipboard(SCOPES_LABELS))
+        self.scopes_btn.setVisible(False)
         row.addWidget(self.test_btn)
         row.addWidget(guide)
+        row.addWidget(self.scopes_btn)
         row.addStretch(1)
         conn.add(layout=row)
         self.add(conn)
@@ -401,6 +419,11 @@ class ShopifyPage(Page):
             text += tr("\n✓ La tienda quedó activa: LabelBridge ya revisa sus pedidos.")
         if data.get("missing"):
             text += tr("\n⚠ Faltan permisos: ") + ", ".join(data["missing"])
+        if data.get("optional_missing"):
+            text += tr("\nOpcionales que aún no tiene la app (lo demás funciona igual): ") + ", ".join(
+                data["optional_missing"]) + tr(". Agrégalos con «Copiar permisos» en el Dev Dashboard y aprueba la "
+                                               "versión nueva de la app.")
+        self.scopes_btn.setVisible(bool(data.get("missing") or data.get("optional_missing")))
         self.result.setObjectName("Warning" if data.get("missing") else "Hint")
         self.result.setStyleSheet("")
         self.result.setText(text)

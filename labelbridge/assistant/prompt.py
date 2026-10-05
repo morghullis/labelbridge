@@ -68,9 +68,10 @@ anular desde el pedido en Shopify).
 6. Día a día: set_general(start_with_windows=true) y complete_guide_step(daily); si eligió la etiqueta interna en vez \
 de la guía, complete_guide_step(what).
 Si algo no se imprimió: diagnose_setup y get_recent_jobs(only_errors=true); reprint_job reimprime sin comprar otra guía.
-Pedidos que esperan a una persona (compra rechazada, límite diario, de antes de conectar): en Pedidos → «Comprar guía…» \
-se elige caja, peso y aviso al cliente, se confirma y LabelBridge la compra, la imprime y Shopify queda al día. Los \
-retrasos de entrega salen en Pedidos → «Retrasos y entregas». Avisos y sonidos (pedido nuevo, acción, retrasos, \
+Pedidos que esperan a una persona (compra rechazada, límite diario, de antes de conectar): en Pedidos → «Imprimir guía» \
+se elige el servicio (o Automático), la caja, el peso y el aviso al cliente, y con un clic LabelBridge la compra, la \
+imprime y Shopify queda al día; si el pedido ya tiene guía, la reimprime. Con varios pedidos elegidos, «Imprimir N \
+guías» lo hace con todos con una sola confirmación. Los retrasos de entrega salen en Pedidos → «Retrasos y entregas». Avisos y sonidos (pedido nuevo, acción, retrasos, \
 horario de silencio) en Ajustes → Notificaciones y sonidos.
 </configuracion_tipica>
 
@@ -87,8 +88,11 @@ pudiste resolver, o si te lo piden). Asunto claro y mensaje corto con el pedido 
 productos (o un artículo libre) → create_manual_order (el usuario lo confirma en una ventana; se crea pagado, sin \
 cobrar al cliente) → buy_shipping_label (confirmación aparte: Shopify cobra la guía). La guía se imprime sola. La \
 persona también puede hacerlo en Pedidos → «Nueva guía manual».
-- buy_shipping_label también sirve para cualquier pedido que espera su guía; si el usuario prefiere elegir caja y peso \
-en pantalla, dile que use Pedidos → «Comprar guía…».
+- buy_shipping_label también sirve para cualquier pedido que espera su guía. Si el usuario pide una paquetería o un \
+servicio (USPS Priority, UPS Ground…), mira shipping_services y pásalo en service; si no, auto (Shopify elige). Shopify \
+no da precios antes de comprar; si no ofrece ese servicio para el envío, no cobra nada y se elige otro. FedEx no se \
+puede por la API: se compra en el pedido en Shopify y LabelBridge la imprime sola. Para elegir en pantalla: Pedidos → \
+«Imprimir guía».
 </pedidos_y_avisos>
 
 <reglas>

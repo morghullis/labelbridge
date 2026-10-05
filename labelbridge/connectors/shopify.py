@@ -25,13 +25,14 @@ from urllib.parse import urlencode, urlparse
 from .. import events as ev
 from .. import net
 from ..config import ConfigManager, ShopifySettings
-from ..i18n import tr
+from ..i18n import N_, tr
 from ..jobstore import JobStore
 from ..models import JobRequest
 from ..printing.engine import PrintEngine
 from ..secret_store import SHOPIFY_ACCESS_TOKEN, SHOPIFY_CLIENT_SECRET, SecretStore
 from ..security.policy import PolicyDenied
 from .base import BackgroundService
+from .shipping_services import AUTO, Route, is_domestic, offered_services, selection
 from .shopify_orders import MANUAL_TAG, ManualItem, ManualOrders, OrderDetail, ProductChoice, Recipient
 from .orders_overview import (
     ACTION_STATES,
@@ -157,15 +158,49 @@ mutation LabelBridgeTagsAdd($id: ID!, $tags: [String!]!) {
 }
 """
 
+# De dónde sale y adónde va un pedido, para preguntar a Shopify qué servicios ofrece en ese envío.
+ROUTE_QUERY = """
+query LabelBridgeRoute($id: ID!) {
+  order(id: $id) {
+    shippingAddress { countryCodeV2 }
+    fulfillmentOrders(first: 10) {
+      nodes { status deliveryMethod { methodType } assignedLocation { countryCode location { id } } }
+    }
+  }
+}
+"""
+# Sin permiso para leer la sucursal: el país de salida alcanza para separar nacional e internacional.
+ROUTE_QUERY_BASIC = ROUTE_QUERY.replace(" location { id }", "")
+
+# Paqueterías de la tienda y sus servicios para esa ruta (read_shipping). Su «name» es el carrierCode de la compra.
+SERVICES_QUERY = """
+query LabelBridgeServices($origins: [ID!], $countries: [CountryCode!]) {
+  availableCarrierServices {
+    carrierService {
+      name
+      availableServicesForCountries(origins: $origins, countryCodes: $countries, restOfWorld: false) { name }
+    }
+  }
+}
+"""
+
 
 # App de LabelBridge en el Dev Dashboard de Shopify: permisos para leer pedidos y para comprar guías.
 DEV_DASHBOARD_URL = "https://dev.shopify.com/dashboard"
 SCOPES_BASIC = "read_orders"
-# read_products: elegir productos de la tienda en la guía manual (sin él, solo artículo libre).
+# Opcionales (sin ellos, lo demás funciona igual): read_products elige productos de la tienda en la guía manual y
+# read_inventory muestra sus existencias; read_shipping muestra solo los servicios que Shopify ofrece en cada envío;
+# read_customers dice en «Ver pedido» si el cliente ya compró antes.
 SCOPES_LABELS = (
     "read_orders,write_orders,read_merchant_managed_fulfillment_orders,write_merchant_managed_fulfillment_orders,"
-    "read_products"
+    "read_products,read_inventory,read_shipping,read_customers"
 )
+OPTIONAL_SCOPES = {
+    "read_products": N_("elegir productos de la tienda en la guía manual"),
+    "read_inventory": N_("ver las existencias en la guía manual"),
+    "read_shipping": N_("ver solo los servicios que Shopify ofrece en cada envío"),
+    "read_customers": N_("saber si el cliente ya compró antes"),
+}
 
 
 class ShopifyError(Exception):
@@ -257,6 +292,7 @@ class ShopifyClient:
         self._token_expiry = 0.0
         self.granted_scopes = ""
         self._token_lock = threading.Lock()
+        self._fallbacks: dict[str, tuple[int, str]] = {}  # graphql_first: qué consulta funcionó, con qué permisos
 
     # --- autenticación ---------------------------------------------------------------
     def access_token(self, force: bool = False) -> str:
@@ -308,10 +344,14 @@ class ShopifyClient:
         variables: dict[str, Any] | None = None,
         *,
         mutation: bool = False,
+        optional: tuple[str, ...] = (),
         _retry: int = 0,
         _refresh: bool = False,
     ) -> dict[str, Any]:
-        """mutation=True: nunca se reintenta algo que Shopify pudo haber ejecutado (evita compras dobles)."""
+        """mutation=True: nunca se reintenta algo que Shopify pudo haber ejecutado (evita compras dobles).
+
+        optional: campos con datos protegidos de clientes (p. ej. «email»). Si Shopify no los aprobó para la app, los
+        devuelve vacíos con un aviso en vez de fallar: se usa el resto de la respuesta."""
         resp = net.request(
             "POST",
             f"https://{self.shop}/admin/api/{self.api_version}/graphql.json",
@@ -321,7 +361,7 @@ class ShopifyClient:
             raise_for_status=False,
         )
         if resp.status == 401 and self.auth_mode != "token" and not _refresh:
-            return self.graphql(query, variables, mutation=mutation, _retry=_retry, _refresh=True)
+            return self.graphql(query, variables, mutation=mutation, optional=optional, _retry=_retry, _refresh=True)
         if resp.status == 401:
             raise ShopifyError(tr("Token inválido o revocado (HTTP 401)"))
         if resp.status == 402:
@@ -330,7 +370,7 @@ class ShopifyClient:
             raise ShopifyError(tr("Tienda o versión de API no encontrada ({0}, {1})", self.shop, self.api_version))
         if (resp.status == 429 or (resp.status == 503 and not mutation)) and _retry < 3:
             time.sleep(float(resp.headers.get("retry-after", "2") or 2))
-            return self.graphql(query, variables, mutation=mutation, _retry=_retry + 1)
+            return self.graphql(query, variables, mutation=mutation, optional=optional, _retry=_retry + 1)
         if resp.status >= 400:
             raise ShopifyError(
                 tr("HTTP {0}: {1}", resp.status, resp.body[:300].decode('utf-8', 'replace')), uncertain=resp.status >= 500
@@ -341,13 +381,39 @@ class ShopifyClient:
             codes = {(e.get("extensions") or {}).get("code") for e in errors}
             if "THROTTLED" in codes and _retry < 3:  # rechazada antes de ejecutarse: reintentar es seguro
                 time.sleep(2 + _retry * 2)
-                return self.graphql(query, variables, mutation=mutation, _retry=_retry + 1)
+                return self.graphql(query, variables, mutation=mutation, optional=optional, _retry=_retry + 1)
+            if optional and payload.get("data") and all(
+                set(map(str, e.get("path") or [])) & set(optional) for e in errors
+            ):
+                log.info("Shopify: datos protegidos sin aprobar para la app (llegan vacíos): %s",
+                         "; ".join(str(e.get("message", "")) for e in errors)[:300])
+                return payload["data"]
             messages = "; ".join(str(e.get("message", e)) for e in errors)
             denied = "access denied" in messages.lower() or "ACCESS_DENIED" in codes
             if denied:
                 messages += tr(" (faltan permisos/scopes en la app de Shopify)")
             raise ShopifyError(messages, uncertain="INTERNAL_SERVER_ERROR" in codes, code="access_denied" if denied else "")
         return payload.get("data") or {}
+
+    def graphql_first(
+        self, queries: tuple[str, ...], variables: dict[str, Any] | None = None, *, optional: tuple[str, ...] = ()
+    ) -> dict[str, Any]:
+        """La primera de las consultas que la app puede hacer: las primeras piden permisos que quizá no tiene (y las
+        siguientes, menos). Recuerda cuál funcionó para no volver a probar las otras mientras no cambien los permisos."""
+        key = queries[0]
+        index, scopes = self._fallbacks.get(key, (0, self.granted_scopes))
+        if scopes != self.granted_scopes:
+            index = 0
+        for position in range(index, len(queries)):
+            try:
+                data = self.graphql(queries[position], variables, optional=optional)
+            except ShopifyError as exc:
+                if exc.code != "access_denied" or position == len(queries) - 1:
+                    raise
+                continue
+            self._fallbacks[key] = (position, self.granted_scopes)
+            return data
+        return {}
 
     # --- operaciones -----------------------------------------------------------------------
     def shop_info(self) -> dict[str, Any]:
@@ -422,10 +488,11 @@ class ShopifyClient:
 
     def purchase_label(
         self, fulfillment_order_id: str, notify_customer: bool, *, package: dict | None = None,
-        total_weight: dict | None = None,
+        total_weight: dict | None = None, preferred: dict | None = None,
     ) -> str:
         """Compra la guía con Shopify Shipping. Sin `package`/`total_weight`, Shopify usa su paquete predeterminado y
-        calcula el peso con los productos."""
+        calcula el peso con los productos. Sin `preferred` (paquetería y servicio), Shopify elige: el servicio que pagó
+        el cliente o la paquetería preferida de la tienda."""
         ship_at = (datetime.now(timezone.utc) + timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%SZ")
         purchase: dict[str, Any] = {
             "fulfillmentOrderId": fulfillment_order_id,
@@ -436,6 +503,8 @@ class ShopifyClient:
             purchase["packageInfo"] = {"customPackage": package}
         if total_weight:
             purchase["totalWeight"] = total_weight
+        if preferred:
+            purchase["preferredRateSelection"] = preferred
         data = self.graphql(PURCHASE_MUTATION, {"input": purchase}, mutation=True)
         result = data.get("shippingLabelPurchase") or {}
         errors = result.get("userErrors") or []
@@ -457,6 +526,21 @@ class ShopifyClient:
         """Una guía con su seguimiento y sus documentos (PDF/ZPL) para imprimir."""
         gid = label_id if str(label_id).startswith("gid://") else f"gid://shopify/ShippingLabel/{label_id}"
         return self.graphql(SHIPPING_LABEL_QUERY, {"id": gid}).get("shippingLabel") or {}
+
+    def route(self, order_gid: str) -> tuple[str, str, str]:
+        """(sucursal de salida, país de salida, país de destino) del envío pendiente del pedido («» si no se sabe)."""
+        order = self.graphql_first((ROUTE_QUERY, ROUTE_QUERY_BASIC), {"id": order_gid}).get("order") or {}
+        destination = str((order.get("shippingAddress") or {}).get("countryCodeV2") or "")
+        nodes = (order.get("fulfillmentOrders") or {}).get("nodes") or []
+        # La sucursal del envío pendiente (o, si no hay, la de cualquiera: el país de salida es el mismo).
+        for fo in sorted(nodes, key=lambda fo: fo.get("status") not in ("OPEN", "IN_PROGRESS")):
+            place = fo.get("assignedLocation") or {}
+            return str((place.get("location") or {}).get("id") or ""), str(place.get("countryCode") or ""), destination
+        return "", "", destination
+
+    def carrier_services(self, origin_id: str, country: str) -> dict[str, set[str]]:
+        """Qué servicios ofrece Shopify desde esa sucursal a ese país, por paquetería (permiso read_shipping)."""
+        return offered_services(self.graphql(SERVICES_QUERY, {"origins": [origin_id], "countries": [country]}))
 
     def add_tags(self, order_gid: str, tags: list[str]) -> None:
         data = self.graphql(TAGS_ADD_MUTATION, {"id": order_gid, "tags": tags}, mutation=True)
@@ -675,10 +759,12 @@ class ShopifyService(BackgroundService):
         if is_new and paid_ok and fresh and not manual and not self.store.seen(announced):
             self.store.mark_seen(announced)
             self._announce(order, s)
-        noted = self.ledger(legacy).get("state")
+        entry = self.ledger(legacy)
+        noted = entry.get("state")
         if noted in ACTION_STATES and order.get("displayFulfillmentStatus") not in OPEN_FULFILLMENT:
             # Se resolvió en Shopify (guía comprada ahí, p. ej. la de FedEx, o enviado): su guía se trae y se imprime.
-            if s.buy_shipping_label:
+            # También si la compra automática está apagada pero alguien eligió «comprarla en Shopify» en la app.
+            if s.buy_shipping_label or entry.get("fetch"):
                 self._queue_fetch(legacy, meta)
             self._note(legacy, "resolved", name=name)
             noted = "resolved"
@@ -805,9 +891,10 @@ class ShopifyService(BackgroundService):
         manual = options is not None
         if manual:
             package, weight, notify = options.get("package"), options.get("total_weight"), options.get("notify")
+            preferred = selection(options.get("service") or AUTO)
         else:
             package = package_input(s.package) if s.package.use_custom and s.package.auto else None
-            weight, notify = None, s.notify_customer
+            weight, notify, preferred = None, s.notify_customer, None
         if fulfillment_orders is None:
             fulfillment_orders = client.fulfillment_orders(order["id"])
         for fo in fulfillment_orders:
@@ -842,18 +929,20 @@ class ShopifyService(BackgroundService):
             # La compra se registra ANTES de pedirla: si algo falla a mitad, nunca se compra dos veces.
             self.store.mark_seen(key)
             try:
-                result_id = client.purchase_label(fo_id, bool(notify), package=package, total_weight=weight)
+                result_id = client.purchase_label(fo_id, bool(notify), package=package, total_weight=weight,
+                                                  preferred=preferred)
             except PurchaseRejected as exc:
                 # Shopify contestó que no compró: se puede volver a intentar (p. ej. tras corregir el paquete).
                 self.store.unmark_seen(key)
                 self._note(meta["order_id"], "failed", name=meta["order_name"], reason=str(exc))
                 log.error("Shopify rechazó la compra de la etiqueta de %s: %s", meta["order_name"], exc)
-                self.events.notify(
-                    tr("No se pudo comprar la etiqueta"),
-                    tr("{0}: {1}. Corrígelo y pulsa «Comprar guía…» en la pestaña Pedidos.", meta['order_name'],
-                       friendly_reason(str(exc))),
-                    "error", kind="action",
-                )
+                if not manual:  # quien la pidió desde la app ya ve el motivo en su ventana
+                    self.events.notify(
+                        tr("No se pudo comprar la etiqueta"),
+                        tr("{0}: {1}. Corrígelo y pulsa «Imprimir guía» en la pestaña Pedidos.", meta['order_name'],
+                           friendly_reason(str(exc))),
+                        "error", kind="action",
+                    )
                 continue
             except (ShopifyError, net.NetworkError, net.HttpError) as exc:
                 if not getattr(exc, "uncertain", False) and not getattr(exc, "maybe_sent", False):
@@ -899,16 +988,17 @@ class ShopifyService(BackgroundService):
 
     def buy_label_now(
         self, legacy: str, *, package: dict | None = None, total_weight: dict | None = None, notify: bool | None = None,
-        wait: float = 45,
+        service: str = AUTO, wait: float = 45,
     ) -> dict:
-        """«Comprar guía» desde Pedidos, confirmada por la persona: compra con Shopify Shipping (aunque se haya
-        llegado al límite diario o a los intentos automáticos), espera el resultado y la imprime. Shopify deja el
-        pedido preparado con su número de seguimiento.
+        """«Imprimir guía» desde Pedidos, confirmada por la persona: compra con Shopify Shipping (aunque se haya
+        llegado al límite diario o a los intentos automáticos) con el servicio elegido (AUTO: el que elija Shopify),
+        espera el resultado y la imprime. Shopify deja el pedido preparado con su número de seguimiento.
 
-        Devuelve el registro del pedido: state purchased (carrier, tracking), failed (reason) o purchasing."""
+        Devuelve el registro del pedido: state purchased (carrier, tracking y, si Shopify ya lo anotó, cost), failed
+        (reason) o purchasing."""
         s = self.cfg.data.shopify
         client = self.client()
-        options = {"package": package, "total_weight": total_weight,
+        options = {"package": package, "total_weight": total_weight, "service": service,
                    "notify": s.notify_customer if notify is None else bool(notify)}
         # Todo dentro del candado del ciclo: la compra automática no puede comprar este pedido al mismo tiempo.
         with self._cycle_lock:
@@ -938,7 +1028,15 @@ class ShopifyService(BackgroundService):
                                       fulfillment_orders=fresh, wait=wait)
         if queued:
             self.engine.wake()
-        return {**self.ledger(legacy), "queued": queued}
+        entry = {**self.ledger(legacy), "queued": queued}
+        if entry.get("state") == "purchased" and entry.get("label"):
+            try:  # lo que costó, según el historial del pedido (si Shopify ya lo anotó)
+                cost = client.order_labels(str(order["id"])).get(str(entry["label"]), {}).get("cost")
+            except (ShopifyError, net.NetworkError, net.HttpError):
+                cost = None
+            if cost:
+                entry["cost"] = cost
+        return entry
 
     # --- detalle, instrucciones y pedidos manuales (ver shopify_orders) -------------------------
     @staticmethod
@@ -1011,11 +1109,12 @@ class ShopifyService(BackgroundService):
                     queued += new_jobs
                     if documents:
                         pending.pop(result_id)
-                        tracking = ((result.get("shippingLabels") or [{}])[0].get("trackingInfo") or {})
+                        label = (result.get("shippingLabels") or [{}])[0]
+                        tracking = label.get("trackingInfo") or {}
                         self._note(
                             info.get("order_id", ""), "purchased", name=info.get("order_name"),
                             carrier=tracking.get("company"), tracking=tracking.get("number"),
-                            tracking_url=tracking.get("url"),
+                            tracking_url=tracking.get("url"), label=str(label.get("id") or "").rsplit("/", 1)[-1],
                         )
                     elif age > 600:
                         self._note(info.get("order_id", ""), "no_document", name=info.get("order_name"))
@@ -1119,7 +1218,7 @@ class ShopifyService(BackgroundService):
         )
 
     def print_order_labels(self, legacy: str, name: str) -> int:
-        """«Reimprimir guía» en Pedidos cuando LabelBridge no tiene el PDF (p. ej. se compró en Shopify)."""
+        """«Imprimir guía» de un pedido cuya guía LabelBridge no tiene (p. ej. se compró en Shopify): se trae de ahí."""
         meta = {"order_gid": f"gid://shopify/Order/{int(legacy)}", "order_name": name, "order_id": str(legacy)}
         found, missing, queued = self._print_bought_labels(self.client(), meta)
         if not found:
@@ -1129,6 +1228,47 @@ class ShopifyService(BackgroundService):
         if queued:
             self.engine.wake()
         return queued
+
+    def reprint_label(self, legacy: str, name: str) -> int:
+        """«Imprimir guía» de un pedido que ya tiene guía: la última que imprimió LabelBridge (con su formulario de
+        aduana, si tiene) vuelve a la cola; si se compró en Shopify, se trae de ahí. Devuelve los trabajos en cola."""
+        latest: dict[str, list[dict]] = {}
+        for job in self.store.list(limit=3000):
+            meta = job.get("meta") or {}
+            external = str(job.get("external_id") or "")
+            if (job.get("source") != "shopify" or str(meta.get("order_id")) != str(legacy) or "tracking" not in meta
+                    or not external.startswith("shipping-")):
+                continue
+            latest.setdefault(external.split("-")[1], []).append(job)
+        if not latest:
+            return self.print_order_labels(legacy, name)
+        jobs = max(latest.values(), key=lambda group: max(job.get("created_at") or 0 for job in group))
+        queued = sum(1 for job in sorted(jobs, key=lambda job: job.get("external_id") or "")
+                     if self.store.reprint(job["id"]))
+        if not queued:
+            raise ShopifyError(tr("No se pudo volver a poner la guía en la cola de impresión."))
+        self.engine.wake()
+        return queued
+
+    def buy_in_shopify(self, legacy: str, name: str, carrier: str = "FedEx") -> None:
+        """La persona eligió una paquetería que se compra en Shopify (FedEx): el pedido queda esperándola y, cuando
+        Shopify lo marca preparado, LabelBridge trae la guía y la imprime sola."""
+        if self.ledger(legacy).get("state") not in ("purchasing", "uncertain", "purchased"):
+            self._note(legacy, "manual", name=name, carrier=carrier, fetch=1)
+
+    def shipping_route(self, legacy: str) -> Route:
+        """Si el envío es nacional y qué servicios ofrece Shopify para él (con read_shipping). Sin ese permiso, la
+        lista muestra todos los servicios del tipo de envío."""
+        client = self.client()
+        origin, origin_country, destination = client.route(self.order_gid(legacy))
+        route = Route(domestic=is_domestic(origin_country, destination), destination=destination)
+        if origin and destination:
+            try:
+                route.offered = client.carrier_services(origin, destination) or None
+            except ShopifyError as exc:
+                if exc.code != "access_denied":
+                    raise
+        return route
 
     def _enqueue_documents(self, result: dict, info: dict) -> tuple[int, int]:
         """Encola los documentos con URL. Devuelve (documentos con URL, trabajos nuevos)."""
@@ -1191,18 +1331,21 @@ class ShopifyService(BackgroundService):
         client = ShopifyClient(self.cfg.data.shopify, self.secrets)
         info = client.shop_info()
         scopes = set(info.get("scopes") or [])
-        needed = {"read_orders": "leer pedidos"}
+        needed = {"read_orders": N_("leer pedidos")}
         settings = self.cfg.data.shopify
         if settings.buy_shipping_label:
             needed.update(
                 {
-                    "write_orders": "comprar etiquetas",
-                    "write_merchant_managed_fulfillment_orders": "comprar etiquetas",
+                    "write_orders": N_("comprar etiquetas"),
+                    "write_merchant_managed_fulfillment_orders": N_("comprar etiquetas"),
                 }
             )
         if settings.tag_after_print:
-            needed["write_orders"] = "agregar tags"
+            needed["write_orders"] = N_("agregar tags")
         implied = {s.replace("write_", "read_") for s in scopes if s.startswith("write_")}
-        missing = [f"{scope} ({why})" for scope, why in needed.items() if scope not in scopes | implied]
+        missing = [f"{scope} ({tr(why)})" for scope, why in needed.items() if scope not in scopes | implied]
         info["missing"] = missing
+        info["optional_missing"] = [f"{scope} ({tr(why)})" for scope, why in OPTIONAL_SCOPES.items()
+                                    if scope not in scopes | implied]
+        self._client = client  # desde ya, con su token nuevo: con los permisos que se acaban de aprobar
         return info

@@ -7,7 +7,7 @@ import threading
 import pytest
 
 from labelbridge.connectors import shopify_orders as so
-from labelbridge.connectors.shopify import ShopifyError, ShopifyService
+from labelbridge.connectors.shopify import ShopifyClient, ShopifyError, ShopifyService
 from labelbridge.connectors.shopify_orders import ManualItem, ManualOrders, Recipient
 
 # --- instrucciones en la nota ----------------------------------------------------------------------
@@ -66,12 +66,16 @@ def test_manual_order_problems_are_explained():
 
 
 class FakeClient:
+    granted_scopes = ""
+    graphql_first = ShopifyClient.graphql_first  # la de verdad: prueba las consultas en orden
+
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict]] = []
         self.answers: dict[str, dict] = {}
         self.fos: list[dict] = [{"id": "gid://shopify/FulfillmentOrder/1", "status": "OPEN"}]
+        self._fallbacks: dict = {}
 
-    def graphql(self, query: str, variables: dict | None = None, *, mutation: bool = False) -> dict:
+    def graphql(self, query: str, variables: dict | None = None, *, mutation: bool = False, optional=()) -> dict:
         name = query.split("(")[0].split()[-1]
         self.calls.append((name, variables or {}))
         return self.answers.get(name, {})
@@ -212,7 +216,7 @@ def test_the_automatic_cycle_leaves_manual_orders_alone(core):
 
 def test_order_detail_works_without_fulfillment_permissions():
     class Client(FakeClient):
-        def graphql(self, query, variables=None, *, mutation=False):
+        def graphql(self, query, variables=None, *, mutation=False, optional=()):
             if "fulfillments" in query:
                 raise ShopifyError("Access denied for fulfillments", code="access_denied")
             return {"order": {"id": "gid://shopify/Order/7", "name": "#7", "lineItems": {"nodes": []}}}

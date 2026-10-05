@@ -177,6 +177,7 @@ class PackageSettings:
     """Caja propia para las guías (medidas de fuera y peso de la caja vacía). Sin ella, el paquete de Shopify."""
 
     use_custom: bool = False  # al comprar desde LabelBridge, esta caja en vez del paquete predeterminado de Shopify
+    saved: bool = False  # la persona guardó esta caja («Recordar esta caja»): sale como «Mi caja» al imprimir guías
     auto: bool = False  # también en las compras automáticas
     type: str = "BOX"  # PACKAGE_TYPES
     length: float = 6.0

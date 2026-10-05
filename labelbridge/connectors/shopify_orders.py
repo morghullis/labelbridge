@@ -1,9 +1,9 @@
 """Pedidos en detalle, pedidos manuales e instrucciones de cada pedido (Pedidos → «Ver pedido», «Nueva guía manual» y
 el asistente).
 
-- El detalle se pide a Shopify al abrir un pedido (productos, cliente, dirección, totales, notas y envíos). Solo
-  datos protegidos que la app ya tiene aprobados (nombre, dirección y teléfono de envío): sin el cliente ni su email,
-  que pedirían otros permisos y harían fallar toda la consulta.
+- El detalle se pide a Shopify al abrir un pedido (productos, cliente, dirección, totales, notas y envíos). Con
+  read_customers dice además si el cliente ya compró antes, y su email si Shopify aprobó ese dato para la app: lo
+  que la app no tiene llega vacío (o se pide sin esa parte) y el resto se muestra igual.
 - Una guía manual necesita un pedido: Shopify Shipping solo vende guías de pedidos. Se crea uno marcado MANUAL_TAG,
   pagado y sin cobrar al cliente (precios en 0), con productos de la tienda o un artículo libre; la compra automática
   lo deja pasar (la guía la compra quien la pidió, con confirmación).
@@ -57,6 +57,11 @@ query LabelBridgeOrderDetail($id: ID!) {
 ORDER_DETAIL_QUERY_BASIC = ORDER_DETAIL_QUERY.replace(
     "    fulfillments(first: 10) { status createdAt displayStatus trackingInfo { company number url } }\n", ""
 )
+# Con read_customers: si ya compró antes y desde cuándo es cliente; el email, si Shopify lo aprobó para la app.
+CUSTOMER_FIELDS = "    email\n    customer { numberOfOrders amountSpent { amount currencyCode } createdAt }\n"
+ORDER_DETAIL_QUERY_CUSTOMER = ORDER_DETAIL_QUERY.replace("    note tags\n", "    note tags\n" + CUSTOMER_FIELDS)
+DETAIL_QUERIES = (ORDER_DETAIL_QUERY_CUSTOMER, ORDER_DETAIL_QUERY, ORDER_DETAIL_QUERY_BASIC)
+PROTECTED_FIELDS = ("email", "customer")  # datos protegidos: si Shopify no los aprobó, llegan vacíos
 
 ORDER_LOOKUP_QUERY = """
 query LabelBridgeOrderLookup($query: String!) {
@@ -80,11 +85,13 @@ query LabelBridgeProducts($query: String!) {
     nodes {
       id title status
       featuredMedia { preview { image { url(transform: {maxWidth: 120, maxHeight: 120}) } } }
-      variants(first: 30) { nodes { id title sku price } }
+      variants(first: 30) { nodes { id title sku price inventoryQuantity inventoryPolicy inventoryItem { tracked } } }
     }
   }
 }
 """
+# Sin read_inventory: los productos sin sus existencias.
+PRODUCTS_QUERY_BASIC = PRODUCTS_QUERY.replace(" inventoryQuantity inventoryPolicy inventoryItem { tracked }", "")
 
 ORDER_CREATE_MUTATION = """
 mutation LabelBridgeManualOrder($order: OrderCreateOrderInput!, $options: OrderCreateOptionsInput) {
@@ -145,11 +152,15 @@ def with_instructions(note: str | None, text: str, append: bool = False) -> str:
 
 # --- detalle -----------------------------------------------------------------------------------
 
-def _money(value: Any) -> float:
+def _amount(value: Any) -> float:
     try:
-        return float(((value or {}).get("shopMoney") or {}).get("amount") or 0)
+        return float(value or 0)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _money(value: Any) -> float:
+    return _amount(((value or {}).get("shopMoney") or {}).get("amount"))
 
 
 @dataclass
@@ -190,6 +201,9 @@ class OrderDetail:
     total: float = 0.0
     currency: str = "USD"
     tracking: list[tuple[str, str, str]] = field(default_factory=list)  # (paquetería, número, enlace)
+    orders_count: int = 0  # pedidos del cliente en la tienda (0: no se sabe)
+    customer_since: str = ""  # fecha ISO
+    spent: float = 0.0  # lo que lleva gastado en la tienda
 
     @property
     def manual(self) -> bool:
@@ -245,6 +259,11 @@ def parse_detail(order: dict) -> OrderDetail:
                         if a.get("key") and not str(a.get("key")).startswith("_")],
             shipping=bool(node.get("requiresShipping", True)),
         ))
+    customer = order.get("customer") or {}
+    try:
+        orders_count = int(customer.get("numberOfOrders") or 0)
+    except (TypeError, ValueError):
+        orders_count = 0
     tracking = []
     for fulfillment in order.get("fulfillments") or []:
         for info in fulfillment.get("trackingInfo") or []:
@@ -260,6 +279,7 @@ def parse_detail(order: dict) -> OrderDetail:
         financial=str(order.get("displayFinancialStatus") or ""),
         fulfillment=str(order.get("displayFulfillmentStatus") or ""),
         customer=str(address.get("name") or ""),
+        email=str(order.get("email") or ""),
         phone=str(address.get("phone") or ""),
         address=lines,
         method=str((order.get("shippingLine") or {}).get("title") or ""),
@@ -276,6 +296,9 @@ def parse_detail(order: dict) -> OrderDetail:
         total=_money(total),
         currency=str((total.get("shopMoney") or {}).get("currencyCode") or "USD"),
         tracking=tracking,
+        orders_count=orders_count,
+        customer_since=str(customer.get("createdAt") or ""),
+        spent=_amount((customer.get("amountSpent") or {}).get("amount")),
     )
 
 
@@ -288,6 +311,16 @@ class ProductChoice:
     sku: str = ""
     price: float = 0.0
     image: str = ""
+    stock: int | None = None  # existencias (None: sin read_inventory o sin seguimiento de inventario)
+    oversell: bool = False  # se puede vender sin existencias
+
+    @property
+    def stock_text(self) -> str:
+        if self.stock is None:
+            return ""
+        if self.stock <= 0:
+            return tr("sin existencias") + (tr(" (se puede vender igual)") if self.oversell else "")
+        return tr("{0} en existencia", self.stock)
 
 
 def parse_products(data: dict) -> list[ProductChoice]:
@@ -304,8 +337,11 @@ def parse_products(data: dict) -> list[ProductChoice]:
                 price = float(variant.get("price") or 0)
             except (TypeError, ValueError):
                 price = 0.0
+            tracked = (variant.get("inventoryItem") or {}).get("tracked")
+            quantity = variant.get("inventoryQuantity")
+            stock = int(quantity) if tracked and isinstance(quantity, (int, float)) else None
             choices.append(ProductChoice(str(variant.get("id") or ""), name, str(variant.get("sku") or ""), price,
-                                         str(image)))
+                                         str(image), stock, variant.get("inventoryPolicy") == "CONTINUE"))
     return choices
 
 
@@ -432,12 +468,7 @@ class ManualOrders:
     def detail(self, order_gid: str) -> OrderDetail:
         from .shopify import ShopifyError
 
-        try:
-            data = self.client.graphql(ORDER_DETAIL_QUERY, {"id": order_gid})
-        except ShopifyError as exc:
-            if exc.code != "access_denied":
-                raise
-            data = self.client.graphql(ORDER_DETAIL_QUERY_BASIC, {"id": order_gid})
+        data = self.client.graphql_first(DETAIL_QUERIES, {"id": order_gid}, optional=PROTECTED_FIELDS)
         order = (data or {}).get("order")
         if not order:
             raise ShopifyError(tr("Shopify no encontró ese pedido."))
@@ -447,7 +478,7 @@ class ManualOrders:
         terms = search_terms(text)
         if not terms:
             return []
-        return parse_products(self.client.graphql(PRODUCTS_QUERY, {"query": terms}))
+        return parse_products(self.client.graphql_first((PRODUCTS_QUERY, PRODUCTS_QUERY_BASIC), {"query": terms}))
 
     def set_instructions(self, order_gid: str, text: str, append: bool = False) -> str:
         """Escribe las instrucciones en la nota del pedido (lee la nota justo antes: lo demás queda igual)."""

@@ -11,8 +11,8 @@ from __future__ import annotations
 
 from functools import partial
 
+from ..connectors import shipping_services as ss
 from ..connectors.email import EmailError
-from ..connectors.orders_overview import friendly_reason
 from ..connectors.shopify import ShopifyError, package_input
 from ..connectors.shopify_orders import MAX_INSTRUCTIONS, MAX_ITEMS, ManualItem, Recipient, manual_problem
 from ..i18n import N_, date_text, tr
@@ -99,6 +99,7 @@ def get_order(box, a: dict) -> dict:
         "cart_attributes": [f"{untrusted(k, 40)}: {untrusted(v, 200)}" for k, v in d.attributes],
         "instructions": untrusted(d.instructions, MAX_INSTRUCTIONS),
         "tracking": [f"{c} {n}".strip() for c, n, _u in d.tracking],
+        "customer_orders": d.orders_count or None,  # pedidos del cliente en la tienda (con read_customers)
         "notice": DATA_NOTICE,
     }
 
@@ -113,7 +114,25 @@ def search_products(box, a: dict) -> dict:
                             "artículo libre (title) en create_manual_order.") from None
         raise ToolError(str(exc)) from None
     return {"products": [{"variant_id": c.variant_id, "title": untrusted(c.title, 120), "sku": untrusted(c.sku, 60),
-                          "price": round(c.price, 2)} for c in choices[:20]]}
+                          "price": round(c.price, 2), **({"stock": c.stock} if c.stock is not None else {})}
+                         for c in choices[:20]]}
+
+
+def shipping_services(box, a: dict) -> dict:
+    legacy = _legacy(box, a["order"])
+    try:
+        route = _service(box).shipping_route(legacy)
+    except ShopifyError as exc:
+        raise ToolError(str(exc)) from None
+    return {
+        "order": a["order"],
+        "domestic": route.domestic,
+        "checked_with_shopify": route.offered is not None,  # sin read_shipping: todos los del tipo de envío
+        "services": [{"service": s.key, "name": s.name, "usual_delivery": tr(s.days)} for s in ss.choices(route)],
+        "default": "auto: Shopify elige (el servicio que pagó el cliente o la paquetería preferida de la tienda)",
+        "fedex": "No se puede comprar por la API: el usuario la compra en el pedido en Shopify y LabelBridge la "
+                 "imprime sola." if route.fedex else None,
+    }
 
 
 # --- sin preguntar (el dueño lo permitió) -------------------------------------------------------
@@ -211,25 +230,32 @@ def buy_shipping_label(box, a: dict) -> dict:
         raise ToolError(str(exc)) from None
     package = package_input(s.package) if a.get("package") == "saved_box" else None
     weight = {"value": float(a["total_weight_oz"]), "unit": "OUNCES"} if a.get("total_weight_oz") else None
+    key = str(a.get("service") or ss.AUTO)
+    if key != ss.AUTO and ss.by_key(key) is None:
+        raise ToolError("Servicio desconocido: usa uno de shipping_services o «auto».")
+    chosen = (tr("con la paquetería que elija Shopify") if key == ss.AUTO
+              else tr("con {0}", ss.service_name(key)))
     printer = s.shipping_label_printer or tr("la impresora predeterminada")
     where = untrusted(", ".join(d.address[1:3] if len(d.address) > 2 else d.address), 120)
-    text = tr("El asistente quiere comprar la guía de envío del pedido {0} ({1}, {2}) con la paquetería que elija "
-              "Shopify (FedEx no se puede por la API).\n\nShopify la cobra en tu factura y se imprime en «{3}».\n\n"
-              "¿Comprar la guía?", d.name, untrusted(d.customer), where, printer)
+    text = tr("El asistente quiere comprar la guía de envío del pedido {0} ({1}, {2}) {3} (FedEx no se puede por la "
+              "API).\n\nShopify la cobra en tu factura y se imprime en «{4}».\n\n¿Comprar la guía?",
+              d.name, untrusted(d.customer), where, chosen, printer)
     if not box.ui.confirm(tr("Comprar guía"), text, tr("Comprar guía")):
         return {"bought": False, "reason": "El usuario no aprobó la compra en la ventana de confirmación."}
     try:
         result = service.buy_label_now(legacy, package=package, total_weight=weight,
-                                       notify=bool(a.get("notify_customer", False)))
+                                       notify=bool(a.get("notify_customer", False)), service=key)
     except ShopifyError as exc:
         raise ToolError(str(exc)) from None
     state = result.get("state")
     return {
         "order": d.name,
         "state": state,
+        "service": ss.service_name(key),
         "carrier": result.get("carrier") or "",
         "tracking": result.get("tracking") or "",
-        "reason": friendly_reason(result.get("reason") or "") if state == "failed" else "",
+        "cost": result.get("cost"),
+        "reason": ss.rejection(result.get("reason") or "", key) if state == "failed" else "",
         "printing": state == "purchased",
     }
 
@@ -322,13 +348,24 @@ def definitions(box) -> list[Tool]:
         Tool(
             "buy_shipping_label",
             "Compra con Shopify Shipping la guía de un pedido que espera su guía (también uno manual) y la imprime. "
-            "La app pide confirmación (Shopify la cobra). package=saved_box usa la caja guardada en LabelBridge; "
-            "sin total_weight_oz, Shopify calcula el peso.",
+            "La app pide confirmación (Shopify la cobra). service: auto (Shopify elige) o uno de shipping_services; si "
+            "Shopify no lo ofrece para ese envío, no compra ni cobra nada. package=saved_box usa la caja guardada en "
+            "LabelBridge; sin total_weight_oz, Shopify calcula el peso.",
             _obj({"order": order,
+                  "service": _s("Paquetería y servicio.", [ss.AUTO] + [s.key for s in ss.SERVICES]),
                   "package": _s("Paquete.", ["shopify_default", "saved_box"]),
                   "total_weight_oz": {"type": "number", "description": "Peso total en onzas (opcional)."},
                   "notify_customer": _b("Avisar al cliente con el seguimiento (por defecto no).")}, ("order",)),
             partial(buy_shipping_label, box),
             N_("Comprando la guía"),
+        ),
+        Tool(
+            "shipping_services",
+            "Los servicios con los que se puede comprar la guía de un pedido (USPS, UPS, DHL Express…), con su "
+            "tiempo de entrega habitual. Con el permiso read_shipping son los que Shopify ofrece para ese envío. "
+            "Shopify no da precios antes de comprar.",
+            _obj({"order": order}, ("order",)),
+            partial(shipping_services, box),
+            N_("Consultando los servicios de envío"),
         ),
     ]

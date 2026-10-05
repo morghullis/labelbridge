@@ -3,6 +3,9 @@ resolverlo), después cada pedido por paquetería con su seguimiento y lo que co
 
 Los datos se calculan en connectors/orders_overview.py; aquí solo se muestran. Se recargan cuando cambia algo
 (el conector anota una compra, se imprime una guía, se guardan las reglas) o al pulsar «Actualizar».
+
+«Imprimir guía» hace lo que necesita cada pedido (connectors/label_batch.py): reimprime la que ya tiene o abre la
+compra (servicio, caja y aviso); con varios pedidos elegidos, todo con una sola confirmación.
 """
 
 from __future__ import annotations
@@ -34,6 +37,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...config import CARRIERS, ShippingRule
+from ...connectors.label_batch import BUY, IN_SHOPIFY, REPRINT, plan_for
 from ...connectors.orders_overview import CSV_COLUMNS, GROUPS, OrderRow, Summary, csv_rows, in_group, summarize
 from ...connectors.shopify import admin_url
 from ...i18n import N_, date_text, tr
@@ -62,9 +66,10 @@ ACTION_BUTTONS = {  # acción → (texto, icono)
     "open": (N_("Abrir en Shopify"), "link"),
     "buy": (N_("Comprar en Shopify"), "link"),
     "void": (N_("Anular en Shopify"), "link"),
-    "reprint": (N_("Reimprimir guía"), "printer"),
-    "retry": (N_("Comprar guía…"), "tag"),
+    "reprint": (N_("Imprimir guía"), "printer"),
+    "retry": (N_("Imprimir guía"), "printer"),
 }
+PRINT_ACTIONS = ("reprint", "retry")  # «Imprimir guía»: reimprime o compra, según el pedido
 
 
 def money(value: float) -> str:
@@ -180,11 +185,11 @@ class ActionItem(QFrame):
         actions.setSpacing(8)
         text, icon_name = ACTION_BUTTONS.get(row.action, ACTION_BUTTONS["open"])
         main = button(tr(text), icon_name, "primary")
-        main.clicked.connect(lambda: page.run_action(row, row.action or "open"))
+        main.clicked.connect(lambda: page.run_action(row, "print" if row.action in PRINT_ACTIONS else row.action or "open"))
         actions.addWidget(main)
         if row.action == "buy":  # FedEx: un clic en Shopify, o aquí con otra paquetería
-            other = button(tr("Otra paquetería…"), "tag")
-            other.clicked.connect(lambda: page.run_action(row, "retry"))
+            other = button(tr("Otra paquetería…"), "truck")
+            other.clicked.connect(lambda: page.run_action(row, "print"))
             actions.addWidget(other)
         elif row.action not in ("open", "void", ""):
             other = button(tr("Abrir en Shopify"), "link")
@@ -428,7 +433,7 @@ class OrdersPage(Page):
         self.view.sortByColumn(1, Qt.SortOrder.DescendingOrder)
         self.view.verticalHeader().setVisible(False)
         self.view.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
-        self.view.setSelectionMode(QTableView.SelectionMode.SingleSelection)
+        self.view.setSelectionMode(QTableView.SelectionMode.ExtendedSelection)  # varios: «Imprimir N guías»
         self.view.setShowGrid(False)
         self.view.setAlternatingRowColors(True)
         self.view.setWordWrap(False)
@@ -444,18 +449,21 @@ class OrdersPage(Page):
                 header.resizeSection(col, width)
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)  # cliente y destino: lo que sobra
         self.view.setMinimumHeight(380)
+        self.view.selectionModel().selectionChanged.connect(lambda *_a: self._selection_changed())
         table_card.add(self.view, stretch=1)
         bottom = QHBoxLayout()
-        for text, icon_name, action in (
-            (tr("Ver pedido"), "eye", "details"),
-            (tr("Abrir en Shopify"), "link", "open"),
-            (tr("Rastrear"), "truck", "track"),
-            (tr("Reimprimir guía"), "printer", "reprint"),
-            (tr("Comprar guía…"), "tag", "retry"),
-        ):
-            btn = button(text, icon_name)
-            btn.clicked.connect(lambda _=False, a=action: self._selected_action(a))
-            bottom.addWidget(btn)
+        self.print_btn = button(tr("Imprimir guía"), "printer", "primary",
+                                tr("Reimprime la guía o la compra e imprime (elige varios pedidos para hacerlo de una vez)"))
+        self.print_btn.clicked.connect(self.print_selected)
+        bottom.addWidget(self.print_btn)
+        self.details_btn = button(tr("Ver pedido"), "eye")
+        self.details_btn.clicked.connect(lambda: self._selected_action("details"))
+        bottom.addWidget(self.details_btn)
+        self.more_btn = button(tr("Más"), "more")
+        self.more_menu = QMenu(self)
+        self.more_menu.aboutToShow.connect(self._fill_more)
+        self.more_btn.setMenu(self.more_menu)
+        bottom.addWidget(self.more_btn)
         bottom.addStretch(1)
         self.count = label("", "Muted")
         bottom.addWidget(self.count)
@@ -649,14 +657,27 @@ class OrdersPage(Page):
             visible.append(row)
         self.model.set_rows(visible)
         self.count.setText(tr("{0} pedido(s)", len(visible)))
+        self._selection_changed()
 
     # --- acciones ------------------------------------------------------------------------------------
+    def _selected_rows(self) -> list[OrderRow]:
+        rows = []
+        for index in sorted(self.view.selectionModel().selectedRows(), key=lambda i: i.row()):
+            source = self.proxy.mapToSource(index)
+            if 0 <= source.row() < len(self.model.rows):
+                rows.append(self.model.rows[source.row()])
+        return rows
+
     def _selected(self) -> OrderRow | None:
-        indexes = self.view.selectionModel().selectedRows()
-        if not indexes:
-            return None
-        source = self.proxy.mapToSource(indexes[0])
-        return self.model.rows[source.row()] if 0 <= source.row() < len(self.model.rows) else None
+        rows = self._selected_rows()
+        return rows[0] if len(rows) == 1 else None
+
+    def _selection_changed(self) -> None:
+        count = len(self._selected_rows())
+        self.print_btn.setText(tr("Imprimir {0} guías", count) if count > 1 else tr("Imprimir guía"))
+        self.print_btn.setEnabled(count > 0)
+        self.details_btn.setEnabled(count == 1)
+        self.more_btn.setEnabled(count == 1)
 
     def _selected_action(self, action: str) -> None:
         row = self._selected()
@@ -665,25 +686,58 @@ class OrdersPage(Page):
             return
         self.run_action(row, action)
 
-    def _menu(self, pos: QPoint) -> None:
+    def _fill_more(self) -> None:
+        """«Más ▾»: lo que se puede hacer con el pedido elegido, además de imprimir y ver."""
+        self.more_menu.clear()
         row = self._selected()
         if row is None:
             return
+        self.more_menu.addAction(icons.icon("link"), tr("Abrir en Shopify"), lambda: self.run_action(row, "open"))
+        track = self.more_menu.addAction(icons.icon("truck"), tr("Rastrear el envío"), lambda: self.run_action(row, "track"))
+        copy = self.more_menu.addAction(icons.icon("copy"), tr("Copiar el número de seguimiento"),
+                                        lambda: self.run_action(row, "copy"))
+        track.setEnabled(bool(row.tracking))
+        copy.setEnabled(bool(row.tracking))
+
+    def _menu(self, pos: QPoint) -> None:
+        rows = self._selected_rows()
+        if not rows:
+            return
         menu = QMenu(self)
+        if len(rows) > 1:
+            menu.addAction(icons.icon("printer"), tr("Imprimir {0} guías", len(rows)), self.print_selected)
+            menu.exec(self.view.viewport().mapToGlobal(pos))
+            return
+        row = rows[0]
+        menu.addAction(icons.icon("printer"), tr("Imprimir guía"), lambda: self.run_action(row, "print"))
         menu.addAction(icons.icon("eye"), tr("Ver pedido"), lambda: self.run_action(row, "details"))
         menu.addAction(icons.icon("link"), tr("Abrir en Shopify"), lambda: self.run_action(row, "open"))
         if row.tracking:
             menu.addAction(icons.icon("truck"), tr("Rastrear el envío"), lambda: self.run_action(row, "track"))
             menu.addAction(icons.icon("copy"), tr("Copiar el número de seguimiento"), lambda: self.run_action(row, "copy"))
-        if row.labels:
-            menu.addAction(icons.icon("printer"), tr("Reimprimir la guía"), lambda: self.run_action(row, "reprint"))
-        if row.action in ("retry", "buy"):
-            menu.addAction(icons.icon("tag"), tr("Comprar guía…"), lambda: self.run_action(row, "retry"))
         menu.exec(self.view.viewport().mapToGlobal(pos))
+
+    def print_selected(self) -> None:
+        """«Imprimir guía» con lo elegido en la tabla: uno, o varios con una sola confirmación."""
+        rows = self._selected_rows()
+        if not rows:
+            info(self, tr("Imprimir guía"), tr("Elige uno o varios pedidos de la tabla."))
+            return
+        if len(rows) == 1:
+            self.run_action(rows[0], "print")
+            return
+        from ..bulk_print_dialog import BulkPrintDialog
+
+        dialog = BulkPrintDialog(self, self.ctx, rows)
+        run_dialog(dialog)
+        if dialog.finished_any:
+            self.reload()
 
     def run_action(self, row: OrderRow, action: str) -> None:
         shop = self.ctx.cfg.data.shopify.shop
-        if action == "details":
+        if action == "print":
+            self._print(row)
+        elif action == "details":
             self._details(row)
         elif action in ("open", "void", "buy"):
             QDesktopServices.openUrl(QUrl(admin_url(shop, f"orders/{row.legacy}")))
@@ -701,29 +755,22 @@ class OrdersPage(Page):
         elif action == "retry":
             self._retry(row)
 
+    def _print(self, row: OrderRow) -> None:
+        """«Imprimir guía» de un pedido: reimprime la que tiene, abre la compra o explica por qué no lleva guía."""
+        plan, why = plan_for(row)
+        if plan == REPRINT:
+            self._reprint(row)
+        elif plan in (BUY, IN_SHOPIFY):
+            self._retry(row)
+        else:
+            info(self, tr("Imprimir guía"), tr("{0}: {1}", row.name, why))
+
     def _reprint(self, row: OrderRow) -> None:
-        def find() -> list[dict]:
-            return [
-                job for job in self.ctx.store.list(limit=3000)
-                if job.get("source") == "shopify"
-                and str((job.get("meta") or {}).get("order_id")) == row.legacy
-                and "tracking" in (job.get("meta") or {})
-            ]
-
-        run_async(find, lambda jobs: self._reprint_jobs(row, jobs), lambda message: error(self, tr("Reimprimir"), message))
-
-    def _reprint_jobs(self, row: OrderRow, jobs: list[dict]) -> None:
-        if not jobs:  # se compró en Shopify: LabelBridge trae el PDF de ahí
-            run_async(
-                lambda: self.ctx.services.shopify.print_order_labels(row.legacy, row.name),
-                lambda _queued: info(self, tr("Reimprimir"), tr("La guía de {0} está en la cola de impresión.", row.name)),
-                lambda message: error(self, tr("Reimprimir"), message),
-            )
-            return
-        latest = max(jobs, key=lambda job: job.get("created_at") or 0)
-        if self.ctx.store.reprint(latest["id"]):
-            self.ctx.engine.wake()
-            info(self, tr("Reimprimir"), tr("La guía de {0} está otra vez en la cola de impresión.", row.name))
+        run_async(
+            lambda: self.ctx.services.shopify.reprint_label(row.legacy, row.name),
+            lambda _queued: info(self, tr("Imprimir guía"), tr("La guía de {0} está en la cola de impresión.", row.name)),
+            lambda message: error(self, tr("Imprimir guía"), message),
+        )
 
     def _details(self, row: OrderRow) -> None:
         """«Ver pedido»: qué tiene el pedido, sin salir de LabelBridge."""
@@ -732,7 +779,7 @@ class OrdersPage(Page):
         run_dialog(OrderDialog(self, self.ctx, row, self.run_action))
 
     def new_manual_label(self) -> None:
-        """«Nueva guía manual»: pedido manual en Shopify y, después, «Comprar guía» para ese pedido."""
+        """«Nueva guía manual»: pedido manual en Shopify y, después, «Imprimir guía» para ese pedido."""
         from ..manual_label_dialog import run_manual_label
 
         if not self.ctx.cfg.data.shopify.shop.strip():
@@ -742,7 +789,7 @@ class OrdersPage(Page):
             self.reload()
 
     def _retry(self, row: OrderRow) -> None:
-        """«Comprar guía…»: los datos que hagan falta, confirmar, y se compra, se imprime y Shopify queda al día."""
+        """La compra de la guía: servicio, caja y aviso, un clic, y se compra, se imprime y Shopify queda al día."""
         from ..purchase_dialog import PurchaseDialog
 
         dialog = PurchaseDialog(self, self.ctx, row)

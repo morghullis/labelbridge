@@ -196,6 +196,10 @@ class OrderRow:
     alert_title: str = ""
     alert_reason: str = ""
     waiting_days: int = 0  # días pagado y sin enviar (pedidos que necesitan acción)
+    kind: str = "ship"  # ship | pickup | local | none (cómo se entrega)
+    country: str = ""  # país de destino (código de dos letras)
+    shipped: bool = False  # Shopify ya lo marcó enviado (con o sin guía)
+    paid: bool = True
 
     @property
     def needs_action(self) -> bool:
@@ -378,6 +382,9 @@ def classify(
         if info.get("number")
     ]
     shipped = any(f.get("status") == "SUCCESS" for f in fulfillments)
+    row.shipped = shipped
+    row.paid = (order.get("displayFinancialStatus") or "") in PAID_STATUSES
+    row.country = str(address.get("countryCodeV2") or "")
     row.printed, row.print_error = print_state(jobs or [])
     row.carrier = row.tracking[0][0] if row.tracking else ""
     _delivery(row, fulfillments, now or datetime.now().timestamp(), limits)
@@ -394,6 +401,7 @@ def classify(
         kind = "ship"
     else:
         kind = "none"
+    row.kind = kind
     rule = rule_for(getattr(settings, "shipping_rules", []), method, row.subtotal)
     row.rule_carrier = rule.carrier if rule else getattr(settings, "default_carrier", "USPS")
     if kind == "ship":
@@ -471,6 +479,8 @@ def classify(
     if financial not in PAID_STATUSES:
         return keep("waiting", tr("Esperando el pago"))
     state = ledger.get("state")
+    if state in ("purchasing", "uncertain"):
+        row.issue = state  # «Imprimir guía» no compra otra: primero hay que saber qué pasó con esa
     if (rule is not None and not rule.auto) or state == "manual":
         carrier = row.carrier or tr("Esta paquetería")
         why = tr(" por la regla de {0}", rule_text(rule)) if rule is not None and rule_text(rule) else ""
@@ -483,7 +493,7 @@ def classify(
         row.problem = friendly_reason(ledger.get("reason") or "") or tr("Shopify no dio el motivo")
         return act(
             tr("No se pudo comprar la guía"),
-            tr("No se pudo comprar la guía: {0}. Pulsa «Comprar guía», corrige los datos (caja, peso) y confirma.", row.problem),
+            tr("No se pudo comprar la guía: {0}. Pulsa «Imprimir guía», corrige los datos (servicio, caja, peso) y vuelve a intentarlo.", row.problem),
             "retry",
         )
     if state == "uncertain":
@@ -495,26 +505,26 @@ def classify(
     if state == "limit":
         return act(
             tr("Límite diario de guías"),
-            tr("Se alcanzó el máximo de {0} guías por día en las compras automáticas. Pulsa «Comprar guía» para comprarla igual.", getattr(s, 'max_labels_per_day', 0)),
+            tr("Se alcanzó el máximo de {0} guías por día en las compras automáticas. Pulsa «Imprimir guía» para comprarla igual.", getattr(s, 'max_labels_per_day', 0)),
             "retry",
         )
     if not getattr(s, "buy_shipping_label", False):
         return act(
             tr("Falta la guía"),
-            tr("La compra automática de guías está desactivada: pulsa «Comprar guía» o actívala en la pestaña Shopify."),
+            tr("La compra automática de guías está desactivada: pulsa «Imprimir guía» o actívala en la pestaña Shopify."),
             "retry",
         )
     if created < since:
         return act(
             tr("Falta la guía"),
-            tr("Es de antes de conectar LabelBridge, por eso no se compró sola. Pulsa «Comprar guía»."),
+            tr("Es de antes de conectar LabelBridge, por eso no se compró sola. Pulsa «Imprimir guía»."),
             "retry",
         )
     if now - created < WAIT_SECONDS:
         return keep("waiting", tr("Comprando la guía…"))
     return act(
         tr("Falta la guía"),
-        tr("Sigue sin guía: revisa que LabelBridge esté conectado a Shopify y pulsa «Comprar guía»."),
+        tr("Sigue sin guía: revisa que LabelBridge esté conectado a Shopify y pulsa «Imprimir guía»."),
         "retry",
     )
 

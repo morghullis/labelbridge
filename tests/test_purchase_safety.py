@@ -34,7 +34,7 @@ class FakeClient:
     def order(self, _legacy, _ns, _key):
         return dict(ORDER)
 
-    def purchase_label(self, fo_id, notify, package=None, total_weight=None):
+    def purchase_label(self, fo_id, notify, package=None, total_weight=None, preferred=None):
         self.purchases.append(fo_id)
         if self.hold_first and len(self.purchases) == 1:
             self.in_purchase.set()

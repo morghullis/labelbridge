@@ -2,7 +2,7 @@
 mensaje, una muestra…).
 
 Shopify Shipping solo vende guías de pedidos: aquí se escribe a quién va y qué lleva, y al confirmar se crea en
-Shopify un pedido marcado «Manual · LabelBridge», pagado y sin cobrar al cliente. Después se abre «Comprar guía» para
+Shopify un pedido marcado «Manual · LabelBridge», pagado y sin cobrar al cliente. Después se abre «Imprimir guía» para
 ese pedido (caja, peso y compra, como siempre). La compra automática no toca estos pedidos.
 """
 
@@ -11,6 +11,7 @@ from __future__ import annotations
 import time
 
 from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -245,8 +246,13 @@ class ManualLabelDialog(QDialog):
             self.choices = choices
             self.results.clear()
             for choice in choices:
-                item = QListWidgetItem(choice.title + (f"  ({tr('SKU {0}', choice.sku)})" if choice.sku else ""))
+                text = choice.title + (f"  ({tr('SKU {0}', choice.sku)})" if choice.sku else "")
+                if choice.stock_text:  # con read_inventory
+                    text += f"  · {choice.stock_text}"
+                item = QListWidgetItem(text)
                 item.setData(Qt.ItemDataRole.UserRole, choice.variant_id)
+                if choice.stock is not None and choice.stock <= 0 and not choice.oversell:
+                    item.setForeground(QColor("#BE123C"))
                 self.results.addItem(item)
             self.search_note.setText(tr("Doble clic o «Agregar» para sumarlo al envío.") if choices
                                      else tr("No se encontró nada con «{0}».", text))
@@ -271,6 +277,8 @@ class ManualLabelDialog(QDialog):
         choice = next((c for c in self.choices if c.variant_id == variant_id), None)
         if choice is None:
             return
+        if choice.stock is not None and choice.stock <= 0 and not choice.oversell:
+            self.search_note.setText(tr("Ojo: «{0}» no tiene existencias en Shopify.", choice.title))
         for existing, spin in self.chosen:
             if existing.variant_id == variant_id:
                 spin.setValue(spin.value() + 1)
@@ -355,7 +363,7 @@ class ManualLabelDialog(QDialog):
         self._show(message)
 
     def order_row(self) -> OrderRow | None:
-        """El pedido creado, listo para «Comprar guía»."""
+        """El pedido creado, listo para «Imprimir guía»."""
         if not self.created or self.recipient is None:
             return None
         r = self.recipient
@@ -367,7 +375,7 @@ class ManualLabelDialog(QDialog):
 
 
 def run_manual_label(parent: QWidget, ctx: AppContext) -> bool:
-    """Los dos pasos: el pedido manual y, si se creó, «Comprar guía» para ese pedido. True si se creó el pedido."""
+    """Los dos pasos: el pedido manual y, si se creó, «Imprimir guía» para ese pedido. True si se creó el pedido."""
     from .purchase_dialog import PurchaseDialog
     from .widgets import run_dialog
 

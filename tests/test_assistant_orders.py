@@ -137,3 +137,20 @@ def test_first_working_connection_activates_the_store_once(core):
     page.enabled.setChecked(False)
     page._tested({"name": "Demo", "myshopifyDomain": "demo.myshopify.com", "scopes": ["read_orders"]})
     assert not s.enabled
+
+
+def test_the_assistant_picks_a_service_and_still_asks_first(box, monkeypatch):
+    from labelbridge.connectors import shipping_services as ss
+
+    shopify = box.ctx.services.shopify
+    monkeypatch.setattr(shopify, "shipping_route", lambda legacy: ss.Route(domestic=True, destination="US"))
+    services, error = run(box, "shipping_services", order="#1050")
+    assert not error and services["checked_with_shopify"] is False and services["fedex"]
+    assert "usps:Priority" in [s["service"] for s in services["services"]]
+    texts: list[str] = []
+    monkeypatch.setattr(box.fake_ui, "confirm", lambda title, text, accept: texts.append(text) or True)
+    result, error = run(box, "buy_shipping_label", order="#1050", service="usps:Priority")
+    assert not error and result["service"] == "USPS Priority Mail" and box.calls[-1][2]["service"] == "usps:Priority"
+    assert "USPS Priority Mail" in texts[-1]  # la ventana de confirmación dice con qué servicio
+    bad, error = run(box, "buy_shipping_label", order="#1050", service="fedex:ground")
+    assert error and len(texts) == 1  # un servicio que no existe ni llega a pedir confirmación

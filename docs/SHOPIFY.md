@@ -17,12 +17,13 @@ Desde 2026 Shopify **ya no permite crear apps personalizadas desde el admin** (l
    | Para… | Scopes |
    |---|---|
    | Comprar e imprimir las guías de Shopify Shipping (recomendado) | `read_orders`, `write_orders`, `read_merchant_managed_fulfillment_orders`, `write_merchant_managed_fulfillment_orders` |
+   | Opcionales (sin ellos lo demás funciona igual) | `read_products` (elegir productos en la guía manual), `read_inventory` (ver sus existencias), `read_shipping` (ver solo los servicios que Shopify ofrece en cada envío), `read_customers` (saber en «Ver pedido» si el cliente ya compró antes) |
    | Solo leer pedidos (etiqueta interna de LabelBridge) | `read_orders` |
    | Agregar un tag al pedido al imprimir | `write_orders` |
 
-   El botón **Copiar permisos** de la guía copia la primera fila completa.
+   El botón **Copiar permisos** de la guía (y de la pantalla Shopify, cuando falta alguno) copia las dos primeras filas completas.
 
-4. **Datos protegidos del cliente**: la etiqueta necesita nombre, dirección y teléfono. En la configuración de la app, en *Protected customer data*, selecciona los datos de clientes y los campos **Name, Address y Phone**. Para apps personalizadas (no publicadas en la App Store) no hace falta revisión de Shopify; en las apps antiguas creadas desde el admin, el acceso a estos campos depende del plan de la tienda. Sin esto, Shopify devuelve la dirección vacía o un error de acceso.
+4. **Datos protegidos del cliente**: la etiqueta necesita nombre, dirección y teléfono. En la configuración de la app, en *Protected customer data*, selecciona los datos de clientes y los campos **Name, Address y Phone** (y **Email** si quieres ver el email del cliente en «Ver pedido»). Para apps personalizadas (no publicadas en la App Store) no hace falta revisión de Shopify; en las apps antiguas creadas desde el admin, el acceso a estos campos depende del plan de la tienda. Sin esto, Shopify devuelve la dirección vacía o un error de acceso.
 5. **Release** la versión e **instálala** en tu tienda.
 6. En **App settings** copia el **Client ID** y el **Client secret**.
 
@@ -55,6 +56,8 @@ Detalles de la compra automática:
 - Solo compra para *fulfillment orders* en estado `OPEN`/`IN_PROGRESS` con método de envío. **Nunca compra dos veces** para el mismo fulfillment order, aunque reinicies el PC.
 - Tiene un **límite diario** configurable y te avisa si se alcanza.
 - Shopify no permite comprar etiquetas de **FedEx** por API.
+- Desde **Pedidos → Imprimir guía** eliges el servicio (USPS Ground Advantage, Priority Mail, UPS Ground…) o dejas **Automático** (el que pagó el cliente o tu paquetería preferida en Shopify). Si Shopify no ofrece ese servicio para el envío, contesta `RATES_NOT_FOUND` y **no cobra nada**: elige otro. Con `read_shipping` la lista muestra solo lo que Shopify ofrece para ese envío.
+- Con varios pedidos elegidos, **Imprimir N guías** reimprime los que ya tienen guía y compra los demás con una sola confirmación (hasta 25 por tanda).
 - Actívala **en un solo equipo**, y no la combines con la plantilla `02` de n8n: cada pedido se compraría dos veces.
 
 ## 4. Filtros y funcionamiento

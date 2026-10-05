@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from .. import net
+from ..connectors.label_batch import SKIP, plan_for
 from ..connectors.orders_overview import OrderRow
 from ..connectors.shopify import admin_url
 from ..connectors.shopify_orders import (
@@ -105,18 +106,15 @@ class OrderDialog(QDialog):
         shopify = button(tr("Abrir en Shopify"), "link")
         shopify.clicked.connect(self._open_in_shopify)
         buttons.addWidget(shopify)
-        self.buy_btn = button(tr("Comprar guía…"), "tag")
-        self.buy_btn.clicked.connect(lambda: self._action("retry"))
-        self.buy_btn.setVisible(row.action in ("retry", "buy"))
-        buttons.addWidget(self.buy_btn)
-        self.reprint_btn = button(tr("Reimprimir guía"), "printer")
-        self.reprint_btn.clicked.connect(lambda: self._action("reprint"))
-        self.reprint_btn.setVisible(bool(row.labels))
-        buttons.addWidget(self.reprint_btn)
         buttons.addStretch(1)
-        close = button(tr("Cerrar"), None, "primary")
+        close = button(tr("Cerrar"))
         close.clicked.connect(self.accept)
         buttons.addWidget(close)
+        # «Imprimir guía»: la reimprime o abre la compra (si el pedido lleva guía).
+        self.print_btn = button(tr("Imprimir guía"), "printer", "primary")
+        self.print_btn.clicked.connect(lambda: self._action("print"))
+        self.print_btn.setVisible(run_action is not None and plan_for(row)[0] != SKIP)
+        buttons.addWidget(self.print_btn)
         layout.addLayout(buttons)
 
         if detail is not None:  # ya cargado (p. ej. en las pruebas): sin ir a Shopify
@@ -181,8 +179,14 @@ class OrderDialog(QDialog):
         grid = QGridLayout()
         grid.setHorizontalSpacing(14)
         grid.setVerticalSpacing(4)
-        rows = [(tr("Cliente"), d.customer), (tr("Teléfono"), d.phone),
-                (tr("Envío a"), "\n".join(d.address)), (tr("Método"), d.method)]
+        history = ""
+        if d.orders_count:  # con read_customers: si ya compró antes
+            history = tr("Primer pedido en la tienda") if d.orders_count == 1 else tr(
+                "{0} pedidos en la tienda · {1} en total", d.orders_count, money(d.spent, d.currency))
+            if d.customer_since[:4].isdigit():
+                history += " · " + tr("cliente desde {0}", d.customer_since[:4])
+        rows = [(tr("Cliente"), d.customer), (tr("Historial"), history), (tr("Email"), d.email),
+                (tr("Teléfono"), d.phone), (tr("Envío a"), "\n".join(d.address)), (tr("Método"), d.method)]
         line = 0
         for name, value in rows:
             if not value:

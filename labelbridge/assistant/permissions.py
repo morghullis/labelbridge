@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..connectors.shipping_services import AUTO, service_name
 from ..i18n import N_, tr
 from ..system.platform import pick
 
@@ -50,6 +51,7 @@ TOOL_CLASSES: dict[str, str] = {
     "find_orders": READ,
     "get_order": READ,
     "search_products": READ,
+    "shipping_services": READ,
     "set_order_instructions": AUTO,
     "notify_owners": AUTO,
     "create_manual_order": CRITICAL,
@@ -72,6 +74,7 @@ LIMITS: dict[str, int] = {
     "find_orders": 10,
     "get_order": 25,
     "search_products": 10,
+    "shipping_services": 10,
     "set_order_instructions": 15,
     "notify_owners": 5,
     "create_manual_order": 3,
@@ -181,7 +184,7 @@ def describe(name: str, args: dict) -> str:
     if name == "create_manual_order":
         return tr("Crear un pedido manual para {0} ({1}).", _value(args.get("name", "")), _value(args.get("city", "")))
     if name == "buy_shipping_label":
-        return tr("Comprar la guía del pedido {0}.", args.get("order"))
+        return tr("Comprar la guía del pedido {0} ({1}).", args.get("order"), service_name(args.get("service") or AUTO))
     return f"{name}:\n" + _fields(args)
 
 
