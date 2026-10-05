@@ -38,31 +38,55 @@ def _mascot(reduced: bool = False) -> tuple[m.Mascot, Clock]:
 
 # --- dibujo ----------------------------------------------------------------------------------------
 
+def _brightness(image: QImage, x: float, y: float, r: int = 3) -> float:
+    values = [image.pixelColor(int(x) + dx, int(y) + dy) for dx in range(-r, r + 1) for dy in range(-r, r + 1)]
+    return sum(c.red() + c.green() + c.blue() for c in values) / len(values)
+
+
+def _render(key: str, size: int = 300, badge: bool = False, **pose) -> QImage:
+    from dataclasses import replace
+
+    frame = m.still_frame(key)
+    frame.pose = replace(frame.pose, **pose)
+    image = QImage(size, size, QImage.Format.Format_ARGB32)
+    image.fill(QColor(0, 0, 0, 0))
+    painter = QPainter(image)
+    m.paint_mascot(painter, QRectF(0, 0, size, size), frame, badge=badge)
+    painter.end()
+    return image
+
+
 @pytest.mark.parametrize("key", sorted(m.EXPRESSIONS))
-def test_every_expression_paints_at_every_size(qapp, key):
+def test_every_expression_paints_the_original_logo(qapp, key):
     for size, badge in ((200, False), (60, True), (44, True), (28, True)):
-        image = QImage(size, size, QImage.Format.Format_ARGB32)
-        image.fill(QColor(0, 0, 0, 0))
-        painter = QPainter(image)
-        m.paint_mascot(painter, QRectF(0, 0, size, size), m.still_frame(key), badge=badge)
-        painter.end()
-        center = image.pixelColor(size // 2, int(size * 0.62))
-        assert center.alpha() == 255 and center.red() > center.blue()  # oro en la cara, no un hueco
+        image = _render(key, size, badge)
+        center = image.pixelColor(size // 2, size // 2)
+        assert center.alpha() == 255  # la máscara (oro sobre negro, como el logo) cubre el centro
+        gold = sum(1 for x in range(0, size, 2) for y in range(0, size, 2)
+                   if image.pixelColor(x, y).red() > image.pixelColor(x, y).blue() + 40)
+        assert gold > size  # hay oro
     assert not m.mascot_pixmap(key, 28).isNull()
 
 
-def test_small_sizes_drop_fine_detail(qapp):
-    frame = m.still_frame("neutral")
-    image = QImage(60, 60, QImage.Format.Format_ARGB32)
-    painter = QPainter(image)
-    m.paint_mascot(painter, QRectF(0, 0, 60, 60), frame, badge=True)
-    painter.end()
-    assert frame.detail < 0.35  # sin remaches, facetas ni marcas: trazos más gruesos
-    big = QImage(240, 240, QImage.Format.Format_ARGB32)
-    painter = QPainter(big)
-    m.paint_mascot(painter, QRectF(0, 0, 240, 240), frame)
-    painter.end()
-    assert frame.detail == 1.0
+def test_the_logo_is_drawn_as_is_and_its_eyes_come_alive(qapp):
+    e = m.emblem()
+    assert not e.image.isNull() and len(e.eyes) == 2 and all(eye.windows for eye in e.eyes) and len(e.gems) == 6
+    size = 300
+    scale = m.BARE_WIDTH / e.w * size / 200
+    x0 = (100 - m.BARE_WIDTH / 2) * size / 200
+    y0 = (100 - e.h * m.BARE_WIDTH / e.w / 2) * size / 200
+    window = e.eyes[0].windows[0].boundingRect().center()
+    wx, wy = x0 + window.x() * scale, y0 + window.y() * scale
+    open_eye = _brightness(_render("neutral", size, tilt=0.0), wx, wy)
+    closed = _brightness(_render("sleepy", size, tilt=0.0), wx, wy)
+    assert closed > open_eye + 150  # el párpado dorado tapa la «pupila» (la ventana oscura del logo)
+    looking = _brightness(_render("neutral", size, gaze_x=1.0), wx, wy)
+    assert looking > open_eye + 60  # al mirar a un lado la pupila se mueve y ahí queda oro
+    talking = _render("neutral", size, mouth_open=1.0)
+    still = _render("neutral", size)
+    lip_top = e.lip.boundingRect().top()
+    mouth_x, mouth_y = x0 + e.lip.boundingRect().center().x() * scale, y0 + (lip_top + 6) * scale
+    assert _brightness(talking, mouth_x, mouth_y, 1) < _brightness(still, mouth_x, mouth_y, 1)  # boca abierta
 
 
 # --- animación ---------------------------------------------------------------------------------------
@@ -125,12 +149,18 @@ def test_idle_mask_stops_repainting(qapp):
 
 
 def test_reduced_motion_follows_the_system(monkeypatch):
+    import sys
+
     from labelbridge.system import accessibility
 
     monkeypatch.setenv("LABELBRIDGE_REDUCED_MOTION", "1")
     assert accessibility.reduced_motion() is True
     monkeypatch.delenv("LABELBRIDGE_REDUCED_MOTION")
-    assert accessibility.reduced_motion() is False  # fuera de Windows, salvo que se pida
+    result = accessibility.reduced_motion()
+    if sys.platform == "win32":
+        assert isinstance(result, bool)  # lo que diga la configuración de Windows de ese equipo
+    else:
+        assert result is False
 
 
 # --- la cara según la conversación --------------------------------------------------------------

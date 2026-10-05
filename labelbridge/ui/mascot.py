@@ -13,10 +13,12 @@ diseño en Claude Design (caja de 200 × 200).
 
 from __future__ import annotations
 
+import json
 import math
 import random
 import time
 from dataclasses import dataclass, field, fields, replace
+from pathlib import Path
 
 from PySide6.QtCore import QObject, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import (
@@ -25,11 +27,13 @@ from PySide6.QtGui import (
     QConicalGradient,
     QCursor,
     QFont,
+    QImage,
     QLinearGradient,
     QPainter,
     QPainterPath,
     QPen,
     QPixmap,
+    QPolygonF,
     QRadialGradient,
     QTransform,
 )
@@ -135,100 +139,93 @@ class Frame:
     sheen: float = -1.0  # brillo que cruza el oro (-1 = ninguno; 0…1 posición)
 
 
-# --- geometría (caja de 200 × 200) --------------------------------------------------------------
+# --- el logo original y sus rasgos -----------------------------------------------------------------
 
-FACE = (  # contorno de la cara bajo la corona
-    (40.0, 62.0), ((161.0, 98.0), (156.0, 128.0), (141.0, 150.0)),
-    ((128.0, 168.0), (114.0, 178.0), (100.0, 179.0)),
-)
-GEM_X = tuple(46.0 + i * 21.6 for i in range(6))
-GEM_Y = 48.0
-BADGE_SCALE = 0.96  # la máscara dentro del disco del bubble (retrato en un medallón)
+BADGE_WIDTH = 150.0  # ancho del logo dentro del disco del bubble (caja de 200): la corona entera cabe
+BARE_WIDTH = 196.0
+DARK = QColor("#050505")  # el negro del logo (fondo de la máscara, ventanas de los ojos, boca abierta)
+CREASE = "#3A2408"
 
 
-def face_path() -> QPainterPath:
-    path = QPainterPath(QPointF(40, 62))
-    path.lineTo(160, 62)
-    path.cubicTo(161, 98, 156, 128, 141, 150)
-    path.cubicTo(128, 168, 114, 178, 100, 179)
-    path.cubicTo(86, 178, 72, 168, 59, 150)
-    path.cubicTo(44, 128, 39, 98, 40, 62)
+class _Eye:
+    def __init__(self, data: dict) -> None:
+        self.zone = _polygon(data["zone"])
+        self.windows = [_polygon(w) for w in data["windows"]]
+        self.cx, self.cy = data["center"]
+        self.hw, self.hh = data["half"]
+        box = self.zone.boundingRect()
+        self.top, self.bottom, self.left, self.right = box.top(), box.bottom(), box.left(), box.right()
+        self.gold = QColor("#C9963F")  # se ajusta al oro real del logo alrededor del ojo (Emblem)
+
+    def sample_gold(self, image: QImage) -> None:
+        """El color medio del oro dentro del ojo: los párpados se pintan con él y no parecen un parche."""
+        total, count = [0, 0, 0], 0
+        for y in range(int(self.top), int(self.bottom) + 1, 2):
+            for x in range(int(self.left), int(self.right) + 1, 2):
+                if 0 <= x < image.width() and 0 <= y < image.height() and self.zone.contains(QPointF(x, y)):
+                    color = image.pixelColor(x, y)
+                    if color.alpha() > 200:
+                        total[0] += color.red()
+                        total[1] += color.green()
+                        total[2] += color.blue()
+                        count += 1
+        if count:
+            self.gold = QColor(*(int(v / count) for v in total))
+
+
+class Emblem:
+    """El logo original (assets/mascot/emblem.png) y dónde están sus rasgos (features.json, medido por
+    packaging/make_mascot_assets.py). Se dibuja tal cual; solo se animan ojos, labio, gemas y gestos."""
+
+    def __init__(self, folder: Path) -> None:
+        self.image = QImage(str(folder / "emblem.png"))
+        if self.image.isNull():  # sin el logo no hay máscara: mejor un error claro (lo detecta la autoprueba)
+            raise FileNotFoundError(folder / "emblem.png")
+        data = json.loads((folder / "features.json").read_text(encoding="utf-8"))
+        self.w, self.h = (float(v) for v in data["size"])
+        self.eyes = [_Eye(eye) for eye in data["eyes"]]
+        for eye in self.eyes:
+            eye.sample_gold(self.image)
+        self.lip = _polygon(data["lower_lip"]["outline"])
+        self.outline = _polygon(data["outline"])  # silueta de corona y cara: detrás va el negro del logo
+        self.gems = [tuple(g) for g in data["gems"]]
+        self.cheeks = [tuple(c) for c in data["cheeks"]]
+        self.pivot = tuple(data["pivot"])
+        full = QPainterPath()
+        full.addRect(QRectF(0, 0, self.w, self.h))
+        self.without_lip = full.subtracted(self.lip)
+        self._cache: dict[int, QImage] = {}
+
+    def scaled(self, width: float) -> QImage:
+        """El logo al tamaño en pantalla (en caché: escalar la imagen grande en cada fotograma sería caro)."""
+        size = max(16, min(int(self.w), (int(width) + 7) // 8 * 8))
+        if size not in self._cache:
+            if len(self._cache) > 8:
+                self._cache.clear()
+            self._cache[size] = self.image.scaledToWidth(size, Qt.TransformationMode.SmoothTransformation)
+        return self._cache[size]
+
+
+def _polygon(points) -> QPainterPath:
+    path = QPainterPath()
+    path.addPolygon(QPolygonF([QPointF(x, y) for x, y in points]))
     path.closeSubpath()
     return path
 
 
-def _quad(path: QPainterPath, ctrl: tuple[float, float], end: tuple[float, float]) -> None:
-    path.quadTo(QPointF(*ctrl), QPointF(*end))
+_EMBLEM: Emblem | None = None
 
 
-def eye_shape(cx: float, cy: float, side: int, pose: Pose, blink: float, wink: float) -> tuple[QPainterPath, dict]:
-    """Abertura del ojo (almendra inclinada como en la máscara). side: -1 izquierdo, 1 derecho."""
-    w = 15.0 * pose.eye_wide
-    lo = 4.2 * pose.eye_lower
-    up = 8.5 * pose.eye_open
-    closed = max(blink, wink)
-    up = up + (-lo * 0.85 - up) * closed  # el párpado baja hasta casi tocar el de abajo
-    outer = (cx + side * w, cy - 1.5)
-    inner = (cx - side * w, cy + 1.0)
-    upper_ctrl = (cx, cy - 2 * up)
-    lower_ctrl = (cx, cy + 2 * lo)
-    path = QPainterPath(QPointF(*outer))
-    _quad(path, upper_ctrl, inner)
-    _quad(path, lower_ctrl, outer)
-    path.closeSubpath()
-    return path, {"outer": outer, "inner": inner, "upper": upper_ctrl, "lower": lower_ctrl, "up": up, "lo": lo, "w": w}
+def emblem() -> Emblem:
+    global _EMBLEM
+    if _EMBLEM is None:
+        from ..paths import resource_path
 
-
-def brow_path(side: int, pose: Pose) -> QPainterPath:
-    lift = pose.brow_l if side < 0 else pose.brow_r
-    tilt = pose.brow_tilt
-    outer = (100 + side * 48.0, 84.0 + lift - tilt * 1.0)
-    mid = (100 + side * 29.0, 76.0 + lift)
-    inner = (100 + side * 9.0, 80.0 + lift + tilt * 3.2)
-    ctrl = (2 * mid[0] - (outer[0] + inner[0]) / 2, 2 * mid[1] - (outer[1] + inner[1]) / 2)
-    path = QPainterPath(QPointF(*outer))
-    _quad(path, ctrl, inner)
-    return path
-
-
-def mouth_geometry(pose: Pose) -> dict[str, QPainterPath]:
-    cy = 148.0
-    hw = 13.0 * pose.mouth_width
-    corner_y = cy - 4.0 * pose.smile
-    left, right = QPointF(100 - hw, corner_y), QPointF(100 + hw, corner_y)
-    up_ctrl = QPointF(100, cy + 6.0 * pose.smile - 5.0 * pose.mouth_open)
-    lo_ctrl = QPointF(100, cy + 6.0 * pose.smile + 12.0 * pose.mouth_open)
-
-    opening = QPainterPath(left)
-    opening.quadTo(up_ctrl, right)
-    opening.quadTo(lo_ctrl, left)
-    opening.closeSubpath()
-
-    upper = QPainterPath(left)  # labio superior con arco de cupido
-    upper.cubicTo(QPointF(left.x() + 5, corner_y - 5.5), QPointF(96, 140.5), QPointF(100, 142.2))
-    upper.cubicTo(QPointF(104, 140.5), QPointF(right.x() - 5, corner_y - 5.5), right)
-    upper.quadTo(up_ctrl, left)
-    upper.closeSubpath()
-
-    bottom = corner_y + 8.0 + 9.0 * pose.mouth_open
-    lower = QPainterPath(left)
-    lower.quadTo(lo_ctrl, right)
-    lower.cubicTo(QPointF(right.x() - 3, bottom + 2), QPointF(left.x() + 3, bottom + 2), left)
-    lower.closeSubpath()
-
-    crease = QPainterPath(left)
-    crease.quadTo(up_ctrl, right)
-    return {"opening": opening, "upper": upper, "lower": lower, "crease": crease}
+        _EMBLEM = Emblem(resource_path("assets", "mascot"))
+    return _EMBLEM
 
 
 # --- pintura ----------------------------------------------------------------------------------------
-
-def _gold_linear(x1: float, y1: float, x2: float, y2: float) -> QLinearGradient:
-    gradient = QLinearGradient(x1, y1, x2, y2)
-    for stop, color in ((0.0, GOLD_LIGHT), (0.3, GOLD), (0.55, GOLD_DEEP), (0.78, "#EBCB78"), (1.0, "#B5862F")):
-        gradient.setColorAt(stop, QColor(color))
-    return gradient
-
 
 def _alpha(color: str, alpha: float) -> QColor:
     c = QColor(color)
@@ -269,224 +266,146 @@ def paint_badge_disc(p: QPainter, glow: float = 0.0) -> None:
         p.drawEllipse(QPointF(100, 100), 100, 100)
 
 
-def _paint_crown(p: QPainter, frame: Frame) -> None:
-    band = QRectF(30, 34, 140, 28)
-    p.setPen(_pen("#3B2708", 1.2))
-    p.setBrush(_gold_linear(30, 34, 30, 62))
-    p.drawRoundedRect(band, 5, 5)
-    inner = QRectF(35, 39, 130, 18)
-    p.setPen(_pen("#2B1B06", 1.0))
-    p.setBrush(QColor("#1D1307"))
-    p.drawRoundedRect(inner, 3, 3)
-    if frame.detail > 0.5:  # remaches entre gemas, como en el logo (a tamaño pequeño solo ensucian)
-        p.setPen(_pen("#C99A45", 0.9))
-        p.setBrush(QColor("#2A1B08"))
-        for i in range(5):
-            x = (GEM_X[i] + GEM_X[i + 1]) / 2
-            for y in (43.5, 52.5):
-                p.drawEllipse(QPointF(x, y), 1.7, 1.7)
-    for i, x in enumerate(GEM_X):
-        color, glow = frame.gems[i] if i < len(frame.gems) else (GOLD_LIGHT, 0.0)
-        if glow > 0.01:
-            halo = QRadialGradient(QPointF(x, GEM_Y), 15)
-            halo.setColorAt(0.0, _alpha(color, 0.95 * glow))
-            halo.setColorAt(0.55, _alpha(color, 0.45 * glow))
-            halo.setColorAt(1.0, _alpha(color, 0.0))
-            p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(halo)
-            p.drawEllipse(QPointF(x, GEM_Y), 15, 15)
-        _paint_gem(p, x, GEM_Y, 7.2, color, glow, frame.detail)
+def _device_width(p: QPainter, width: float) -> float:
+    t = p.worldTransform()
+    ratio = p.device().devicePixelRatioF() if p.device() is not None else 1.0
+    return width * math.hypot(t.m11(), t.m12()) * ratio
 
 
-def _paint_gem(p: QPainter, x: float, y: float, r: float, color: str, glow: float, detail: float = 1.0) -> None:
-    octagon = QPainterPath()
-    for k in range(8):
-        angle = math.pi / 8 + k * math.pi / 4
-        point = QPointF(x + r * math.cos(angle), y + r * math.sin(angle))
-        octagon.moveTo(point) if k == 0 else octagon.lineTo(point)
-    octagon.closeSubpath()
-    body = QRadialGradient(QPointF(x - r * 0.35, y - r * 0.4), r * 1.6)
-    body.setColorAt(0.0, QColor("#FFF6D8"))
-    body.setColorAt(0.45, QColor("#D9A94E"))
-    body.setColorAt(1.0, QColor("#7A5216"))
-    p.setPen(_pen("#3A2608", 1.0))
-    p.setBrush(body)
-    p.drawPath(octagon)
-    if glow > 0.01:
-        lit = QRadialGradient(QPointF(x, y), r)
-        lit.setColorAt(0.0, _alpha("#FFFFFF", 0.9 * glow))
-        lit.setColorAt(0.45, _alpha(color, 0.95 * glow))
-        lit.setColorAt(1.0, _alpha(color, 0.75 * glow))
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(lit)
-        p.drawPath(octagon)
-    if detail > 0.5:  # facetas
-        p.setPen(_pen(_alpha("#5A3B0E", 0.75), 0.7))
-        p.setBrush(Qt.BrushStyle.NoBrush)
-        p.drawEllipse(QPointF(x, y), r * 0.48, r * 0.48)
-    p.setPen(Qt.PenStyle.NoPen)
-    p.setBrush(_alpha("#FFFFFF", 0.55 + 0.4 * glow))
-    p.drawEllipse(QPointF(x - r * 0.32, y - r * 0.36), r * 0.2, r * 0.2)
-
-
-def _paint_face(p: QPainter) -> QPainterPath:
-    face = face_path()
-    skin = QRadialGradient(QPointF(80, 92), 118)
-    skin.setColorAt(0.0, QColor("#FBE8B4"))
-    skin.setColorAt(0.33, QColor("#E3B95E"))
-    skin.setColorAt(0.68, QColor("#B7882E"))
-    skin.setColorAt(1.0, QColor("#6A4714"))
-    p.setPen(Qt.PenStyle.NoPen)
-    p.setBrush(skin)
-    p.drawPath(face)
-    # Sombra bajo la corona y borde con luz.
-    p.save()
-    p.setClipPath(face)
-    shade = QLinearGradient(0, 62, 0, 74)
-    shade.setColorAt(0.0, _alpha("#2A1A05", 0.6))
-    shade.setColorAt(1.0, _alpha("#2A1A05", 0.0))
-    p.setBrush(shade)
-    p.drawRect(QRectF(30, 62, 140, 14))
-    p.restore()
-    p.setBrush(Qt.BrushStyle.NoBrush)
-    p.setPen(_pen(_gold_linear(40, 62, 160, 179), 2.0))
-    p.drawPath(face)
-    return face
-
-
-def _paint_features(p: QPainter, frame: Frame) -> None:
+def _paint_emblem(p: QPainter, e: Emblem, image: QImage, frame: Frame) -> None:
     pose = frame.pose
-    bold = 1.0 + 0.7 * (1.0 - frame.detail)  # trazos más gruesos cuanto más pequeña se ve
-    # Marcas en las mejillas (escarificación del logo) y rubor.
+    whole = QRectF(0, 0, e.w, e.h)
+    p.fillPath(e.outline, DARK)  # como en el logo: oro sobre negro
+    opening = pose.mouth_open * 15.0
+    if opening > 0.4:  # boca abierta: el labio inferior baja y deja ver el oscuro de detrás
+        p.save()
+        p.setClipPath(e.without_lip, Qt.ClipOperation.IntersectClip)
+        p.drawImage(whole, image)
+        p.restore()
+        p.save()
+        p.translate(0, opening)
+        p.setClipPath(e.lip, Qt.ClipOperation.IntersectClip)
+        p.drawImage(whole, image)
+        p.restore()
+    else:
+        p.drawImage(whole, image)
+
     if pose.blush > 0.01:
-        for x in (60.0, 140.0):
-            glow = QRadialGradient(QPointF(x, 122), 16)
-            glow.setColorAt(0.0, _alpha(ROSE, 0.55 * pose.blush))
+        for x, y, r in e.cheeks:
+            glow = QRadialGradient(QPointF(x, y), r)
+            glow.setColorAt(0.0, _alpha(ROSE, 0.42 * pose.blush))
             glow.setColorAt(1.0, _alpha(ROSE, 0.0))
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(glow)
-            p.drawEllipse(QPointF(x, 122), 16, 16)
-    if frame.detail > 0.35:
-        p.setPen(_pen(LINE, 1.25))
-        p.setBrush(_alpha("#9C6D24", 0.55))
-        for side in (-1, 1):
-            for dy, dx in ((0, 0), (8, -1), (16, 1)):
-                cx = 100 + side * (43 + dx)
-                p.save()
-                p.translate(cx, 112 + dy)
-                p.rotate(-10 * side)
-                p.drawRoundedRect(QRectF(-4.5, -1.9, 9, 3.8), 1.9, 1.9)
-                p.restore()
+            p.drawEllipse(QPointF(x, y), r, r)
 
-    # Nariz: puente largo con luz y aletas.
-    p.setPen(_pen(_alpha("#FFF1C9", 0.75), 2.2))
-    p.drawLine(QPointF(99.5, 76), QPointF(99.5, 118))
-    p.setPen(_pen(_alpha("#7A5218", 0.55), 1.8))
-    p.drawLine(QPointF(104.5, 80), QPointF(104.0, 119))
-    nose = QPainterPath(QPointF(90, 121.5))
-    nose.quadTo(QPointF(94, 128.5), QPointF(100, 127.5))
-    nose.quadTo(QPointF(106, 128.5), QPointF(110, 121.5))
-    p.setPen(_pen(LINE, 1.9 * bold))
-    p.setBrush(Qt.BrushStyle.NoBrush)
-    p.drawPath(nose)
-    p.setPen(Qt.PenStyle.NoPen)
-    p.setBrush(QColor("#2A1A08"))
-    for x in (94.5, 105.5):
-        p.drawEllipse(QPointF(x, 124.2), 2.1, 1.3)
-
-    # Cejas: surco oscuro con un filo de luz encima.
-    for side in (-1, 1):
-        brow = brow_path(side, pose)
-        p.setBrush(Qt.BrushStyle.NoBrush)
-        p.setPen(_pen(_alpha("#FFF1C9", 0.55), 1.4))
-        p.drawPath(brow.translated(0, -2.0))
-        p.setPen(_pen(LINE, 2.6 * bold))
-        p.drawPath(brow)
-
-    # Ojos.
-    for side, cx in ((-1, 74.0), (1, 126.0)):
-        wink = pose.wink_l if side < 0 else pose.wink_r
-        path, g = eye_shape(cx, 99.0, side, pose, frame.blink, wink)
+    for (x, y, r), (color, glow) in zip(e.gems, frame.gems):
+        if glow <= 0.01:
+            continue
+        halo = QRadialGradient(QPointF(x, y), r * 1.75)
+        halo.setColorAt(0.0, _alpha(color, 0.9 * glow))
+        halo.setColorAt(0.5, _alpha(color, 0.4 * glow))
+        halo.setColorAt(1.0, _alpha(color, 0.0))
         p.setPen(Qt.PenStyle.NoPen)
-        socket = QLinearGradient(0, 99 - g["up"], 0, 99 + g["lo"])
-        socket.setColorAt(0.0, QColor("#0B0603"))
-        socket.setColorAt(1.0, QColor("#2A1B0A"))
-        p.setBrush(socket)
-        p.drawPath(path)
-        if g["up"] + g["lo"] > 2.0:  # iris y brillo, dentro del ojo
-            p.save()
-            p.setClipPath(path)
-            ix = cx + pose.gaze_x * g["w"] * 0.4
-            iy = 99.5 + pose.gaze_y * 2.8
-            r = 5.2 * min(1.15, pose.eye_wide)
-            iris = QRadialGradient(QPointF(ix, iy), r)
-            iris.setColorAt(0.0, QColor("#6B4A15"))
-            iris.setColorAt(0.75, QColor("#3B2708"))
-            iris.setColorAt(1.0, QColor("#B98A35"))
-            p.setBrush(iris)
-            p.drawEllipse(QPointF(ix, iy), r, r)
-            p.setBrush(QColor("#050302"))
-            p.drawEllipse(QPointF(ix, iy), r * 0.48, r * 0.48)
-            p.setBrush(QColor("#FFF6DA"))
-            p.drawEllipse(QPointF(ix - r * 0.33, iy - r * 0.36), r * 0.26, r * 0.26)
-            p.setBrush(_alpha("#FFF6DA", 0.6))
-            p.drawEllipse(QPointF(ix + r * 0.32, iy + r * 0.28), r * 0.12, r * 0.12)
-            p.restore()
-        # Párpado superior tallado y línea de abajo.
-        lid = QPainterPath(QPointF(*g["outer"]))
-        _quad(lid, g["upper"], g["inner"])
-        p.setBrush(Qt.BrushStyle.NoBrush)
-        p.setPen(_pen("#4A300C", 2.4 * bold))
-        p.drawPath(lid)
-        p.setPen(_pen(_alpha("#FFF1C9", 0.5), 1.1))
-        p.drawPath(lid.translated(0, -2.4))
-        low = QPainterPath(QPointF(*g["inner"]))
-        _quad(low, g["lower"], g["outer"])
-        p.setPen(_pen(_alpha("#5C3F12", 0.85), 1.2))
-        p.drawPath(low)
+        p.setBrush(halo)
+        p.drawEllipse(QPointF(x, y), r * 1.75, r * 1.75)
+        lit = QRadialGradient(QPointF(x, y), r * 0.9)
+        lit.setColorAt(0.0, _alpha("#FFFFFF", 0.85 * glow))
+        lit.setColorAt(0.6, _alpha(color, 0.55 * glow))
+        lit.setColorAt(1.0, _alpha(color, 0.0))
+        p.setBrush(lit)
+        p.drawEllipse(QPointF(x, y), r * 0.9, r * 0.9)
 
-    # Boca.
-    mouth = mouth_geometry(pose)
-    p.setPen(Qt.PenStyle.NoPen)
-    p.setBrush(QColor("#1A0E05"))
-    p.drawPath(mouth["opening"])
-    lips = QLinearGradient(0, 138, 0, 166)
-    lips.setColorAt(0.0, QColor("#E0AE5A"))
-    lips.setColorAt(0.5, QColor("#B57E2C"))
-    lips.setColorAt(1.0, QColor("#7E5418"))
-    p.setBrush(lips)
-    p.setPen(_pen(_alpha(LINE, 0.9), 1.1))
-    p.drawPath(mouth["upper"])
-    p.drawPath(mouth["lower"])
-    p.setBrush(Qt.BrushStyle.NoBrush)
-    p.setPen(_pen(_alpha("#2E1C07", 0.95), 1.7 * bold))
-    p.drawPath(mouth["crease"])
-    p.setPen(Qt.PenStyle.NoPen)
-    p.setBrush(_alpha("#FFEDB8", 0.55))
-    bottom = 148.0 - 4.0 * pose.smile + 5.5 + 7.0 * pose.mouth_open
-    p.drawEllipse(QPointF(100, bottom), 5.5 * pose.mouth_width, 1.6)
-    # Luz en el mentón.
-    p.setBrush(_alpha("#FFF1C9", 0.28))
-    p.drawEllipse(QPointF(100, 168), 9, 3)
+    for side, eye in zip((-1, 1), e.eyes):
+        _paint_eye(p, e, image, eye, side, pose, frame.blink, pose.wink_l if side < 0 else pose.wink_r)
+
+    if 0.0 <= frame.sheen <= 1.0:
+        _paint_sheen(p, e, image, frame.sheen)
 
 
-def _paint_sheen(p: QPainter, face: QPainterPath, position: float) -> None:
-    """Un destello que cruza el oro en diagonal (al pasar el ratón o al terminar algo)."""
-    if not 0.0 <= position <= 1.0:
-        return
-    x = -40 + position * 280
-    sheen = QLinearGradient(x - 30, 0, x + 30, 60)
-    sheen.setColorAt(0.0, _alpha("#FFFFFF", 0.0))
-    sheen.setColorAt(0.5, _alpha("#FFFFFF", 0.38))
-    sheen.setColorAt(1.0, _alpha("#FFFFFF", 0.0))
+def _paint_eye(p: QPainter, e: Emblem, image: QImage, eye: _Eye, side: int, pose: Pose, blink: float,
+               wink: float) -> None:
+    """Las «pupilas» (las ventanas oscuras del logo) miran hacia el cursor; los párpados dorados parpadean,
+    entrecierran o sonríen."""
+    dx = pose.gaze_x * eye.hw * 0.24
+    dy = pose.gaze_y * eye.hh * 0.22
+    grow = max(0.85, min(1.25, 1.0 + (pose.eye_wide - 1.0) * 1.6 + max(0.0, pose.eye_open - 1.0) * 0.3))
     p.save()
-    clip = QPainterPath(face)
-    clip.addRoundedRect(QRectF(30, 34, 140, 28), 5, 5)
-    p.setClipPath(clip)
-    p.setPen(Qt.PenStyle.NoPen)
-    p.setBrush(sheen)
-    p.drawRect(QRectF(0, 0, 200, 200))
+    p.setClipPath(eye.zone, Qt.ClipOperation.IntersectClip)
+    lid = QLinearGradient(0, eye.top, 0, eye.bottom)
+    lid.setColorAt(0.0, eye.gold.lighter(122))
+    lid.setColorAt(0.55, eye.gold)
+    lid.setColorAt(1.0, eye.gold.darker(130))
+    if abs(dx) > 0.15 or abs(dy) > 0.15 or abs(grow - 1.0) > 0.01:
+        p.fillPath(eye.zone, lid)
+        move = QTransform()
+        move.translate(eye.cx + dx, eye.cy + dy)
+        move.scale(grow, grow)
+        move.translate(-eye.cx, -eye.cy)
+        for window in eye.windows:
+            p.fillPath(move.map(window), DARK)
+        p.save()
+        p.setTransform(move, True)
+        p.drawImage(QRectF(0, 0, e.w, e.h), image)
+        p.restore()
+
+    height = eye.bottom - eye.top
+    closed = max(blink, wink)
+    upper = max(0.0, min(1.0, 1.0 - pose.eye_open))
+    upper += (1.0 - upper) * closed
+    slant = pose.brow_tilt * 0.22  # >0 concentración (tapa el lado de la nariz) · <0 preocupación (el de fuera)
+    inner = max(0.0, min(1.0, upper + max(0.0, slant)))
+    outer = max(0.0, min(1.0, upper + max(0.0, -slant)))
+    if pose.eye_lower < 0:
+        lower = min(0.9, -pose.eye_lower * 0.75)  # ojos sonrientes: el de abajo sube en media luna
+    else:
+        lower = max(0.0, (pose.eye_lower - 1.0) * 0.6)
+    lower *= 1.0 - closed
+    inner_x = eye.right if side < 0 else eye.left
+    outer_x = eye.left if side < 0 else eye.right
+    if inner > 0.005 or outer > 0.005:
+        y_in = eye.top + inner * height * 1.06
+        y_out = eye.top + outer * height * 1.06
+        sag = height * 0.16 * min(1.0, (inner + outer) / 2) * (1.0 - closed * 0.7)
+        edge = QPainterPath(QPointF(inner_x, y_in))
+        edge.quadTo(QPointF(eye.cx, (y_in + y_out) / 2 + sag), QPointF(outer_x, y_out))
+        shape = QPainterPath(QPointF(outer_x, eye.top - 6))
+        shape.lineTo(inner_x, eye.top - 6)
+        shape.lineTo(inner_x, y_in)
+        shape.quadTo(QPointF(eye.cx, (y_in + y_out) / 2 + sag), QPointF(outer_x, y_out))
+        shape.closeSubpath()
+        p.fillPath(shape, lid)
+        p.strokePath(edge, _pen(_alpha(CREASE, 0.9), 2.4))
+    if lower > 0.005:
+        y_low = eye.bottom - lower * height
+        edge = QPainterPath(QPointF(eye.left, y_low))
+        edge.quadTo(QPointF(eye.cx, y_low - height * 0.45 * lower), QPointF(eye.right, y_low))
+        shape = QPainterPath(QPointF(eye.left, eye.bottom + 6))
+        shape.lineTo(eye.left, y_low)
+        shape.quadTo(QPointF(eye.cx, y_low - height * 0.45 * lower), QPointF(eye.right, y_low))
+        shape.lineTo(eye.right, eye.bottom + 6)
+        shape.closeSubpath()
+        p.fillPath(shape, lid)
+        p.strokePath(edge, _pen(_alpha(CREASE, 0.85), 2.0))
     p.restore()
+
+
+def _paint_sheen(p: QPainter, e: Emblem, image: QImage, position: float) -> None:
+    """Un destello que cruza el oro en diagonal (solo el oro: el fondo del logo no brilla)."""
+    layer = QImage(image.size(), QImage.Format.Format_ARGB32_Premultiplied)
+    layer.fill(Qt.GlobalColor.transparent)
+    k = image.width() / e.w
+    x = (-0.2 + position * 1.4) * e.w
+    shine = QLinearGradient((x - 70) * k, 0, (x + 70) * k, 140 * k)
+    shine.setColorAt(0.0, _alpha("#FFFFFF", 0.0))
+    shine.setColorAt(0.5, _alpha("#FFFFFF", 0.45))
+    shine.setColorAt(1.0, _alpha("#FFFFFF", 0.0))
+    lp = QPainter(layer)
+    lp.fillRect(layer.rect(), shine)
+    lp.setCompositionMode(QPainter.CompositionMode.CompositionMode_DestinationIn)
+    lp.drawImage(0, 0, image)
+    lp.end()
+    p.drawImage(QRectF(0, 0, e.w, e.h), layer)
 
 
 def _paint_fx(p: QPainter, frame: Frame, badge: bool) -> None:
@@ -557,41 +476,32 @@ def _sparkle(p: QPainter, x: float, y: float, size: float, color: str, alpha: fl
 
 
 def paint_mascot(p: QPainter, rect: QRectF, frame: Frame, badge: bool = False, glow: float = 0.0) -> None:
-    """Dibuja la máscara en `rect` (cuadrado). Con `badge`, dentro del disco oscuro del bubble."""
+    """Dibuja la máscara (el logo original, animado) en `rect`. Con `badge`, dentro del disco del bubble."""
+    e = emblem()
     p.save()
     p.setRenderHint(QPainter.RenderHint.Antialiasing)
     p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
     side = min(rect.width(), rect.height())
-    shown = side * (BADGE_SCALE if badge else 1.0)  # tamaño al que se ve la máscara
-    frame.detail = max(0.0, min(1.0, (shown - 40.0) / 80.0))
     p.translate(rect.x() + (rect.width() - side) / 2, rect.y() + (rect.height() - side) / 2)
     p.scale(side / 200.0, side / 200.0)
     if badge:
         paint_badge_disc(p, glow)
-        p.save()
         p.setClipPath(_circle(100, 100, 95.5))
-        p.translate(100, 108)
-        p.scale(BADGE_SCALE, BADGE_SCALE)
-        p.translate(-100, -106)
-    pose = frame.pose
-    head = QTransform()
-    head.translate(100, 179 + frame.bob)
-    head.rotate(pose.tilt)
-    head.scale(1 + frame.squash * 0.6, 1 - frame.squash)
-    head.translate(-100, -179)
+    width = BADGE_WIDTH if badge else BARE_WIDTH
+    scale = width / e.w
     p.save()
+    p.translate(100 - width / 2, (106 if badge else 100) - e.h * scale / 2)
+    p.scale(scale, scale)
+    px, py = e.pivot
+    head = QTransform()
+    head.translate(px, py + frame.bob / scale)
+    head.rotate(frame.pose.tilt)
+    head.scale(1 + frame.squash * 0.6, 1 - frame.squash)
+    head.translate(-px, -py)
     p.setTransform(head, True)
-    face = _paint_face(p)
-    _paint_crown(p, frame)
-    _paint_features(p, frame)
-    _paint_sheen(p, face, frame.sheen)
-    if frame.fx == "sweat" or frame.fx == "sparkles":
-        _paint_fx(p, frame, badge)
+    _paint_emblem(p, e, e.scaled(_device_width(p, e.w)), frame)
     p.restore()
-    if badge:
-        p.restore()
-    if frame.fx not in ("sweat", "sparkles"):
-        _paint_fx(p, frame, badge)
+    _paint_fx(p, frame, badge)
     p.restore()
 
 
