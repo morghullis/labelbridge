@@ -39,7 +39,7 @@ from ...connectors.shopify import admin_url
 from ...i18n import N_, date_text, tr
 from .. import icons
 from ..context import AppContext
-from ..widgets import Card, Page, button, copy_to_clipboard, error, info, label, run_async
+from ..widgets import Card, Page, button, copy_to_clipboard, error, info, label, run_async, run_dialog
 
 PERIODS = (("today", N_("Hoy")), (7, N_("Últimos 7 días")), (30, N_("Últimos 30 días")), (60, N_("Últimos 60 días")))
 STALE_SECONDS = 60
@@ -88,7 +88,7 @@ def guide_text(row: OrderRow) -> str:
         state = {"yes": tr("impresa"), "failed": tr("sin imprimir"), "pending": tr("imprimiendo")}.get(row.printed, "")
         return money(row.cost) + (f" · {state}" if state else "")
     if row.voided:
-        return f"anulada ({money(row.voided)})"
+        return tr("anulada ({0})", money(row.voided))
     return "—"
 
 
@@ -537,6 +537,9 @@ class OrdersPage(Page):
         self.all_rows = rows
         self.notice.setVisible(False)
         self._render()
+        if self.ctx.services.shopify.overview_truncated:  # Shopify devuelve como mucho 1000 por consulta
+            self.notice.setText(tr("Se muestran los {0} pedidos más recientes de este período: elige un período más corto para ver los anteriores.", len(rows)))
+            self.notice.setVisible(True)
 
     def _failed(self, message: str) -> None:
         self.loading = False
@@ -691,12 +694,17 @@ class OrdersPage(Page):
             self._retry(row)
 
     def _reprint(self, row: OrderRow) -> None:
-        jobs = [
-            job for job in self.ctx.store.list(limit=3000)
-            if job.get("source") == "shopify"
-            and str((job.get("meta") or {}).get("order_id")) == row.legacy
-            and "tracking" in (job.get("meta") or {})
-        ]
+        def find() -> list[dict]:
+            return [
+                job for job in self.ctx.store.list(limit=3000)
+                if job.get("source") == "shopify"
+                and str((job.get("meta") or {}).get("order_id")) == row.legacy
+                and "tracking" in (job.get("meta") or {})
+            ]
+
+        run_async(find, lambda jobs: self._reprint_jobs(row, jobs), lambda message: error(self, tr("Reimprimir"), message))
+
+    def _reprint_jobs(self, row: OrderRow, jobs: list[dict]) -> None:
         if not jobs:  # se compró en Shopify: LabelBridge trae el PDF de ahí
             run_async(
                 lambda: self.ctx.services.shopify.print_order_labels(row.legacy, row.name),
@@ -714,14 +722,14 @@ class OrdersPage(Page):
         from ..purchase_dialog import PurchaseDialog
 
         dialog = PurchaseDialog(self, self.ctx, row)
-        dialog.exec()
+        run_dialog(dialog)
         if dialog.bought:
             self.reload()
 
     def edit_rules(self) -> None:
         s = self.ctx.cfg.data.shopify
         dialog = ShippingRulesDialog(self, s.shipping_rules, s.default_carrier)
-        if dialog.exec() != QDialog.DialogCode.Accepted:
+        if run_dialog(dialog) != QDialog.DialogCode.Accepted:
             return
         s.shipping_rules = dialog.rules()
         s.default_carrier = dialog.default.currentData() or "USPS"

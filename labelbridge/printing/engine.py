@@ -17,6 +17,7 @@ from urllib.parse import urlparse
 from .. import events as ev
 from .. import net
 from ..config import LABEL_MEDIA, MEDIA_PRESETS, ConfigManager, PrinterProfile
+from ..security.policy import is_local_network_host
 from ..i18n import tr
 from ..jobstore import JobStore
 from ..labels.order import normalize_order
@@ -68,6 +69,8 @@ def resolve_printer(requested: str, cfg: ConfigManager) -> PrinterProfile:
         parsed = urlparse(name)
         if not parsed.hostname:
             raise PermanentPrintError(tr("Dirección de impresora inválida: {0}", name))
+        if not is_local_network_host(parsed.hostname):
+            raise PermanentPrintError(tr("Solo se aceptan impresoras de la red local en un trabajo: {0}", parsed.hostname))
         scheme = parsed.scheme.lower()
         port = parsed.port or (9100 if scheme in ("tcp", "raw") else 631)
         if port not in ADHOC_PORTS:
@@ -190,8 +193,8 @@ class PrintEngine:
         from ..security.policy import PolicyDenied
 
         headers = dict(job["headers"] or {})
-        for provider in self.url_auth_providers:
-            headers.update(provider(job["url"]) or {})
+        for provider in self.url_auth_providers:  # cada uno decide según la URL y de dónde vino el trabajo
+            headers.update(provider(job["url"], job["source"]) or {})
         guard = self.policy.url_guard(job["source"])
         try:
             resp = net.request("GET", job["url"], headers=headers or None, timeout=45, url_guard=guard)
@@ -237,7 +240,7 @@ class PrintEngine:
                 retryable = False
         else:
             log.exception("Error imprimiendo %s", job["title"])
-            message = f"Error inesperado: {exc}"
+            message = tr("Error inesperado: {0}", exc)
         printer_name = profile.display_name() if profile else ""
         attempts = job["attempts"]
         max_retries = max(0, self.cfg.data.general.max_retries)

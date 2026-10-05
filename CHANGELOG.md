@@ -2,6 +2,19 @@
 
 Cada versión publicada muestra estas notas en la ventana de actualización de la app y en la página de descargas.
 
+## 1.8.1
+
+- **Revisión completa del código** (arquitectura, errores, seguridad, pantallas y pruebas) y corrección de todo lo importante que encontró:
+- **Compras de guías más seguras.** «Comprar guía…» ya no puede comprar a la vez que la compra automática (en un caso raro se podían pagar dos guías del mismo pedido). Una compra sin confirmar nunca se repite, una que Shopify rechazó sí se puede volver a comprar, y una compra pendiente que da error ya no frena la impresión de las demás.
+- Si Windows está en **modo oscuro**, la app sigue en claro: antes tablas, menús y listas podían quedar con texto blanco sobre blanco.
+- Las confirmaciones importantes tienen **«No»** como respuesta predeterminada (Enter no compra ni borra nada), «Reprocesar» con la compra activa pide confirmación y la ventana del asistente tiene «No permitir» como predeterminado.
+- **Seguridad:** el acceso a Shopify solo se usa en los trabajos de Shopify; un trabajo de la API local o de n8n solo puede imprimir en impresoras de la red local; una página web ya no puede bloquear ni usar la API local; las actualizaciones sin su huella SHA-256 no se instalan; el asistente pide confirmación (con todos los valores) para cambiar el máximo de guías por día, comprar pedidos sin pagar, avisar a clientes o mover n8n a otro servidor, y solo agrega impresoras de la red local.
+- Pedidos carga hasta **1000 pedidos** del período (antes 200) y avisa si quedan más.
+- Pedidos funciona también en inglés con apps de Shopify con pocos permisos, un trabajo cancelado ya no queda «Imprimiendo…», las fechas de entrega estimadas ya no avisan de retraso un día antes y «Reprocesar» durante una revisión ya no se pierde.
+- Los ajustes que agrega una versión nueva se conservan aunque vuelvas a una anterior y actualices otra vez.
+- Más textos traducidos al inglés, ventanas que liberan memoria al cerrarse, la guía carga sus capturas al abrir cada paso y los sonidos ya no traban la ventana.
+- Compilación más segura: se detiene ante cualquier error, comprueba la versión antes de publicar, no publica dos versiones a la vez y vuelve a correr la prueba de actualización en Windows.
+
 ## 1.8.0
 
 - **Comprar guía desde LabelBridge.** Cualquier pedido que necesite a una persona (Shopify rechazó la compra, se llegó al límite diario, es de antes de conectar la app…) tiene el botón **Comprar guía…** en **Pedidos**: eliges el paquete (el de Shopify o tu caja con sus medidas, que se puede recordar), el peso si hace falta y si avisar al cliente, pulsas **Confirmar y comprar** y LabelBridge la compra con Shopify Shipping, la imprime y Shopify deja el pedido preparado con su número de seguimiento.

@@ -85,7 +85,7 @@ class Tray(QSystemTrayIcon):
                 self.showMessage(data.get("title", APP_NAME), data.get("message", ""), icon, 6000)
             alerts.play_for(self.ctx.cfg, kind)  # el sonido va aparte: se puede tener sonido sin aviso
         elif kind == "connector" and isinstance(data, dict) and data.get("state") == "error":
-            names = {"shopify": tr("Shopify"), "mqtt": "n8n (tiempo real)", "local_api": tr("API local")}
+            names = {"shopify": tr("Shopify"), "mqtt": tr("n8n (tiempo real)"), "local_api": tr("API local")}
             name = names.get(data.get("name"), data.get("name"))
             key = f"conn|{data.get('name')}"
             now = time.time()

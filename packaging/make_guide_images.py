@@ -447,7 +447,7 @@ def main() -> None:
 
     i18n.set_language(LANG)
     printers_page.list_system_printers = fake_system_printers
-    app.setStyleSheet(theme.STYLESHEET)
+    theme.apply_theme(app)
     if sys.platform == "win32":
         app.setFont(QFont("Segoe UI", 10))
 

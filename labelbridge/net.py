@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import http.client
 import json
 import socket
 import ssl
@@ -155,6 +156,8 @@ def request(
             raise HttpError(exc.code, content, url) from None
         resp_headers = {k.lower(): v for k, v in (exc.headers or {}).items()}
         return Response(exc.code, content, url, resp_headers)
+    except http.client.HTTPException as exc:  # respuesta cortada o mal formada: pudo haberse procesado
+        raise NetworkError(tr("Error de red con {0}: {1}", url, exc or type(exc).__name__)) from None
     except urllib.error.URLError as exc:
         before_send = isinstance(exc.reason, (socket.gaierror, ConnectionRefusedError, ssl.SSLCertVerificationError))
         raise NetworkError(tr("No se pudo conectar a {0}: {1}", url, exc.reason), maybe_sent=not before_send) from None

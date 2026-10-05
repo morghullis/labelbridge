@@ -94,7 +94,7 @@ def main(argv: list[str] | None = None) -> int:
     from .ui.update_dialog import WhatsNewDialog
     from .updater import failed_update, pending_whats_new
     from .ui.pages.guide import is_complete as guide_complete
-    from .ui.theme import STYLESHEET
+    from .ui.theme import apply_theme
     from .ui.tray import Tray
 
     QApplication.setApplicationName(APP_NAME)
@@ -119,7 +119,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if sys.platform == "win32":
         app.setFont(QFont("Segoe UI", 10))
-    app.setStyleSheet(STYLESHEET)
+    apply_theme(app)  # siempre claro, aunque Windows esté en modo oscuro
     app.setWindowIcon(icons.app_icon())
 
     secrets = SecretStore(data_dir() / "secrets.json")

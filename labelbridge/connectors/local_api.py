@@ -142,12 +142,23 @@ class _Handler(BaseHTTPRequestHandler):
     def client(self) -> str:
         return str(self.client_address[0])
 
+    def _from_another_site(self) -> bool:
+        """Una página web abierta en el navegador (n8n, scripts y ERP no mandan Origin ni Sec-Fetch-Site)."""
+        if self.headers.get("Sec-Fetch-Site", "").lower() == "cross-site":
+            return True
+        origin = self.headers.get("Origin", "")
+        return bool(origin) and urlparse(origin).hostname not in ("localhost", "127.0.0.1", "::1")
+
     def _admit(self) -> bool:
         """Middleware de cada petición: bloqueo por claves incorrectas, Host permitido y límite por minuto."""
         policy = self.svc.policy
         blocked = policy.api_failures.blocked_for(self.client)
         if blocked:
             self._send(429, {"error": "Equipo bloqueado temporalmente por claves incorrectas."}, retry_after=blocked)
+            return False
+        if self._from_another_site():
+            policy.audit.record("api", self.command, "deny", client=self.client, detail=tr("petición de otro sitio web"))
+            self._send(403, {"error": "Peticiones desde otros sitios web no permitidas"})
             return False
         if not self.svc.host_allowed(self.headers.get("Host", ""), self.client):
             policy.audit.record("api", self.command, "deny", client=self.client, detail=tr("Host {0}", self.headers.get('Host')))
@@ -168,7 +179,7 @@ class _Handler(BaseHTTPRequestHandler):
         policy = self.svc.policy
         if ok:
             policy.api_failures.success(self.client)
-        elif policy.api_failures.failure(self.client):
+        elif provided and policy.api_failures.failure(self.client):  # sin clave no cuenta: una web no puede bloquearla
             minutes = self.svc.cfg.data.security.api_block_minutes
             policy.audit.record("api", "autenticación", "block", client=self.client, detail=f"{minutes} min")
             self.svc.events.notify(

@@ -126,7 +126,17 @@ def error(parent: QWidget, title: str, text: str) -> None:
 
 
 def confirm(parent: QWidget, title: str, text: str) -> bool:
-    return QMessageBox.question(parent, title, text) == QMessageBox.StandardButton.Yes
+    """Sí/No con «No» como respuesta predeterminada: Enter nunca confirma algo que cuesta o borra."""
+    buttons = QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+    return QMessageBox.question(parent, title, text, buttons, QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes
+
+
+def run_dialog(dialog) -> int:
+    """Abre un diálogo modal y lo libera al terminar (si no, queda en memoria hasta cerrar la ventana padre)."""
+    try:
+        return dialog.exec()
+    finally:
+        dialog.deleteLater()
 
 
 def copy_to_clipboard(text: str) -> None:

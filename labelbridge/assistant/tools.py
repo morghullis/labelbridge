@@ -32,6 +32,7 @@ from ..secret_store import MQTT_PASSWORD, SHOPIFY_ACCESS_TOKEN, SHOPIFY_CLIENT_S
 from ..system import autostart, windows_printers
 from ..updater import UPDATES_PAGE
 from .secrets_guard import SecretsGuard
+from ..security.policy import is_local_network_host
 from ..i18n import N_, tr
 
 log = logging.getLogger(__name__)
@@ -419,6 +420,8 @@ class Toolbox:
                 ipaddress.ip_address(ip)
             except ValueError:
                 raise ToolError("Falta la IP de la impresora o no es válida (ejemplo: 192.168.1.50).") from None
+            if not is_local_network_host(ip):
+                raise ToolError("Solo impresoras de la red local (IP privada como 192.168.x.x).")
             found = next((p for p in self.ctx.services.network.results if p.ip == ip), None)
             suggested = found.suggested() if found else {"protocol": "raw", "port": 9100, "language": "zpl"}
             protocol = a.get("protocol") or suggested["protocol"]
@@ -470,6 +473,8 @@ class Toolbox:
                 ipaddress.ip_address(a["ip"].strip())
             except ValueError:
                 raise ToolError("La IP no es válida.") from None
+            if not is_local_network_host(a["ip"]):
+                raise ToolError("Solo impresoras de la red local (IP privada como 192.168.x.x).")
             profile.host = a["ip"].strip()
         if "port" in a:
             if not 1 <= a["port"] <= 65535:
@@ -606,6 +611,23 @@ class Toolbox:
             "connector_enabled": self.ctx.cfg.data.shopify.enabled,
         }
 
+    @staticmethod
+    def _purchase_changes(a: dict, s) -> list[str]:
+        """Los cambios que afectan al dinero o al cliente, en palabras, para la ventana de confirmación."""
+        yes, no = tr("sí"), tr("no")
+        lines = []
+        if "max_labels_per_day" in a and a["max_labels_per_day"] != s.max_labels_per_day:
+            lines.append(tr("Máximo de guías por día: {0} → {1}", s.max_labels_per_day, a["max_labels_per_day"]))
+        if "only_paid" in a and a["only_paid"] != s.only_paid:
+            lines.append(tr("Solo pedidos pagados: {0} → {1}", yes if s.only_paid else no, yes if a["only_paid"] else no))
+        if "only_unfulfilled" in a and a["only_unfulfilled"] != s.only_unfulfilled:
+            lines.append(tr("Solo pedidos sin preparar: {0} → {1}", yes if s.only_unfulfilled else no,
+                            yes if a["only_unfulfilled"] else no))
+        if "notify_customer" in a and a["notify_customer"] != s.notify_customer:
+            lines.append(tr("Avisar al cliente por correo: {0} → {1}", yes if s.notify_customer else no,
+                            yes if a["notify_customer"] else no))
+        return lines
+
     def set_shopify_printing(self, a: dict) -> dict:
         s = self.ctx.cfg.data.shopify
         printers = {}
@@ -616,18 +638,24 @@ class Toolbox:
             raise ToolError("max_labels_per_day debe estar entre 1 y 5000.")
         if "poll_seconds" in a and not 15 <= a["poll_seconds"] <= 3600:
             raise ToolError("poll_seconds debe estar entre 15 y 3600.")
-        if a.get("buy_shipping_label") and not s.buy_shipping_label:
+        sensitive = self._purchase_changes(a, s)
+        activating = bool(a.get("buy_shipping_label")) and not s.buy_shipping_label
+        if activating or (sensitive and (s.buy_shipping_label or a.get("buy_shipping_label"))):
             limit = a.get("max_labels_per_day", s.max_labels_per_day)
-            approved = self.ui.confirm(
-                tr("Comprar guías de Shopify Shipping automáticamente"),
-                tr("El asistente quiere activar la compra automática de guías de envío.\n\nPor cada pedido nuevo pagado y pendiente de envío, LabelBridge comprará la guía con Shopify Shipping (usando el paquete y la tarifa predeterminados de tu tienda) y la imprimirá. Shopify cobra cada guía en tu factura. Máximo {0} guías por día.\n\n¿Activar la compra automática en este PC?", limit),
-                tr("Activar compra de guías"),
-            )
-            if not approved:
+            details = "".join(f"\n• {line}" for line in sensitive)
+            if activating:
+                title, accept = tr("Comprar guías de Shopify Shipping automáticamente"), tr("Activar compra de guías")
+                text = tr("El asistente quiere activar la compra automática de guías de envío.\n\nPor cada pedido nuevo pagado y pendiente de envío, LabelBridge comprará la guía con Shopify Shipping (usando el paquete y la tarifa predeterminados de tu tienda) y la imprimirá. Shopify cobra cada guía en tu factura. Máximo {0} guías por día.\n\n¿Activar la compra automática en este PC?", limit)
+            else:
+                title, accept = tr("Cambiar la compra de guías"), tr("Aplicar cambios")
+                text = tr("El asistente quiere cambiar cómo se compran las guías (Shopify cobra cada una):")
+            if details:
+                text += "\n" + tr("Cambios:") + details
+            if not self.ui.confirm(title, text, accept):
                 # No se aplica nada de esta petición: apagar otras etiquetas sin la guía dejaría pedidos sin imprimir.
                 return {
                     "applied": False,
-                    "reason": "El usuario no aprobó la compra de guías en la ventana de confirmación; no se cambió nada.",
+                    "reason": "El usuario no aprobó los cambios de la compra de guías en la ventana de confirmación; no se cambió nada.",
                 }
         result: dict[str, Any] = {"applied": True}
         for key in (
@@ -881,6 +909,20 @@ class Toolbox:
     # --- n8n en tiempo real (MQTT) ------------------------------------------------------------------
     def set_n8n_connection(self, a: dict) -> dict:
         m = self.ctx.cfg.data.mqtt
+        new_host = a["host"].strip().removeprefix("mqtts://").removeprefix("mqtt://").split("/")[0] if "host" in a else m.host
+        new_port, new_tls = a.get("port", m.port), a.get("tls", m.tls)
+        moved = (new_host, new_port) != (m.host, m.port) and bool(m.host)
+        if (moved or (m.tls and not new_tls)) and self.ctx.secrets.get(MQTT_PASSWORD):
+            warning = tr("La contraseña guardada del broker se enviará a {0}:{1}.", new_host, new_port)
+            if not new_tls:
+                warning += " " + tr("Sin TLS la contraseña y las etiquetas viajan sin cifrar.")
+            if not self.ui.confirm(
+                tr("Cambiar el servidor de n8n"),
+                tr("El asistente quiere conectar n8n a otro servidor: {0}:{1} → {2}:{3}.", m.host, m.port, new_host, new_port)
+                + "\n\n" + warning,
+                tr("Cambiar servidor"),
+            ):
+                return {"applied": False, "reason": "El usuario no aprobó cambiar el servidor de n8n; no se cambió nada."}
         if "host" in a:
             m.host = a["host"].strip().removeprefix("mqtts://").removeprefix("mqtt://").split("/")[0]
         if "port" in a:

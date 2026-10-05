@@ -92,9 +92,9 @@ def run(argv: list[str]) -> int:
         from .services import Services
         from .ui.context import AppContext, QtBridge
         from .ui.main_window import NAV, MainWindow
-        from .ui.theme import STYLESHEET
+        from .ui.theme import apply_theme
 
-        app.setStyleSheet(STYLESHEET)
+        apply_theme(app)
         assert i18n.set_language(language) == language, f"no se pudo activar el idioma {language}"
         try:
             cfg = ConfigManager(paths.config_path())

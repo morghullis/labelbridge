@@ -213,3 +213,12 @@ def test_download_page_lists_every_version_from_1_5(tmp_path, monkeypatch):
     downloads = [c for c in calls if c[:3] == ["gh", "release", "download"]]
     assert [c[3] for c in downloads] == ["v1.7.1"]  # ni la actual ni las de antes de la 1.5
     assert json.loads((tmp_path / "fetched" / "releases.json").read_text())["1.7.1"] == "2026-10-05T02:49:17Z"
+
+
+def test_updates_without_a_fingerprint_are_refused(update_server, tmp_path):
+    url, _state = update_server
+    info = updater.check_for_update(url)
+    info.sha256 = ""
+    with pytest.raises(updater.UpdateError, match="SHA-256"):
+        updater.download(info, folder=tmp_path)
+    assert not any(tmp_path.iterdir())

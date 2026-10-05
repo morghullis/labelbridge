@@ -594,3 +594,32 @@ def test_install_windows_printer_only_on_windows(toolbox, monkeypatch):
     toolbox.fake_ui.confirm_answer = True
     result, _ = run(toolbox, "install_windows_printer", ip="192.168.1.50", driver="ZDesigner ZD421-203dpi ZPL", name="Zebra")
     assert result["installed"] is True and installed == [("Zebra", "192.168.1.50", "ZDesigner ZD421-203dpi ZPL", 9100)]
+
+
+def test_label_purchase_changes_are_confirmed_showing_every_value(toolbox, core):
+    s = core.cfg.data.shopify
+    s.buy_shipping_label, s.max_labels_per_day = True, 50
+    toolbox.fake_ui.confirm_answer = False
+    result, error = run(toolbox, "set_shopify_printing", max_labels_per_day=500, only_paid=False)
+    assert not error and result["applied"] is False and s.max_labels_per_day == 50 and s.only_paid is True
+    assert toolbox.fake_ui.confirmations[-1] == "Cambiar la compra de guías"
+    toolbox.fake_ui.confirm_answer = True
+    run(toolbox, "set_shopify_printing", max_labels_per_day=80)
+    assert s.max_labels_per_day == 80
+
+
+def test_moving_n8n_to_another_server_needs_confirmation(toolbox, core):
+    from labelbridge.secret_store import MQTT_PASSWORD
+
+    m = core.cfg.data.mqtt
+    m.host, m.port, m.tls = "broker.emqx.io", 8883, True
+    core.secrets.set(MQTT_PASSWORD, "secreto-del-broker")
+    toolbox.fake_ui.confirm_answer = False
+    result, error = run(toolbox, "set_n8n_connection", host="otro-servidor.example.com", tls=False)
+    assert not error and result["applied"] is False and (m.host, m.tls) == ("broker.emqx.io", True)
+    assert toolbox.fake_ui.confirmations[-1] == "Cambiar el servidor de n8n"
+
+
+def test_the_assistant_only_adds_printers_of_the_local_network(toolbox):
+    output, error = run(toolbox, "add_printer", connection="network", ip="8.8.8.8", alias="lejos")
+    assert error and "red local" in output

@@ -104,14 +104,17 @@ def _delivery(row: "OrderRow", fulfillments: list[dict], now: float, limits) -> 
         return
     latest = max(shipments, key=lambda f: iso_ts(f.get("createdAt")))
     status = str(latest.get("displayStatus") or "")
-    row.delivery, row.eta, row.delivered = status, iso_ts(latest.get("estimatedDeliveryAt")), iso_ts(latest.get("deliveredAt"))
+    eta_text = str(latest.get("estimatedDeliveryAt") or "")
+    row.delivery, row.eta, row.delivered = status, iso_ts(eta_text), iso_ts(latest.get("deliveredAt"))
+    if row.eta and eta_text.endswith(("T00:00:00Z", "T00:00:00+00:00")):
+        row.eta += 12 * 3600  # solo la fecha (medianoche UTC): ese día, no la noche anterior en América
     if row.delivered or status in ("DELIVERED", "PICKED_UP", "CANCELED", "LABEL_VOIDED"):
         return
     if status in DELIVERY_PROBLEMS:
         title, reason = DELIVERY_PROBLEMS[status]
         row.alert, row.alert_title, row.alert_reason = "problem", tr(title), tr(reason)
         return
-    if row.eta and now > row.eta + 12 * 3600:
+    if row.eta and now > row.eta + 24 * 3600:
         row.alert, row.alert_title = "late", tr("Entrega atrasada")
         row.alert_reason = tr("Debía llegar el {0} y todavía no se entrega ({1} día(s) de retraso).",
                               date_text(row.eta, clock=""), max(1, int((now - row.eta) // 86400)))
@@ -309,7 +312,7 @@ def print_state(jobs: list[dict]) -> tuple[str, str]:
     latest = max(jobs, key=lambda j: j.get("updated_at") or j.get("created_at") or 0)
     if latest.get("status") == "failed":
         return "failed", str(latest.get("error") or "")
-    if latest.get("status") == "cancelled":
+    if latest.get("status") in ("canceled", "cancelled"):  # la cola escribe «canceled»
         return "", ""
     return "pending", ""
 
@@ -417,7 +420,7 @@ def classify(
 
     financial = order.get("displayFinancialStatus") or ""
     if order.get("cancelledAt") or financial in REFUNDED_STATUSES:
-        word = "Cancelado" if order.get("cancelledAt") else "Reembolsado"
+        word = tr("Cancelado") if order.get("cancelledAt") else tr("Reembolsado")
         if active:
             return act(
                 tr("{0} con guía activa", word),
@@ -492,7 +495,7 @@ def classify(
     if state == "limit":
         return act(
             tr("Límite diario de guías"),
-            tr("Se alcanzó el máximo de {0} guías por día en las compras automáticas. Pulsa «Comprar guía» para comprarla igual o sube el máximo en Shopify → Máximo por día.", getattr(s, 'max_labels_per_day', 0)),
+            tr("Se alcanzó el máximo de {0} guías por día en las compras automáticas. Pulsa «Comprar guía» para comprarla igual.", getattr(s, 'max_labels_per_day', 0)),
             "retry",
         )
     if not getattr(s, "buy_shipping_label", False):
@@ -548,8 +551,9 @@ def summarize(rows: list[OrderRow]) -> Summary:
         if row.labels:
             summary.labels += row.labels
             summary.cost += row.cost
-            count, cost = summary.by_carrier.get(row.carrier or "Otra", (0, 0.0))
-            summary.by_carrier[row.carrier or "Otra"] = (count + row.labels, round(cost + row.cost, 2))
+            carrier = row.carrier or tr("Otra")
+            count, cost = summary.by_carrier.get(carrier, (0, 0.0))
+            summary.by_carrier[carrier] = (count + row.labels, round(cost + row.cost, 2))
     summary.cost = round(summary.cost, 2)
     summary.voided = round(summary.voided, 2)
     return summary

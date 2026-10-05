@@ -29,7 +29,7 @@ from ...secret_store import SHOPIFY_ACCESS_TOKEN, SHOPIFY_CLIENT_SECRET
 from ...updater import UPDATES_PAGE
 from ..actions import enqueue_test_label
 from ..context import AppContext
-from ..widgets import Card, Page, Pill, button, copy_to_clipboard, label
+from ..widgets import Card, Page, Pill, button, copy_to_clipboard, label, run_dialog
 
 @dataclass
 class Step:
@@ -387,14 +387,24 @@ class GuideImage(QWidget):
     def __init__(self, file_name: str, caption: str) -> None:
         super().__init__()
         self.caption = caption
-        self.pixmap = QPixmap(str(guide_image_path(file_name)))
-        self.available = not self.pixmap.isNull()
-        if not self.available:
+        self.path = guide_image_path(file_name)
+        self.available = self.path.exists()
+        self.pixmap = QPixmap()
+        self.layout_ = QVBoxLayout(self)
+        self.layout_.setContentsMargins(0, 0, 0, 0)
+        self.layout_.setSpacing(4)
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        if self.available and self.pixmap.isNull():
+            self._load()
+
+    def _load(self) -> None:
+        caption, layout = self.caption, self.layout_
+        self.pixmap = QPixmap(str(self.path))
+        if self.pixmap.isNull():
             return
         self.pixmap.setDevicePixelRatio(2.0)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(4)
         logical = self.pixmap.size() / 2.0
         scale = min(1.0, self.MAX_WIDTH / max(1, logical.width()))
         shown = self.pixmap.scaled(
@@ -409,7 +419,7 @@ class GuideImage(QWidget):
         picture.setCursor(Qt.CursorShape.PointingHandCursor)
         picture.setToolTip(tr("Clic para ver en grande"))
         picture.setStyleSheet("QLabel { border: 1px solid #E2E8F0; border-radius: 8px; background: white; }")
-        picture.mousePressEvent = lambda _event: ImageViewer(self.window(), self.pixmap, caption).exec()
+        picture.mousePressEvent = lambda _event: run_dialog(ImageViewer(self.window(), self.pixmap, caption))
         layout.addWidget(picture, 0, Qt.AlignmentFlag.AlignLeft)
         layout.addWidget(label(tr("▲ {0} · clic para ampliar", caption), "Small"))
 

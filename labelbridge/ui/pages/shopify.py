@@ -414,8 +414,15 @@ class ShopifyPage(Page):
         if not self.ctx.cfg.data.shopify.shop.strip():
             error(self, tr("Shopify"), tr("Primero guarda el dominio de la tienda."))
             return
+        hours = self.back_hours.value()
+        if self.ctx.cfg.data.shopify.buy_shipping_label and hours and not confirm(
+            self,
+            tr("Reprocesar pedidos"),
+            tr("La compra automática está activa: LabelBridge comprará (y Shopify cobrará) la guía de cada pedido pagado y sin enviar de las últimas {0} horas.\n\n¿Reprocesar?", hours),
+        ):
+            return
         try:
-            self.ctx.services.shopify.reset_since(self.back_hours.value())
+            self.ctx.services.shopify.reset_since(hours)
         except ShopifyError as exc:
             error(self, tr("Shopify"), str(exc))
             return

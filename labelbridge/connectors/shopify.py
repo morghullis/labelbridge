@@ -38,6 +38,7 @@ from .orders_overview import (
     OVERVIEW_QUERY_BASIC,
     OrderRow,
     classify,
+    friendly_reason,
     label_events,
     rule_for,
     subtotal_of,
@@ -165,11 +166,13 @@ SCOPES_LABELS = (
 
 
 class ShopifyError(Exception):
-    """uncertain=True: no se sabe si Shopify ejecutó la operación (error 5xx, corte a mitad...)."""
+    """uncertain=True: no se sabe si Shopify ejecutó la operación (error 5xx, corte a mitad...).
+    `code` identifica el problema sin depender del idioma del mensaje (p. ej. "access_denied")."""
 
-    def __init__(self, message: str, uncertain: bool = False) -> None:
+    def __init__(self, message: str, uncertain: bool = False, code: str = "") -> None:
         super().__init__(message)
         self.uncertain = uncertain
+        self.code = code
 
 
 class PurchaseRejected(ShopifyError):
@@ -337,9 +340,10 @@ class ShopifyClient:
                 time.sleep(2 + _retry * 2)
                 return self.graphql(query, variables, mutation=mutation, _retry=_retry + 1)
             messages = "; ".join(str(e.get("message", e)) for e in errors)
-            if "access denied" in messages.lower() or "ACCESS_DENIED" in codes:
+            denied = "access denied" in messages.lower() or "ACCESS_DENIED" in codes
+            if denied:
                 messages += tr(" (faltan permisos/scopes en la app de Shopify)")
-            raise ShopifyError(messages, uncertain="INTERNAL_SERVER_ERROR" in codes)
+            raise ShopifyError(messages, uncertain="INTERNAL_SERVER_ERROR" in codes, code="access_denied" if denied else "")
         return payload.get("data") or {}
 
     # --- operaciones -----------------------------------------------------------------------
@@ -385,8 +389,9 @@ class ShopifyClient:
         nodes = (data.get("orders") or {}).get("nodes") or []
         return nodes[0] if nodes else None
 
-    def orders_overview(self, created_from_iso: str, max_pages: int = 8) -> list[dict]:
-        """Pedidos creados desde esa fecha (los más nuevos primero) para la pestaña Pedidos."""
+    def orders_overview(self, created_from_iso: str, max_pages: int = 40) -> tuple[list[dict], bool]:
+        """Pedidos creados desde esa fecha (los más nuevos primero) para la pestaña Pedidos, hasta 25 × max_pages.
+        Devuelve también si quedaron pedidos más viejos sin leer (para avisarlo en pantalla)."""
         orders: list[dict] = []
         after = None
         query = OVERVIEW_QUERY
@@ -395,7 +400,7 @@ class ShopifyClient:
             try:
                 data = self.graphql(query, {"first": 25, "after": after, "query": f"created_at:>='{created_from_iso}'"})
             except ShopifyError as exc:
-                if query is OVERVIEW_QUERY and "permisos" in str(exc):
+                if query is OVERVIEW_QUERY and exc.code == "access_denied":
                     query = OVERVIEW_QUERY_BASIC  # la app no puede leer órdenes de preparación: sin esa parte
                     continue
                 raise
@@ -404,9 +409,9 @@ class ShopifyClient:
             orders.extend(connection.get("nodes") or [])
             page = connection.get("pageInfo") or {}
             if not page.get("hasNextPage"):
-                break
+                return orders, False
             after = page.get("endCursor")
-        return orders
+        return orders, True
 
     def fulfillment_orders(self, order_gid: str) -> list[dict]:
         data = self.graphql(FULFILLMENT_ORDERS_QUERY, {"id": order_gid})
@@ -474,13 +479,16 @@ class ShopifyService(BackgroundService):
         self._limit_warned_day = 0.0
         self._cycle_lock = threading.Lock()
         self._deliveries_at = time.time() - DELIVERY_CHECK_SECONDS + 120  # la primera, a los 2 minutos
+        self._resets = 0  # «Reprocesar» durante una vuelta: esa vuelta no pisa el cursor nuevo
+        self.overview_truncated = False
         events.subscribe(self._on_event)
         engine.url_auth_providers.append(self._auth_headers_for)
 
-    def _auth_headers_for(self, url: str) -> dict[str, str]:
-        """Las descargas de documentos alojados en la propia tienda llevan el token (sin guardarlo en la cola)."""
+    def _auth_headers_for(self, url: str, source: str = "") -> dict[str, str]:
+        """Las descargas de documentos de la propia tienda llevan el token (sin guardarlo en la cola), y solo en los
+        trabajos que creó LabelBridge desde Shopify: uno de la API local o de n8n nunca lo usa."""
         client = self._client
-        if client is None or urlparse(url).hostname != client.shop:
+        if source != "shopify" or client is None or urlparse(url).hostname != client.shop:
             return {}
         try:
             return {"X-Shopify-Access-Token": client.access_token()}
@@ -554,6 +562,7 @@ class ShopifyService(BackgroundService):
 
     def reset_since(self, hours_back: float = 0.0) -> float:
         """Procesar pedidos desde ahora (o desde hace X horas)."""
+        self._resets += 1
         since = time.time() - max(0.0, hours_back) * 3600
         self.store.kv_set(self._key("since"), str(since))
         self.store.kv_set(self._key("cursor"), _ts_to_iso(since))
@@ -598,6 +607,7 @@ class ShopifyService(BackgroundService):
             return self._cycle(client, settings, stop or threading.Event())
 
     def _cycle(self, client: ShopifyClient, settings: ShopifySettings, stop: threading.Event) -> str:
+        resets = self._resets
         since = self.since_ts()
         cursor = self.store.kv_get(self._key("cursor")) or _ts_to_iso(since)
         try:
@@ -620,11 +630,13 @@ class ShopifyService(BackgroundService):
             queued += self._process_order(client, settings, order, since, stop)
             if order.get("updatedAt", "") > newest:
                 newest = order["updatedAt"]
-        # Progreso guardado solo cuando todos los pedidos de estas páginas quedaron procesados.
-        self.store.kv_set(self._key("cursor"), newest)
-        self.store.kv_set(
-            self._key("resume"), json.dumps({"from": query_from, "after": next_after} if next_after else None)
-        )
+        # Progreso guardado solo cuando todos los pedidos de estas páginas quedaron procesados (y si nadie pidió
+        # «Reprocesar» mientras tanto: la próxima vuelta empieza desde ahí).
+        if resets == self._resets:
+            self.store.kv_set(self._key("cursor"), newest)
+            self.store.kv_set(
+                self._key("resume"), json.dumps({"from": query_from, "after": next_after} if next_after else None)
+            )
         queued += self._check_pending_purchases(client, stop=stop)
         queued += self._fetch_bought_labels(client, stop)
         self._flush_tags(client)
@@ -718,7 +730,7 @@ class ShopifyService(BackgroundService):
         """Los pedidos de los últimos `days` días, ordenados para la pestaña Pedidos."""
         s = self.cfg.data.shopify
         now = now or time.time()
-        orders = self.client().orders_overview(_ts_to_iso(now - days * 86400))
+        orders, self.overview_truncated = self.client().orders_overview(_ts_to_iso(now - days * 86400))
         ledgers = self.ledgers()
         jobs: dict[str, list[dict]] = {}
         for job in self.store.list(limit=3000):
@@ -762,6 +774,21 @@ class ShopifyService(BackgroundService):
         return int(created)
 
     # --- compra de etiquetas Shopify Shipping ----------------------------------------------------
+    def _fo_key(self, fo: dict | str) -> str:
+        """La marca «ya se pidió la guía» de una orden de preparación (se pone ANTES de comprar)."""
+        fo_id = fo["id"] if isinstance(fo, dict) else fo
+        return self._key(f"fo:{str(fo_id).rsplit('/', 1)[-1]}:label")
+
+    def _uncertain(self, meta: dict, exc: Exception) -> None:
+        """No se sabe si Shopify compró la guía: queda marcada (nunca se repite sola) y se avisa."""
+        self._note(meta["order_id"], "uncertain", name=meta["order_name"], reason=str(exc))
+        log.error("Shopify: compra de etiqueta sin confirmar para %s: %s", meta["order_name"], exc)
+        self.events.notify(
+            tr("Revisa la etiqueta en Shopify"),
+            tr("{0}: no se pudo confirmar si la etiqueta se compró ({1}). Revísalo en Shopify antes de comprarla a mano.", meta['order_name'], exc),
+            "error", kind="action",
+        )
+
     def _buy_labels(
         self, client: ShopifyClient, s: ShopifySettings, order: dict, meta: dict, stop: threading.Event, *,
         options: dict | None = None, fulfillment_orders: list[dict] | None = None, wait: float = 20,
@@ -786,7 +813,7 @@ class ShopifyService(BackgroundService):
             if method not in SHIPPABLE_METHODS:
                 continue
             fo_id = str(fo["id"])
-            key = self._key(f"fo:{fo_id.rsplit('/', 1)[-1]}:label")
+            key = self._fo_key(fo_id)
             if self.store.seen(key):
                 continue
             attempts_key = key + ":intentos"
@@ -817,7 +844,8 @@ class ShopifyService(BackgroundService):
                 log.error("Shopify rechazó la compra de la etiqueta de %s: %s", meta["order_name"], exc)
                 self.events.notify(
                     tr("No se pudo comprar la etiqueta"),
-                    tr("{0}: {1}. Corrígelo y usa «Reprocesar» en la pantalla Shopify.", meta['order_name'], exc),
+                    tr("{0}: {1}. Corrígelo y pulsa «Comprar guía…» en la pestaña Pedidos.", meta['order_name'],
+                       friendly_reason(str(exc))),
                     "error", kind="action",
                 )
                 continue
@@ -825,17 +853,14 @@ class ShopifyService(BackgroundService):
                 if not getattr(exc, "uncertain", False) and not getattr(exc, "maybe_sent", False):
                     self.store.unmark_seen(key)  # seguro que no llegó a Shopify
                     raise
-                # No sabemos si Shopify la compró: no se reintenta sola para no pagar dos veces.
-                self._note(meta["order_id"], "uncertain", name=meta["order_name"], reason=str(exc))
-                log.error("Shopify: compra de etiqueta sin confirmar para %s: %s", meta["order_name"], exc)
-                self.events.notify(
-                    tr("Revisa la etiqueta en Shopify"),
-                    tr("{0}: no se pudo confirmar si la etiqueta se compró ({1}). Revísalo en Shopify antes de comprarla a mano.", meta['order_name'], exc),
-                    "error", kind="action",
-                )
+                self._uncertain(meta, exc)  # no sabemos si Shopify la compró: no se reintenta sola
+                continue
+            except Exception as exc:  # cualquier otro fallo a mitad de la compra: tampoco se sabe si se pagó
+                log.exception("Shopify: fallo inesperado comprando la guía de %s", meta["order_name"])
+                self._uncertain(meta, exc)
                 continue
             pending = self._pending()
-            pending[result_id] = {**meta, "started": time.time()}
+            pending[result_id] = {**meta, "started": time.time(), "fo_key": key}
             self._save_pending(pending)
             self._note(meta["order_id"], "purchasing", name=meta["order_name"])
             log.info("Shopify: compra de etiqueta iniciada para %s", meta["order_name"])
@@ -867,7 +892,8 @@ class ShopifyService(BackgroundService):
                            kind="new_order")
 
     def buy_label_now(
-        self, legacy: str, *, package: dict | None = None, total_weight: dict | None = None, notify: bool | None = None
+        self, legacy: str, *, package: dict | None = None, total_weight: dict | None = None, notify: bool | None = None,
+        wait: float = 45,
     ) -> dict:
         """«Comprar guía» desde Pedidos, confirmada por la persona: compra con Shopify Shipping (aunque se haya
         llegado al límite diario o a los intentos automáticos), espera el resultado y la imprime. Shopify deja el
@@ -875,32 +901,35 @@ class ShopifyService(BackgroundService):
 
         Devuelve el registro del pedido: state purchased (carrier, tracking), failed (reason) o purchasing."""
         s = self.cfg.data.shopify
-        busy = any(str(info.get("order_id")) == str(legacy) for info in self._pending().values())
-        if busy or self.ledger(legacy).get("state") in ("uncertain", "purchasing"):
-            raise ShopifyError(tr("Hay una compra de ese pedido en curso o sin confirmar: revísala en Shopify antes de comprar otra."))
         client = self.client()
-        order = client.order(legacy, s.metafield_namespace, s.metafield_key)
-        if order is None:
-            raise ShopifyError(tr("Shopify no encontró ese pedido."))
-        if order.get("cancelledAt"):
-            raise ShopifyError(tr("Ese pedido está cancelado."))
-        open_fos = [
-            fo for fo in client.fulfillment_orders(order["id"])
-            if fo.get("status") in ("OPEN", "IN_PROGRESS")
-            and (fo.get("deliveryMethod") or {}).get("methodType") in SHIPPABLE_METHODS
-        ]
-        if not open_fos:
-            raise ShopifyError(tr("Ese pedido no tiene productos pendientes de envío."))
-        meta = {"order_gid": order.get("id"), "order_name": order.get("name") or legacy, "order_id": str(legacy)}
-        for fo in open_fos:  # la persona decide: se olvidan los intentos automáticos
-            key = self._key(f"fo:{str(fo['id']).rsplit('/', 1)[-1]}:label")
-            self.store.unmark_seen(key)
-            self.store.kv_set(key + ":intentos", "0")
         options = {"package": package, "total_weight": total_weight,
                    "notify": s.notify_customer if notify is None else bool(notify)}
+        # Todo dentro del candado del ciclo: la compra automática no puede comprar este pedido al mismo tiempo.
         with self._cycle_lock:
+            busy = any(str(info.get("order_id")) == str(legacy) for info in self._pending().values())
+            if busy or self.ledger(legacy).get("state") in ("uncertain", "purchasing"):
+                raise ShopifyError(tr("Hay una compra de ese pedido en curso o sin confirmar: revísala en Shopify antes de comprar otra."))
+            order = client.order(legacy, s.metafield_namespace, s.metafield_key)
+            if order is None or str(order.get("legacyResourceId") or "") not in ("", str(legacy)):
+                raise ShopifyError(tr("Shopify no encontró ese pedido."))
+            if order.get("cancelledAt"):
+                raise ShopifyError(tr("Ese pedido está cancelado."))
+            open_fos = [
+                fo for fo in client.fulfillment_orders(order["id"])
+                if fo.get("status") in ("OPEN", "IN_PROGRESS")
+                and (fo.get("deliveryMethod") or {}).get("methodType") in SHIPPABLE_METHODS
+            ]
+            if not open_fos:
+                raise ShopifyError(tr("Ese pedido no tiene productos pendientes de envío."))
+            # Una orden con la marca puesta ya tiene una compra hecha, en curso o dudosa: esa nunca se repite.
+            fresh = [fo for fo in open_fos if not self.store.seen(self._fo_key(fo))]
+            if not fresh:
+                raise ShopifyError(tr("Ese pedido ya tiene una compra hecha o sin confirmar: revísalo en Shopify antes de comprar otra."))
+            for fo in fresh:  # la persona decide: se olvidan los intentos automáticos que fallaron
+                self.store.kv_set(self._fo_key(fo) + ":intentos", "0")
+            meta = {"order_gid": order.get("id"), "order_name": order.get("name") or legacy, "order_id": str(legacy)}
             queued = self._buy_labels(client, s, order, meta, threading.Event(), options=options,
-                                      fulfillment_orders=open_fos, wait=45)
+                                      fulfillment_orders=fresh, wait=wait)
         if queued:
             self.engine.wake()
         return {**self.ledger(legacy), "queued": queued}
@@ -925,9 +954,13 @@ class ShopifyService(BackgroundService):
         queued = 0
         while pending:
             for result_id, info in list(pending.items()):
-                result = client.label_result(result_id)
-                status = result.get("status")
                 age = time.time() - float(info.get("started", 0))
+                try:
+                    result = client.label_result(result_id)
+                except (ShopifyError, net.NetworkError, net.HttpError) as exc:
+                    log.warning("Shopify: no se pudo consultar la compra de %s: %s", info.get("order_name"), exc)
+                    result = {}  # se vuelve a mirar en la próxima vuelta; si pasa una hora, queda sin confirmar
+                status = result.get("status")
                 if status == "PURCHASED":
                     documents, new_jobs = self._enqueue_documents(result, info)
                     queued += new_jobs
@@ -951,6 +984,8 @@ class ShopifyService(BackgroundService):
                     reason = "; ".join(f"{e.get('code') or ''} {e.get('message', '')}".strip()
                                        for e in result.get("errors") or []) or tr("sin detalle")
                     log.error("Shopify: falló la compra de etiqueta de %s: %s", info.get("order_name"), reason)
+                    if info.get("fo_key"):
+                        self.store.unmark_seen(info["fo_key"])  # Shopify no la compró: se puede volver a comprar
                     self._note(info.get("order_id", ""), "failed", name=info.get("order_name"), reason=reason)
                     self.events.notify(tr("Falló la compra de etiqueta"), f"{info.get('order_name')}: {reason}", "error",
                                        kind="action")
@@ -1101,6 +1136,10 @@ class ShopifyService(BackgroundService):
                 client.add_tags(gid, [tag])
             except ShopifyError as exc:
                 log.warning("Shopify: no se pudo etiquetar el pedido (%s). ¿Falta el scope write_orders?", exc)
+            except (net.NetworkError, net.HttpError) as exc:  # sin red: se vuelve a intentar en la próxima vuelta
+                self._tag_queue.appendleft(gid)
+                log.warning("Shopify: sin conexión para etiquetar el pedido: %s", exc)
+                return
 
     # --- prueba de conexión (desde la UI) ---------------------------------------------------------
     def test_connection(self) -> dict[str, Any]:

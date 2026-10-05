@@ -2,6 +2,19 @@
 
 English version of [CHANGELOG.md](CHANGELOG.md). Each published version shows these notes in the app's update window when the app is in English, and on the English download page.
 
+## 1.8.1
+
+- **Full code review** (architecture, bugs, security, screens and tests) and a fix for everything important it found:
+- **Safer label purchases.** “Buy label…” can no longer buy at the same time as the automatic purchase (in a rare case two labels could be paid for the same order). An unconfirmed purchase is never repeated, one Shopify rejected can be bought again, and a pending purchase that errors no longer holds up the printing of the others.
+- If Windows is in **dark mode**, the app stays light: before, tables, menus and lists could end up with white text on white.
+- Important confirmations default to **“No”** (Enter doesn't buy or delete anything), “Reprocess” with automatic purchasing on asks for confirmation, and the assistant's permission window defaults to “Don't allow”.
+- **Security:** the Shopify access is only used for Shopify jobs; a job from the local API or n8n can only print on local-network printers; a web page can no longer lock or use the local API; updates without their SHA-256 fingerprint aren't installed; the assistant asks for confirmation (showing every value) to change the daily label maximum, buy unpaid orders, email customers or move n8n to another server, and only adds local-network printers.
+- Orders loads up to **1,000 orders** of the period (200 before) and tells you if there are more.
+- Orders also works in English with Shopify apps that have few permissions, a canceled job no longer stays “Printing…”, estimated delivery dates no longer warn of a delay a day early, and “Reprocess” during a check is no longer lost.
+- Settings added by a newer version are kept even if you go back to an earlier one and update again.
+- More texts translated to English, windows free their memory when closed, the guide loads its screenshots when each step opens and sounds no longer freeze the window.
+- Safer build: it stops at any error, checks the version before publishing, never publishes two versions at once and runs the Windows update test again.
+
 ## 1.8.0
 
 - **Buy labels from LabelBridge.** Any order that needs a person (Shopify rejected the purchase, the daily limit was reached, it's from before the app was connected…) has the **Buy label…** button in **Orders**: you pick the package (Shopify's or your own box with its dimensions, which can be remembered), the weight if needed and whether to email the customer, press **Confirm and buy**, and LabelBridge buys it with Shopify Shipping, prints it, and Shopify marks the order fulfilled with its tracking number.

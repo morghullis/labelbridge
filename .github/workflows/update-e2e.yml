@@ -44,8 +44,12 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true  # un comando que falla detiene el paso
           python packaging/make_icon.py
           python packaging/make_guide_images.py
+          python packaging/make_guide_images.py --lang en
+          python packaging/make_installer_images.py  # las imágenes de la marca que pide installer.iss
           python -m PyInstaller packaging/labelbridge.spec --noconfirm --clean
           choco install innosetup -y --no-progress
           $version = python -c "import labelbridge; print(labelbridge.__version__)"

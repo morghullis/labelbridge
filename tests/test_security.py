@@ -301,3 +301,44 @@ def test_secret_store_file_format(home):
     raw = json.loads(legacy.read_text(encoding="utf-8"))
     assert raw["format"] == 2 and "vieja" not in legacy.read_text(encoding="utf-8")
     assert SecretStore(legacy, backend="file").get("mqtt_password") == "vieja"
+
+
+def test_the_shopify_token_and_job_printers_stay_inside(core):
+    from labelbridge.connectors.shopify import ShopifyService
+    from labelbridge.printing.engine import PermanentPrintError, resolve_printer
+
+    s = core.cfg.data.shopify
+    s.enabled, s.shop, s.client_id = True, "demo.myshopify.com", "id"
+    service = ShopifyService(core.cfg, core.secrets, core.store, core.engine, core.events)
+
+    class Client:
+        shop = "demo.myshopify.com"
+
+        def access_token(self):
+            return "shpat_token"
+
+    service._client = Client()
+    url = "https://demo.myshopify.com/admin/api/2026-10/orders.json"
+    assert service._auth_headers_for(url, "shopify") == {"X-Shopify-Access-Token": "shpat_token"}
+    assert service._auth_headers_for(url, "local_api") == {} and service._auth_headers_for(url, "mqtt") == {}
+    with pytest.raises(PermanentPrintError):  # un trabajo no puede mandar etiquetas a internet
+        resolve_printer("tcp://8.8.8.8:9100", core.cfg)
+    assert resolve_printer("tcp://192.168.1.50:9100", core.cfg).host == "192.168.1.50"
+    assert resolve_printer("ipp://impresora.local/ipp/print", core.cfg).host == "impresora.local"
+
+
+def test_web_pages_cannot_lock_or_use_the_local_api(core):
+    core.cfg.data.security.api_max_auth_failures = 3
+    service, base = _api(core)
+    key = core.secrets.get("local_api_key")
+    try:
+        for _ in range(5):
+            assert _call(base + "/api/v1/jobs")[0] == 401  # sin clave no cuenta: una página no puede bloquearla
+        assert _call(base + "/api/v1/jobs", key=key)[0] == 200
+        for header, value in (("Origin", "https://pagina-cualquiera.example"), ("Sec-Fetch-Site", "cross-site")):
+            request = urllib.request.Request(base + "/api/v1/jobs", headers={"Authorization": f"Bearer {key}", header: value})
+            with pytest.raises(urllib.error.HTTPError) as caught:
+                urllib.request.urlopen(request, timeout=10)
+            assert caught.value.code == 403
+    finally:
+        service.stop()

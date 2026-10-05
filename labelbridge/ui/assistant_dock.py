@@ -31,7 +31,10 @@ OPEN_MS = 220
 CLOSE_MS = 160
 
 QUESTION = re.compile(r"\?[\s*_)»\"'”]*$")
-SUCCESS = re.compile(r"(?i)\b(listo|lista|quedó|quedaron|ya est[áa]n?|conectad[ao]s?|agregu[eé]|guard[eé]|activ[eé]|impres[ao])\b")
+SUCCESS = re.compile(
+    r"(?i)\b(listo|lista|quedó|quedaron|ya est[áa]n?|conectad[ao]s?|agregu[eé]|guard[eé]|activ[eé]|impres[ao]"
+    r"|done|ready|all set|connected|added|saved|enabled|printed)\b"
+)
 
 
 def talk_seconds(text: str) -> float:

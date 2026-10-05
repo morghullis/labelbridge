@@ -162,3 +162,23 @@ def test_dates_and_numbers_follow_the_language(english):
     i18n.set_language("es")
     assert i18n.date_text(when) == "04/10/2026 13:05" and i18n.date_text(when, clock="") == "04/10/2026"
     assert i18n.decimal(35.24) == "35,2"
+
+
+def test_settings_of_newer_versions_survive_a_downgrade(tmp_path):
+    import json
+
+    from labelbridge.config import ConfigManager
+
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({
+        "general": {"language": "en", "ajuste_futuro": 7},
+        "seccion_futura": {"a": 1},
+        "shopify": {"shop": "demo.myshopify.com", "package": {"length": 9.0, "medida_futura": "x"}},
+    }), encoding="utf-8")
+    cfg = ConfigManager(path)
+    cfg.data.general.agent_name = "PC-2"
+    cfg.save()
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved["general"]["ajuste_futuro"] == 7 and saved["seccion_futura"] == {"a": 1}
+    assert saved["shopify"]["package"]["medida_futura"] == "x" and saved["shopify"]["package"]["length"] == 9.0
+    assert saved["general"]["agent_name"] == "PC-2" and saved["general"]["language"] == "en"

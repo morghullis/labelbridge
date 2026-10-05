@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from datetime import datetime
 
 from ..config import ConfigManager, NotificationSettings
@@ -42,6 +43,12 @@ def quiet_now(n: NotificationSettings, now: datetime | None = None) -> bool:
 def play_for(cfg: ConfigManager, kind: str) -> bool:
     """Suena el sonido elegido para ese aviso (nada fuera de horario o si no tiene sonido)."""
     n = cfg.data.notifications
-    if not kind or quiet_now(n):
+    if not kind or quiet_now(n) or not n.sound(kind):
         return False
-    return sounds.play(n.sound(kind), n.volume, n.custom_sound)
+    play_async(n.sound(kind), n.volume, n.custom_sound)
+    return True
+
+
+def play_async(key: str, volume: int, custom: str = "") -> None:
+    """La primera vez se genera el tono (hasta ~0,1 s): en segundo plano para que la ventana no se trabe."""
+    threading.Thread(target=sounds.play, args=(key, volume, custom), name="sonido", daemon=True).start()

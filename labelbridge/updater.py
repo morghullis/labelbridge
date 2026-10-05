@@ -35,7 +35,9 @@ from .paths import is_frozen
 log = logging.getLogger(__name__)
 
 UPDATES_PAGE = "https://morghullis.github.io/labelbridge-updates/"
-MANIFEST_URL = os.environ.get("LABELBRIDGE_UPDATE_URL", UPDATES_PAGE + "latest.json")
+MANIFEST_URL = UPDATES_PAGE + "latest.json"
+if not is_frozen():  # solo en desarrollo y pruebas: la app instalada siempre usa la página oficial
+    MANIFEST_URL = os.environ.get("LABELBRIDGE_UPDATE_URL", MANIFEST_URL)
 CHECK_EVERY = 6 * 3600
 UPDATE = "update"  # evento con UpdateInfo
 MAX_INSTALLER_BYTES = 300 * 1024 * 1024
@@ -113,7 +115,9 @@ def download(
     cancel: threading.Event | None = None,
     folder: Path | None = None,
 ) -> Path:
-    """Descarga el instalador en bloques (con progreso) y comprueba su huella SHA-256."""
+    """Descarga el instalador en bloques (con progreso) y comprueba su huella SHA-256 (sin huella no se instala)."""
+    if not re.fullmatch(r"[0-9a-f]{64}", info.sha256 or ""):
+        raise UpdateError(tr("La versión publicada no trae su huella SHA-256: por seguridad no se instala."))
     folder = folder or Path(tempfile.gettempdir()) / "LabelBridge-actualizacion"
     folder.mkdir(parents=True, exist_ok=True)
     name = re.sub(r"[^\w.\-]", "_", info.url.rsplit("/", 1)[-1]) or f"LabelBridge-Setup-{info.version}.exe"

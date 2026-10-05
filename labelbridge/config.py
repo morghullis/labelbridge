@@ -336,6 +336,32 @@ def _from_dict(cls: type, raw: Any) -> Any:
     return obj
 
 
+def _unknown_keys(cls: type, raw: Any) -> dict:
+    """Lo que trae la configuración y esta versión no conoce (la guardó una versión más nueva): se conserva al
+    guardar, así volver a una versión anterior y actualizar otra vez no borra esos ajustes."""
+    if not isinstance(raw, dict):
+        return {}
+    defaults = cls()
+    known = {f.name for f in fields(cls)}
+    extra: dict = {}
+    for key, value in raw.items():
+        if key not in known:
+            extra[key] = value
+        elif is_dataclass(getattr(defaults, key)):
+            nested = _unknown_keys(type(getattr(defaults, key)), value)
+            if nested:
+                extra[key] = nested
+    return extra
+
+
+def _merge_unknown(data: dict, extra: dict) -> None:
+    for key, value in extra.items():
+        if key not in data:
+            data[key] = value
+        elif isinstance(value, dict) and isinstance(data[key], dict):
+            _merge_unknown(data[key], value)
+
+
 class ConfigManager:
     """Carga/guarda la configuración y avisa a los suscriptores cuando cambia.
 
@@ -351,6 +377,7 @@ class ConfigManager:
         self.store_path = path.with_suffix(".enc") if protector is not None else path
         self._lock = threading.RLock()
         self._listeners: list[Callable[[str], None]] = []
+        self._unknown: dict = {}
         self.data: Settings = self._load()
 
     def _read(self, path: Path) -> dict:
@@ -366,6 +393,7 @@ class ConfigManager:
         try:
             raw = self._read(source)
             data = _from_dict(Settings, raw)
+            self._unknown = _unknown_keys(Settings, raw)
         except Exception:
             backup = source.with_name(f"{source.stem}.corrupt-{int(time.time())}{source.suffix}")
             log.exception("%s dañado o ilegible; se guarda copia en %s y se usan valores por defecto", source.name, backup)
@@ -391,7 +419,9 @@ class ConfigManager:
 
     def _write(self) -> None:
         with self._lock:
-            raw = json.dumps(asdict(self.data), indent=2, ensure_ascii=False).encode("utf-8")
+            data = asdict(self.data)
+            _merge_unknown(data, self._unknown)
+            raw = json.dumps(data, indent=2, ensure_ascii=False).encode("utf-8")
             if self.protector is not None:
                 raw = self.protector.encrypt(raw, self.CONTEXT)
             tmp = self.store_path.with_suffix(".tmp")

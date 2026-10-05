@@ -33,7 +33,7 @@ from ...assistant.providers import PROVIDERS, Endpoint, ProviderError, check_bas
 from ...assistant.secrets_guard import SecretsGuard
 from ...assistant.tools import SECRET_KINDS, Toolbox
 from ...events import CONFIG_EXTERNAL
-from ...i18n import N_, tr
+from ...i18n import N_, language, tr
 from ...secret_store import MQTT_PASSWORD, SHOPIFY_ACCESS_TOKEN, SHOPIFY_CLIENT_SECRET
 from .. import icons
 from ..context import AppContext
@@ -145,8 +145,8 @@ class ApprovalDialog(QDialog):
         row.addWidget(session)
         row.addWidget(once)
         layout.addLayout(row)
-        once.setDefault(True)
-        once.setFocus()
+        deny.setDefault(True)  # Enter no da permiso: hay que pulsar «Permitir»
+        deny.setFocus()
 
     def _done(self, choice: str) -> None:
         self.choice = choice
@@ -894,7 +894,7 @@ class AssistantPage(QWidget):
     def stop(self) -> None:
         self.cancel.set()
         self._finish_turn()
-        self._add(ActivityRow(tr("Detenido"), False)).finish(False, "puedes seguir escribiendo")
+        self._add(ActivityRow(tr("Detenido"), False)).finish(False, tr("puedes seguir escribiendo"))
         self.mood.emit("stopped", None)
 
     def _finish_turn(self) -> None:
@@ -935,7 +935,10 @@ class AssistantPage(QWidget):
         elif kind == "tool_done":
             row = self._activities.pop(data["id"], None)
             if row is not None:
-                row.finish(data["ok"], data.get("detail", ""))
+                detail = data.get("detail", "")  # lo que la herramienta le dice al modelo (en español)
+                row.finish(data["ok"], detail if language() == "es" else tr("no se pudo hacer"))
+                if detail and language() != "es":
+                    row.setToolTip(detail)
             self._show_thinking()
             self.activity = ""
             self.mood.emit("tool_done", bool(data["ok"]))

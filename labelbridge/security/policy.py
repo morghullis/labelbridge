@@ -19,6 +19,18 @@ from ..models import JobRequest
 from .audit import AuditLog
 from .ratelimit import FailureTracker, RateLimiter
 
+
+def is_local_network_host(host: str) -> bool:
+    """IP privada o de este equipo, o un nombre de la red local (sin dominio, .local, .lan, .home): las impresoras
+    que un trabajo o el asistente indican por dirección tienen que estar aquí, nunca en internet."""
+    host = (host or "").strip().strip("[]")
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        name = host.lower().rstrip(".")
+        return bool(name) and ("." not in name or name.endswith((".local", ".lan", ".home", ".internal")))
+    return address.is_private or address.is_loopback or address.is_link_local
+
 log = logging.getLogger(__name__)
 
 PUSH_SOURCES = {"api", "mqtt"}  # canales externos: con límite de velocidad

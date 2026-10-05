@@ -173,12 +173,12 @@ def visible_leftovers() -> list[str]:
     from labelbridge.services import Services
     from labelbridge.ui.context import AppContext, QtBridge
     from labelbridge.ui.main_window import MainWindow
-    from labelbridge.ui.theme import STYLESHEET
+    from labelbridge.ui.theme import apply_theme
 
     i18n.set_language("en")
     translated = i18n.set_audit(True)
     try:
-        app.setStyleSheet(STYLESHEET)
+        apply_theme(app)
         cfg = ConfigManager(paths.config_path())
         cfg.data.local_api.enabled = False
         cfg.data.printers.append(PrinterProfile(alias="zebra", kind="file"))

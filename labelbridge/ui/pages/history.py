@@ -31,7 +31,7 @@ from ...printing.detect import detect_format
 from ...printing.pages import ImageSource, PdfSource, VectorSource
 from ..context import AppContext
 from ..theme import STATE_COLORS, job_state
-from ..widgets import Card, Page, button, confirm, error, info, label
+from ..widgets import Card, Page, button, confirm, error, info, label, run_dialog
 
 COLUMNS = [N_("Fecha"), N_("Trabajo"), N_("Origen"), N_("Impresora"), N_("Formato"), N_("Estado"), N_("Intentos"),
            N_("Detalle")]
@@ -79,7 +79,7 @@ class JobsModel(QAbstractTableModel):
                 return str(job["attempts"])
             if col == 7:
                 if job["status"] == "done" and job["printed_at"]:
-                    return f"Impreso {datetime.fromtimestamp(job['printed_at']).strftime('%H:%M:%S')}"
+                    return tr("Impreso {0}", datetime.fromtimestamp(job['printed_at']).strftime('%H:%M:%S'))
                 return job["error"]
         if role == Qt.ItemDataRole.ForegroundRole and col == 5:
             return QColor(STATE_COLORS[job_state(job)][1])
@@ -204,7 +204,7 @@ class HistoryPage(Page):
         jobs = self._require()
         if not jobs:
             return
-        PreviewDialog(self, self.ctx, jobs[0]).exec()
+        run_dialog(PreviewDialog(self, self.ctx, jobs[0]))
 
 
 class PreviewDialog(QDialog):

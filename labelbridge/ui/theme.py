@@ -94,14 +94,16 @@ QFrame#ActionItem {{ background: #FFFBEB; border: 1px solid #FDE68A; border-radi
 QFrame#DelayItem {{ background: #FFF1F2; border: 1px solid #FECDD3; border-radius: 10px; }}
 QLabel#Overdue {{ background: #FFE4E6; color: #BE123C; border-radius: 9px; padding: 2px 9px; font-weight: 700; font-size: 11px; }}
 
-QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox, QPlainTextEdit, QTextEdit {{
+QLineEdit, QSpinBox, QDoubleSpinBox, QTimeEdit, QDateEdit, QComboBox, QPlainTextEdit, QTextEdit {{
     background: white; color: {TEXT}; border: 1px solid #CBD5E1; border-radius: 8px;
     padding: 6px 8px; selection-background-color: {ACCENT}; selection-color: white;
 }}
 QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus, QPlainTextEdit:focus {{ border: 1px solid {ACCENT}; }}
-QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled {{ background: #F8FAFC; color: #94A3B8; }}
+QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled, QTimeEdit:disabled {{ background: #F8FAFC; color: #94A3B8; }}
 QComboBox::drop-down {{ border: none; width: 22px; }}
-QComboBox QAbstractItemView {{ background: white; border: 1px solid {BORDER}; selection-background-color: #EEF2FF; selection-color: {TEXT}; }}
+QComboBox QAbstractItemView {{ background: white; color: {TEXT}; border: 1px solid {BORDER}; selection-background-color: #EEF2FF; selection-color: {TEXT}; }}
+QListView, QTreeView {{ background: white; color: {TEXT}; }}
+QToolTip {{ background: white; color: {TEXT}; border: 1px solid {BORDER}; padding: 4px 6px; }}
 QPlainTextEdit#Code {{
     font-family: "Cascadia Mono", Consolas, Menlo, monospace; font-size: 12px;
     background: #0F172A; color: #E2E8F0; border: none; border-radius: 8px; padding: 10px;
@@ -110,10 +112,13 @@ QPlainTextEdit#Code {{
 QCheckBox {{ spacing: 8px; color: {TEXT}; }}
 QCheckBox::indicator {{ width: 16px; height: 16px; border-radius: 4px; border: 1px solid #94A3B8; background: white; }}
 QCheckBox::indicator:checked {{ background: {ACCENT}; border-color: {ACCENT}; }}
+QCheckBox::indicator:disabled {{ background: #F1F5F9; border-color: #CBD5E1; }}
+QCheckBox::indicator:checked:disabled {{ background: #A5B4FC; border-color: #A5B4FC; }}
+QCheckBox:disabled, QRadioButton:disabled {{ color: #94A3B8; }}
 QRadioButton {{ spacing: 8px; color: {TEXT}; }}
 
 QTableView, QTableWidget {{
-    background: white; border: 1px solid {BORDER}; border-radius: 10px; gridline-color: transparent;
+    background: white; color: {TEXT}; border: 1px solid {BORDER}; border-radius: 10px; gridline-color: transparent;
     selection-background-color: #EEF2FF; selection-color: {TEXT}; alternate-background-color: #FAFBFD;
 }}
 QTableView::item, QTableWidget::item {{ padding: 6px; border-bottom: 1px solid #F1F5F9; }}
@@ -154,7 +159,31 @@ QPushButton#IconButton {{ padding: 0; }}
 QScrollBar:vertical {{ background: transparent; width: 10px; margin: 2px; }}
 QScrollBar::handle:vertical {{ background: #CBD5E1; border-radius: 4px; min-height: 30px; }}
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
-QMenu {{ background: white; border: 1px solid {BORDER}; padding: 4px; border-radius: 8px; }}
+QMenu {{ background: white; color: {TEXT}; border: 1px solid {BORDER}; padding: 4px; border-radius: 8px; }}
 QMenu::item {{ padding: 6px 18px; border-radius: 6px; }}
 QMenu::item:selected {{ background: #EEF2FF; color: {TEXT}; }}
 """
+
+
+def apply_theme(app) -> None:
+    """La app siempre en claro, también con Windows en modo oscuro: esquema de color, paleta y hoja de estilos.
+    (Sin esto, Qt en Windows 11 sigue el modo oscuro y tablas, menús y listas quedan con texto blanco sobre blanco.)"""
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QColor, QPalette
+
+    hints = app.styleHints()
+    if hasattr(hints, "setColorScheme"):  # Qt 6.8+
+        hints.setColorScheme(Qt.ColorScheme.Light)
+    palette = QPalette()
+    roles = QPalette.ColorRole
+    for role, color in (
+        (roles.Window, BG), (roles.WindowText, TEXT), (roles.Base, "#FFFFFF"), (roles.AlternateBase, "#FAFBFD"),
+        (roles.Text, TEXT), (roles.Button, "#FFFFFF"), (roles.ButtonText, TEXT), (roles.BrightText, "#FFFFFF"),
+        (roles.ToolTipBase, "#FFFFFF"), (roles.ToolTipText, TEXT), (roles.Highlight, ACCENT),
+        (roles.HighlightedText, "#FFFFFF"), (roles.PlaceholderText, "#94A3B8"), (roles.Link, ACCENT),
+    ):
+        palette.setColor(role, QColor(color))
+    for role in (roles.Text, roles.WindowText, roles.ButtonText):
+        palette.setColor(QPalette.ColorGroup.Disabled, role, QColor("#94A3B8"))
+    app.setPalette(palette)
+    app.setStyleSheet(STYLESHEET)

@@ -59,6 +59,7 @@ class PurchaseDialog(QDialog):
         self.ctx = ctx
         self.row = row
         self.bought = False
+        self.busy = False  # comprando: la ventana no se cierra hasta saber el resultado
         s = ctx.cfg.data.shopify
         p = s.package
         self.setWindowTitle(tr("Comprar guía · {0}", row.name))
@@ -214,6 +215,16 @@ class PurchaseDialog(QDialog):
         self._update()
 
     # --- estado --------------------------------------------------------------------------------
+    def reject(self) -> None:
+        if not self.busy:  # Esc o la X durante la compra: se espera el resultado
+            super().reject()
+
+    def closeEvent(self, event) -> None:  # noqa: N802
+        if self.busy:
+            event.ignore()
+            return
+        super().closeEvent(event)
+
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
         QTimer.singleShot(0, self._fit)  # con los estilos ya aplicados: el alto justo para el texto
@@ -270,7 +281,7 @@ class PurchaseDialog(QDialog):
             p.length, p.width, p.height = self.box_length.value(), self.box_width.value(), self.box_height.value()
             p.dim_unit = self.dim_unit.currentData()
             p.weight, p.weight_unit = self.box_weight.value(), self.box_weight_unit.currentData()
-        self.ctx.cfg.save("shopify")
+        self.ctx.cfg.save("shopify_package")  # solo la caja: no hace falta reiniciar la conexión con Shopify
 
     # --- acciones ------------------------------------------------------------------------------
     def _buy(self) -> None:
@@ -280,6 +291,7 @@ class PurchaseDialog(QDialog):
             return
         self._remember_box()
         chosen = self.options()
+        self.busy = True
         self.buy_btn.setEnabled(False)
         self.cancel_btn.setEnabled(False)
         self.form_box.setEnabled(False)
@@ -294,6 +306,7 @@ class PurchaseDialog(QDialog):
         )
 
     def _done(self, result: dict) -> None:
+        self.busy = False
         self.progress.setVisible(False)
         self.cancel_btn.setEnabled(True)
         state = result.get("state")
@@ -309,7 +322,13 @@ class PurchaseDialog(QDialog):
             self._update()
             return
         self.form_box.setEnabled(True)
-        if state == "failed":
+        if state == "uncertain":
+            self.bought = True  # no se puede volver a comprar desde aquí: hay que mirarlo en Shopify
+            self._show(tr("No se pudo confirmar si Shopify compró la guía: revisa el pedido en Shopify antes de comprar otra."),
+                       "Warning")
+            self.cancel_btn.setText(tr("Cerrar"))
+            self._update()
+        elif state == "failed":
             self._show(tr("Shopify no compró la guía: {0}. Corrige los datos y vuelve a confirmar.",
                           friendly_reason(result.get("reason") or "") or tr("sin detalle")), "Warning")
             self.buy_btn.setEnabled(True)
@@ -320,6 +339,7 @@ class PurchaseDialog(QDialog):
             self._update()
 
     def _failed(self, message: str) -> None:
+        self.busy = False
         self.progress.setVisible(False)
         self.cancel_btn.setEnabled(True)
         self.form_box.setEnabled(True)

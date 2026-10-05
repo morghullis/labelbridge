@@ -39,6 +39,7 @@ from ...i18n import LANGUAGES, N_, tr
 from ...paths import data_dir, logs_dir, output_dir
 from ...system import autostart, sounds
 from ...updater import UPDATES_PAGE
+from ..alerts import play_async
 from ..context import AppContext
 from ..widgets import Card, Page, button, confirm, info, label, run_async
 
@@ -210,7 +211,7 @@ class SettingsPage(Page):
         self.assistant_budget.setSuffix(tr(" USD"))
         self.assistant_budget.setSpecialValueText(tr("Sin límite"))
         form.addRow(tr("Límite de gasto por día"), self.assistant_budget)
-        self.assistant_rate = _spin(1, 1000, " mensajes")
+        self.assistant_rate = _spin(1, 1000, tr(" mensajes"))
         form.addRow(tr("Máximo por hora"), self.assistant_rate)
         assistant.add(layout=form)
         self.add(assistant)
@@ -222,15 +223,15 @@ class SettingsPage(Page):
         )
         form = QFormLayout()
         form.setSpacing(10)
-        self.api_rate = _spin(10, 10000, " por minuto")
+        self.api_rate = _spin(10, 10000, tr(" por minuto"))
         form.addRow(tr("Peticiones a la API local (por equipo)"), self.api_rate)
-        self.api_failures = _spin(3, 100, " intentos")
+        self.api_failures = _spin(3, 100, tr(" intentos"))
         form.addRow(tr("Claves incorrectas antes de bloquear"), self.api_failures)
         self.api_block = _spin(1, 1440, " min")
         form.addRow(tr("Duración del bloqueo"), self.api_block)
-        self.jobs_rate = _spin(1, 10000, " por minuto")
+        self.jobs_rate = _spin(1, 10000, tr(" por minuto"))
         form.addRow(tr("Trabajos nuevos (API local y n8n)"), self.jobs_rate)
-        self.max_copies = _spin(1, 50, " copias")
+        self.max_copies = _spin(1, 50, tr(" copias"))
         form.addRow(tr("Copias máximas por trabajo"), self.max_copies)
         self.private_urls = _combo(
             {
@@ -340,7 +341,7 @@ class SettingsPage(Page):
         if user:
             self.assistant_url.setText(settings.base_url if same else "")
             self._set_models(provider, resolve(settings).model if same else provider.default_model)
-        self.assistant_url.setPlaceholderText(provider.base_url or "https://mi-servidor.com/v1 (obligatoria)")
+        self.assistant_url.setPlaceholderText(provider.base_url or tr("https://mi-servidor.com/v1 (obligatoria)"))
         self.assistant_url.setToolTip(tr("Déjala vacía para usar la dirección oficial del proveedor."))
         self._check_url()
         self._show_price()
@@ -545,7 +546,7 @@ class SettingsPage(Page):
         if key == "custom" and not self.custom_sound.text().strip():
             info(self, tr("Mi sonido"), tr("Elige primero un archivo .wav en «Mi sonido»."))
             return
-        sounds.play(key, self.volume.value(), self.custom_sound.text().strip())
+        play_async(key, self.volume.value(), self.custom_sound.text().strip())
 
     def _choose_sound(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, tr("Elegir sonido"), "", tr("Sonido WAV (*.wav)"))
