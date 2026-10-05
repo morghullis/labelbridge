@@ -12,7 +12,9 @@ Todo queda en el registro de auditoría.
 from __future__ import annotations
 
 from typing import Any
+
 from ..i18n import N_, tr
+from ..system.platform import pick
 
 READ, CHANGE, CRITICAL = "read", "change", "critical"
 
@@ -85,7 +87,7 @@ FIELD_NAMES = {
     "show_qr": N_("mostrar QR"),
     "show_price": N_("mostrar total"),
     "computer_name": N_("nombre del equipo"),
-    "start_with_windows": N_("iniciar con Windows"),
+    "start_with_windows": pick(N_("iniciar con Windows"), N_("abrir al iniciar sesión")),
     "start_minimized": N_("iniciar minimizado"),
     "auto_discover": N_("buscar impresoras al cambiar de red"),
     "notify_errors": N_("avisar errores"),
@@ -95,7 +97,7 @@ FIELD_NAMES = {
     "auto_update_check": N_("avisar actualizaciones"),
     "paused": N_("pausar impresión"),
     "new_alias": N_("nuevo alias"),
-    "windows_name": N_("impresora de Windows"),
+    "windows_name": pick(N_("impresora de Windows"), N_("impresora de la Mac")),
     "ip": N_("IP"),
     "port": N_("puerto"),
     "protocol": N_("protocolo"),

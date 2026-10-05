@@ -35,6 +35,7 @@ from ...assistant.tools import SECRET_KINDS, Toolbox
 from ...events import CONFIG_EXTERNAL
 from ...i18n import N_, language, tr
 from ...secret_store import MQTT_PASSWORD, SHOPIFY_ACCESS_TOKEN, SHOPIFY_CLIENT_SECRET
+from ...system.platform import pick
 from .. import icons
 from ..context import AppContext
 from ..mascot import mascot_pixmap
@@ -188,7 +189,8 @@ class SecretDialog(QDialog):
         self.field = SecretField(tr("Pega aquí el dato"), copyable=False)
         layout.addWidget(self.field)
         layout.addWidget(
-            label(tr("Se guarda en el almacén seguro de Windows de este PC. El asistente no lo ve."), "Small", wrap=True)
+            label(tr(pick(N_("Se guarda en el almacén seguro de Windows de este PC. El asistente no lo ve."),
+                          N_("Se guarda en el Llavero de esta Mac. El asistente no lo ve."))), "Small", wrap=True)
         )
         row = QHBoxLayout()
         row.addStretch(1)
@@ -638,15 +640,18 @@ class AssistantPage(QWidget):
             )
         elif not provider.needs_key:
             steps = tr(
-                "1. {0}<br>2. Pulsa <b>Guardar y probar</b>. Si pones una clave, queda en el almacén seguro de Windows "
-                "de este PC.",
+                pick(N_("1. {0}<br>2. Pulsa <b>Guardar y probar</b>. Si pones una clave, queda en el almacén seguro de "
+                        "Windows de este PC."),
+                     N_("1. {0}<br>2. Pulsa <b>Guardar y probar</b>. Si pones una clave, queda en el Llavero de esta Mac.")),
                 tr(provider.signup),
             )
         else:
             starts = tr(" (empieza por <code>{0}</code>)", provider.key_hint.rstrip("…")) if provider.key_hint else ""
             steps = tr(
-                "1. {0}<br>2. Copia la clave{1}.<br>3. Pégala aquí y pulsa <b>Guardar y probar</b>. Queda en el "
-                "almacén seguro de Windows de este PC.",
+                pick(N_("1. {0}<br>2. Copia la clave{1}.<br>3. Pégala aquí y pulsa <b>Guardar y probar</b>. Queda en el "
+                        "almacén seguro de Windows de este PC."),
+                     N_("1. {0}<br>2. Copia la clave{1}.<br>3. Pégala aquí y pulsa <b>Guardar y probar</b>. Queda en el "
+                        "Llavero de esta Mac.")),
                 tr(provider.signup),
                 starts,
             )

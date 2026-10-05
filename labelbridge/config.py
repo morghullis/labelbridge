@@ -13,7 +13,9 @@ import uuid
 from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from pathlib import Path
 from typing import Any, Callable
+
 from .i18n import N_, tr
+from .system.platform import pick
 
 log = logging.getLogger(__name__)
 
@@ -39,7 +41,11 @@ LABEL_SIZES = {
     "fit": N_("Ajustar a la hoja"),
 }
 
-PRINTER_KINDS = {"system": N_("Windows (driver)"), "network": N_("Red (IP directa)"), "file": N_("Archivo (pruebas)")}
+PRINTER_KINDS = {
+    "system": pick(N_("Windows (driver)"), N_("Mac (driver)")),
+    "network": N_("Red (IP directa)"),
+    "file": N_("Archivo (pruebas)"),
+}
 LANGUAGES = {"driver": N_("Driver del sistema"), "zpl": N_("ZPL (Zebra y compatibles)"), "pdf": N_("PDF directo")}
 
 

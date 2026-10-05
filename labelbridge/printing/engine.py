@@ -308,7 +308,7 @@ class PrintEngine:
 
         if profile.kind == "system":
             if not profile.system_name:
-                raise PermanentPrintError(tr("La impresora no tiene nombre de Windows configurado"))
+                raise PermanentPrintError(tr("La impresora no tiene configurado su nombre en el sistema"))
             if fmt in raw_formats:
                 outputs.print_raw_system(profile.system_name, document.data * copies, title)
                 return "RAW"

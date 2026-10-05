@@ -1,6 +1,6 @@
 # LabelBridge
 
-App de escritorio para **Windows** que imprime automáticamente las etiquetas de tus pedidos de **Shopify**. Se instala una vez, arranca con Windows, vive en la bandeja del sistema e imprime en segundo plano en cualquier impresora: instalada en Windows o conectada por **Wi‑Fi / red local** (sin driver).
+App de escritorio para **Windows** y **Mac** (Apple Silicon) que imprime automáticamente las etiquetas de tus pedidos de **Shopify**. Se instala una vez, arranca sola con el equipo, vive en la bandeja del sistema (en la Mac, en la barra de menús) e imprime en segundo plano en cualquier impresora: instalada en el sistema o conectada por **Wi‑Fi / red local** (sin driver).
 
 ```mermaid
 flowchart LR
@@ -34,7 +34,7 @@ flowchart LR
 - **n8n por eventos**: n8n se ejecuta **solo cuando ocurre algo** (pedido pagado) y envía la etiqueta al PC al instante por un canal MQTT cifrado. Si el PC está apagado, la etiqueta espera y se imprime al encenderlo. 1 ejecución por pedido, sin consultas periódicas.
 - **API local** HTTP con clave, para n8n en tu red, tu web, scripts o un ERP.
 - **Cola persistente** (SQLite): nada se pierde si se va la luz; reintentos automáticos; historial con vista previa, reimpresión y cancelación.
-- **Profesional por dentro**: secretos en el Administrador de credenciales de Windows, una sola instancia, inicio con Windows, notificaciones, registro en vivo, instalador con Inno Setup.
+- **Profesional por dentro**: secretos en el Administrador de credenciales de Windows (Llavero en la Mac), una sola instancia, inicio con el equipo, notificaciones, registro en vivo, instalador con Inno Setup (`.dmg` en la Mac).
 
 ## Por qué Python + PySide6 (Qt)
 
@@ -77,7 +77,7 @@ QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest -q
 
 ## Generar el instalador de Windows
 
-**Opción A — GitHub Actions (no necesitas Windows):** sube el proyecto a un repositorio de GitHub y crea un tag `v1.0.0`, o ejecuta el workflow *Build Windows installer* a mano. Descarga `LabelBridge-Setup-1.0.0.exe` desde los *artifacts* de la ejecución.
+**Opción A — GitHub Actions (no necesitas Windows):** sube el proyecto a un repositorio de GitHub y crea un tag `v1.0.0`, o ejecuta el workflow *Build installers* a mano. Descarga `LabelBridge-Setup-1.0.0.exe` desde los *artifacts* de la ejecución.
 
 **Opción B — En un PC con Windows:**
 
@@ -92,6 +92,17 @@ El instalador no pide administrador (instalación por usuario), crea accesos dir
 Al empezar pregunta el idioma (**English / Español**) y lo guarda en `HKCU\Software\LabelBridge\Language`; las actualizaciones automáticas repiten el de la primera instalación. En una instalación nueva pregunta además la tienda de Shopify y el Client ID: los deja en `HKCU\Software\LabelBridge\Setup`, la app los recoge al abrirse, borra esa clave y pide el Client secret en su ventana segura. Las imágenes del asistente de instalación salen de `packaging/make_installer_images.py`.
 
 > Para distribuir a otras personas sin el aviso de SmartScreen, firma el `.exe` y el instalador con un certificado de firma de código.
+
+## La versión de Mac
+
+Para Mac con **Apple Silicon** (M1 o más nueva) y **macOS 15 o más nueva** (los módulos de PySide6 6.11 piden macOS 15; Qt 6.11 admite desde la 13). Es la misma app: lo que cambia entre sistemas está en `labelbridge/system/platform.py` (`pick(N_("…Windows…"), N_("…Mac…"))` para los textos).
+
+- **Compilación:** el mismo workflow *Build installers* tiene la tarea *Mac (Apple Silicon)* (runner `macos-15`): pruebas, capturas de la guía, PyInstaller (`LabelBridge.app`, con `assets/icon.icns` de `make_icon.py`), autoprueba de la app empaquetada (`packaging/run_selftest.py`) y `packaging/make_dmg.py`, que firma la app y crea `LabelBridge-<versión>-mac.dmg` (la app y un acceso a Aplicaciones). Si la de Mac falla, Windows se publica igual.
+- **Firma:** sin cuenta de Apple, con un **certificado propio de LabelBridge** (secretos `MAC_CERT_P12` y `MAC_CERT_PASSWORD` del repositorio). Así cada versión es «la misma app» para la Mac: las actualizaciones no vuelven a pedir el Llavero ni otros permisos. Sin esos secretos se firma ad hoc y cada actualización los pediría otra vez. Como no está notarizada, la primera vez se abre con **Ajustes del Sistema → Privacidad y seguridad → Abrir igualmente**; con el Apple Developer Program (99 USD/año) `make_dmg.py` firmaría con Developer ID y notarizaría, y ese aviso desaparece.
+- **Instalar:** abrir el `.dmg` y arrastrar LabelBridge a Aplicaciones. Si se abre desde el `.dmg`, la app pide moverla primero (desde ahí no podría abrirse sola ni actualizarse).
+- **En la Mac:** icono en la barra de menús (clic → menú), la ventana vuelve desde el Dock, Cmd+Q la cierra del todo; «Abrir al iniciar sesión» es un agente en `~/Library/LaunchAgents/com.labelbridge.app.plist`; las claves van al Llavero; las impresoras del sistema se usan por CUPS (`lp` para RAW).
+- **Actualizaciones:** `latest.json` trae `installer_mac`; la app baja el `.dmg`, verifica su SHA-256 y, al cerrarse, un script reemplaza `LabelBridge.app` (guarda la anterior hasta copiar la nueva) y la vuelve a abrir. Si macOS no deja reemplazarla, abre el `.dmg` para arrastrarla a mano y la app lo explica.
+- **Compilar en esta Mac:** PyInstaller y Qt no aceptan el `;` del nombre de la carpeta del proyecto: copia el proyecto a otra carpeta, crea ahí un entorno con `requirements.txt`, `requirements-dev.txt` y `pyinstaller`, y ejecuta `python -m PyInstaller packaging/labelbridge.spec --noconfirm --clean` y `python packaging/make_dmg.py`.
 
 ## Asistente: proveedores de IA
 
@@ -141,7 +152,7 @@ Al empezar pregunta el idioma (**English / Español**) y lo guarda en `HKCU\Soft
 git tag -a v1.2.0 -m "LabelBridge 1.2.0" && git push origin main v1.2.0
 ```
 
-GitHub Actions prueba todo, genera las capturas de la guía, compila y verifica el `.exe`, lo publica en Releases (privado) y en la página de descargas (público). Todas las apps instaladas lo detectan solas.
+GitHub Actions prueba todo (en Windows y en Mac), genera las capturas de la guía, compila y verifica el `.exe` y el `.dmg`, los publica en Releases (privado) y en la página de descargas (público). Todas las apps instaladas lo detectan solas.
 
 ## Idiomas (español e inglés)
 
@@ -180,7 +191,7 @@ labelbridge/
   assistant/           asistente: herramientas, permisos, consumo, conversación y filtro de secretos
     providers/         Claude, OpenAI, Gemini y API compatibles (formato de cada API, sin reglas propias)
   security/            cifrado, política de seguridad, límites, auditoría y registros sin secretos
-  system/              inicio con Windows, instancia única, instalar impresoras, datos del instalador
+  system/              inicio con el equipo (Windows o Mac), instancia única, instalar impresoras, qué cambia en Mac (platform.py)
   ui/                  interfaz (PySide6); mascot.py = la máscara animada, assistant_dock.py = bubble y chat flotante
 assets/locale/         traducciones (en.json)
 devtools/              pruebas reales del asistente (gastan tokens) y herramientas de traducción
@@ -206,7 +217,7 @@ flowchart LR
 ```
 
 - **Una sola puerta** (`labelbridge/security/policy.py`): todo trabajo que llega por la API local, n8n o Shopify pasa por la política de seguridad antes de entrar en la cola (límite por minuto, copias máximas, URL permitida). Las descargas y **cada redirección** se revisan contra SSRF: nada de direcciones reservadas y, según el ajuste, nada de la red interna.
-- **Cifrado en disco**: la configuración (`config.enc`), los pedidos, las etiquetas y los campos sensibles de la cola (URL, cabeceras, datos del pedido) van cifrados con AES-256-GCM ligado a cada registro. La clave de datos es aleatoria y vive en el Administrador de credenciales de Windows; sin ella los archivos no se pueden leer ni copiándolos a otro equipo. Lo que guardaron versiones anteriores se cifra solo al actualizar.
+- **Cifrado en disco**: la configuración (`config.enc`), los pedidos, las etiquetas y los campos sensibles de la cola (URL, cabeceras, datos del pedido) van cifrados con AES-256-GCM ligado a cada registro. La clave de datos es aleatoria y vive en el Administrador de credenciales de Windows (o en el Llavero de la Mac); sin ella los archivos no se pueden leer ni copiándolos a otro equipo. Lo que guardaron versiones anteriores se cifra solo al actualizar.
 - **API local**: límite de peticiones por minuto y equipo, bloqueo temporal tras claves incorrectas (con aviso), máximo de conexiones simultáneas, tiempo de espera por conexión, cabecera `Host` verificada contra DNS rebinding y errores sin detalles internos.
 - **Trabajos de fuera**: el token de Shopify solo se añade a las descargas de los trabajos que crea LabelBridge desde Shopify (nunca a uno de la API local o de n8n), y una impresora indicada en el trabajo (`tcp://…`, `ipp://…`) tiene que estar en la red local. Las peticiones de páginas web (`Origin` ajeno o `Sec-Fetch-Site: cross-site`) se rechazan y las que no traen clave no cuentan para el bloqueo.
 - **Compras de guías**: la marca de «ya se pidió» se pone antes de comprar y nunca se borra para una compra hecha, en curso o dudosa; «Comprar guía…» y la compra automática comparten el mismo candado; una compra sin confirmar nunca se repite sola.

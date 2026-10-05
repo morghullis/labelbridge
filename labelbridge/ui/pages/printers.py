@@ -21,10 +21,11 @@ from PySide6.QtWidgets import (
 
 from ...config import LANGUAGES, MEDIA_PRESETS, PRINTER_KINDS, PrinterProfile
 from ...discovery import DiscoveredPrinter, discover
-from ...i18n import tr
+from ...i18n import N_, tr
 from ...printing.hints import looks_like_label_printer, looks_like_zpl, suggest_alias
 from ...printing.outputs import list_system_printers
 from ...system import windows_printers
+from ...system.platform import pick
 from .. import icons
 from ..context import AppContext
 from ..printer_dialog import PrinterDialog
@@ -51,7 +52,8 @@ class PrintersPage(Page):
     def __init__(self, ctx: AppContext) -> None:
         super().__init__(
             tr("Impresoras"),
-            tr("Conecta impresoras instaladas en Windows o directamente por IP (Wi‑Fi / red local), sin driver."),
+            tr(pick(N_("Conecta impresoras instaladas en Windows o directamente por IP (Wi‑Fi / red local), sin driver."),
+                    N_("Conecta impresoras instaladas en la Mac o directamente por IP (Wi‑Fi / red local), sin driver."))),
         )
         self.ctx = ctx
         self._discovered: list[DiscoveredPrinter] = []
@@ -70,7 +72,8 @@ class PrintersPage(Page):
         add = button(tr("Agregar"), "plus", "primary")
         self.add_btn = add
         menu = QMenu(add)
-        menu.addAction(icons.icon("printer"), tr("Impresora instalada en Windows…"), lambda: self._new("system"))
+        menu.addAction(icons.icon("printer"), tr(pick(N_("Impresora instalada en Windows…"), N_("Impresora instalada en la Mac…"))),
+                       lambda: self._new("system"))
         menu.addAction(icons.icon("wifi"), tr("Impresora de red por IP…"), lambda: self._new("network"))
         menu.addAction(icons.icon("folder"), tr("Guardar como archivo (pruebas)…"), lambda: self._new("file"))
         add.setMenu(menu)

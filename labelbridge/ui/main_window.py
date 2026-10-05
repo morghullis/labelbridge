@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 
 from .. import APP_NAME, __version__
 from ..i18n import N_, tr
+from ..system.platform import pick
 from . import icons
 from .context import AppContext
 from .pages.dashboard import DashboardPage
@@ -309,10 +310,13 @@ class MainWindow(QMainWindow):
         box.setIcon(QMessageBox.Icon.Warning)
         box.setWindowTitle(tr("La actualización no se completó"))
         box.setText(tr("No se pudo instalar la versión {0}; sigues con la {1}.", info.version, __version__))
-        box.setInformativeText(
-            tr("Puedes reintentarlo ahora o descargar el instalador desde la página de descargas. El detalle quedó en "
-               "los registros (actualizacion.log e instalador.log).")
-        )
+        box.setInformativeText(tr(pick(
+            N_("Puedes reintentarlo ahora o descargar el instalador desde la página de descargas. El detalle quedó en "
+               "los registros (actualizacion.log e instalador.log)."),
+            N_("Puedes reintentarlo ahora o instalarla a mano: sal de LabelBridge (icono de la barra de menús → Salir) y "
+               "arrastra la versión nueva a Aplicaciones → Reemplazar. Si no se abrió su ventana, descárgala desde la "
+               "página de descargas. El detalle quedó en el registro actualizacion.log."),
+        )))
         retry = box.addButton(tr("Reintentar"), QMessageBox.ButtonRole.AcceptRole)
         page = box.addButton(tr("Página de descargas"), QMessageBox.ButtonRole.ActionRole)
         logs = box.addButton(tr("Ver registros"), QMessageBox.ButtonRole.ActionRole)
@@ -380,4 +384,6 @@ class MainWindow(QMainWindow):
         self.hide()
         if not self._hint_shown:
             self._hint_shown = True
-            self.ctx.events.notify(APP_NAME, tr("Sigo imprimiendo en segundo plano. Abre la app desde la bandeja del sistema."))
+            self.ctx.events.notify(APP_NAME, tr(pick(
+                N_("Sigo imprimiendo en segundo plano. Abre la app desde la bandeja del sistema."),
+                N_("Sigo imprimiendo en segundo plano. Abre la app desde su icono en la barra de menús."))))

@@ -17,6 +17,7 @@ import wave
 from pathlib import Path
 
 from ..i18n import N_
+from .platform import pick
 
 log = logging.getLogger(__name__)
 
@@ -32,7 +33,7 @@ SOUNDS = {
     "harp": N_("Arpa"),
     "pop": N_("Burbuja"),
     "alert": N_("Alerta"),
-    "windows": N_("Sonido de Windows"),
+    "windows": pick(N_("Sonido de Windows"), N_("Sonido de la Mac")),  # el sonido del sistema
     "custom": N_("Mi archivo (.wav)"),
 }
 
@@ -221,6 +222,11 @@ def _play_system() -> bool:
             except RuntimeError:
                 continue
         return False
+    if sys.platform == "darwin":  # el sonido «Vidrio» de la Mac
+        chime = Path("/System/Library/Sounds/Glass.aiff")
+        if chime.exists():
+            subprocess.Popen(["afplay", str(chime)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return True
     from PySide6.QtWidgets import QApplication
 
     QApplication.beep()

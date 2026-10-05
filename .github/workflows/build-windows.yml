@@ -1,6 +1,6 @@
-# Compila el instalador de Windows en GitHub (no necesitas un PC con Windows para generarlo).
+# Compila los instaladores en GitHub: Windows (.exe) y Mac con Apple Silicon (.dmg), sin necesitar esos equipos.
 # Se ejecuta al crear un tag vX.Y.Z o manualmente desde la pestaña Actions.
-name: Build Windows installer
+name: Build installers
 
 on:
   push:
@@ -92,15 +92,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
+          NOTES: "Windows: LabelBridge-Setup-*.exe · Mac con Apple Silicon: LabelBridge-*-mac.dmg. Ábrelo para instalar o actualizar (conserva tu configuración)."
         run: |
           $installer = (Get-ChildItem dist\installer\*.exe | Select-Object -First 1).FullName
-          # Si se vuelve a ejecutar el workflow, el Release ya existe: se reemplaza el instalador.
+          # La compilación de Mac corre a la vez: el Release lo crea la primera que llega y las dos suben su archivo.
           gh release view $env:TAG *> $null
-          if ($LASTEXITCODE -eq 0) {
-            gh release upload $env:TAG $installer --clobber
-          } else {
-            gh release create $env:TAG $installer --title "LabelBridge $env:TAG" --notes "Instalador para Windows: descarga el .exe y ábrelo para instalar o actualizar (conserva tu configuración)."
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $env:TAG --title "LabelBridge $env:TAG" --notes $env:NOTES
+            if ($LASTEXITCODE -ne 0) { gh release view $env:TAG *> $null }
+            if ($LASTEXITCODE -ne 0) { throw "No se pudo crear el Release $env:TAG" }
           }
+          gh release upload $env:TAG $installer --clobber
           if ($LASTEXITCODE -ne 0) { throw "No se pudo publicar el Release $env:TAG" }
 
       - uses: actions/upload-artifact@v4
@@ -109,10 +111,107 @@ jobs:
           path: dist/installer/*.exe
           if-no-files-found: error
 
+  build-mac:
+    name: Mac (Apple Silicon)
+    runs-on: macos-15
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash  # con -e y pipefail: un comando que falla detiene el paso
+    env:
+      PYTHONUTF8: "1"
+    permissions:
+      contents: write  # solo para el Release del tag
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: El tag coincide con la versión de la app
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version=$(python -c "import labelbridge; print(labelbridge.__version__)")
+          if [ "v$version" != "$TAG" ]; then echo "El tag $TAG no coincide con la versión de la app ($version)"; exit 1; fi
+
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Pruebas
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m pytest -q -rs
+
+      - name: App (PyInstaller)
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          python packaging/make_icon.py
+          python packaging/make_guide_images.py
+          python packaging/make_guide_images.py --lang en
+          python -m PyInstaller packaging/labelbridge.spec --noconfirm --clean
+
+      - name: Probar la app empaquetada
+        run: python packaging/run_selftest.py dist/LabelBridge.app/Contents/MacOS/LabelBridge
+
+      - name: Certificado propio de LabelBridge (las actualizaciones no vuelven a pedir permisos)
+        env:
+          MAC_CERT_P12: ${{ secrets.MAC_CERT_P12 }}
+          MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+        run: |
+          if [ -z "$MAC_CERT_P12" ]; then
+            echo "::warning::Falta el secreto MAC_CERT_P12: se firma ad hoc y cada actualización volverá a pedir permisos en la Mac"
+            exit 0
+          fi
+          keychain="$RUNNER_TEMP/labelbridge-firma.keychain-db"
+          password=$(openssl rand -hex 16)
+          printf '%s' "$MAC_CERT_P12" | base64 --decode > "$RUNNER_TEMP/firma.p12"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          security import "$RUNNER_TEMP/firma.p12" -k "$keychain" -P "$MAC_CERT_PASSWORD" -T /usr/bin/codesign -f pkcs12
+          rm -f "$RUNNER_TEMP/firma.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain" > /dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          identity=$(security find-identity -p codesigning "$keychain" | awk '/"LabelBridge"/ { print $2; exit }')
+          if [ -z "$identity" ]; then echo "El secreto MAC_CERT_P12 no trae el certificado LabelBridge"; exit 1; fi
+          echo "MAC_SIGN_IDENTITY=$identity" >> "$GITHUB_ENV"
+
+      - name: Imagen de disco (.dmg)
+        run: python packaging/make_dmg.py
+
+      - name: Publicar en Releases (solo al crear un tag vX.Y.Z)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          NOTES: "Windows: LabelBridge-Setup-*.exe · Mac con Apple Silicon: LabelBridge-*-mac.dmg. Ábrelo para instalar o actualizar (conserva tu configuración)."
+        run: |
+          # La compilación de Windows corre a la vez: el Release lo crea la primera que llega y las dos suben su archivo.
+          if ! gh release view "$TAG" > /dev/null 2>&1; then
+            gh release create "$TAG" --title "LabelBridge $TAG" --notes "$NOTES" || gh release view "$TAG" > /dev/null
+          fi
+          gh release upload "$TAG" dist/installer/*.dmg --clobber
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LabelBridge-Mac
+          path: dist/installer/*.dmg
+          if-no-files-found: error
+
   publish-updates:
     name: Publicar en la página de descargas
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build, build-mac]
+    # Si solo falla la de Mac, Windows se publica igual (la página ofrece Mac cuando su compilación sale bien).
+    if: always() && startsWith(github.ref, 'refs/tags/v') && needs.build.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -123,6 +222,12 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: LabelBridge-Setup
+          path: dist/installer
+
+      - uses: actions/download-artifact@v4
+        if: needs.build-mac.result == 'success'
+        with:
+          name: LabelBridge-Mac
           path: dist/installer
 
       - name: Publicar versión (las apps instaladas la detectan solas) y las anteriores desde la 1.5

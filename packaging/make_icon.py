@@ -1,14 +1,18 @@
 """Genera los iconos de la app: la máscara dorada de Pedro Yoruba Jewelry dentro de una etiqueta de joyería.
 
-Salida: assets/icon.ico (Windows, varios tamaños), assets/icon.png y assets/icons/app-<tamaño>.png.
+Salida: assets/icon.ico (Windows, varios tamaños), assets/icon.icns (Mac, con iconutil), assets/icon.png y
+assets/icons/app-<tamaño>.png.
 Fuente: assets/brand-logo.png (logo de la tienda). Sin logo se usa el icono genérico de LabelBridge.
 """
 
 from __future__ import annotations
 
 import os
+import shutil
 import struct
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -169,6 +173,38 @@ def write_ico(path: Path, images: list[tuple[int, bytes]]) -> None:
     path.write_bytes(header + entries + payload)
 
 
+# Iconos de Mac: cada tamaño con su versión @2x (la retícula de Apple deja ~10 % de margen alrededor).
+ICNS_SIZES = (16, 32, 128, 256, 512)
+MAC_SCALE = 824 / 1024
+
+
+def mac_image(render, size: int) -> QImage:
+    """El icono a ~80 % centrado en un lienzo transparente, como los demás iconos del Dock."""
+    canvas = QImage(size, size, QImage.Format.Format_ARGB32)
+    canvas.fill(Qt.GlobalColor.transparent)
+    inner = max(1, round(size * MAC_SCALE))
+    painter = QPainter(canvas)
+    painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+    offset = (size - inner) // 2
+    painter.drawImage(QRect(offset, offset, inner, inner), render(inner))
+    painter.end()
+    return canvas
+
+
+def write_icns(path: Path, render) -> bool:
+    """assets/icon.icns con iconutil (solo existe en Mac; en Windows no hace falta)."""
+    if not shutil.which("iconutil"):
+        return False
+    with tempfile.TemporaryDirectory() as tmp:
+        iconset = Path(tmp) / "icon.iconset"
+        iconset.mkdir()
+        for size in ICNS_SIZES:
+            mac_image(render, size).save(str(iconset / f"icon_{size}x{size}.png"))
+            mac_image(render, size * 2).save(str(iconset / f"icon_{size}x{size}@2x.png"))
+        subprocess.run(["iconutil", "-c", "icns", str(iconset), "-o", str(path)], check=True)
+    return True
+
+
 def main() -> None:
     QApplication.instance() or QApplication([sys.argv[0]])
     assets = ROOT / "assets"
@@ -188,7 +224,8 @@ def main() -> None:
     for size in PNG_SIZES:
         render(size).save(str(icons_dir / f"app-{size}.png"))
     render(512).save(str(assets / "icon.png"))
-    print("Iconos generados en", assets, "(marca)" if LOGO.exists() else "(genérico)")
+    mac = write_icns(assets / "icon.icns", render)
+    print("Iconos generados en", assets, "(marca)" if LOGO.exists() else "(genérico)", "· con icon.icns" if mac else "")
 
 
 if __name__ == "__main__":

@@ -38,6 +38,7 @@ from ...events import CONFIG_EXTERNAL
 from ...i18n import LANGUAGES, N_, tr
 from ...paths import data_dir, logs_dir, output_dir
 from ...system import autostart, sounds
+from ...system.platform import pick
 from ...updater import UPDATES_PAGE
 from ..alerts import play_async
 from ..context import AppContext
@@ -88,12 +89,14 @@ class SettingsPage(Page):
         form.setSpacing(10)
         self.agent = QLineEdit(g.agent_name)
         form.addRow(tr("Nombre de este equipo"), self.agent)
-        self.autostart = QCheckBox(tr("Iniciar LabelBridge al encender Windows"))
+        self.autostart = QCheckBox(tr(pick(N_("Iniciar LabelBridge al encender Windows"),
+                                           N_("Abrir LabelBridge al iniciar sesión en la Mac"))))
         self.autostart.setChecked(g.start_with_windows)
         if not autostart.supported():
-            self.autostart.setToolTip(tr("Se aplica en la versión instalada para Windows"))
+            self.autostart.setToolTip(tr("Se aplica en la app instalada"))
         form.addRow("", self.autostart)
-        self.minimized = QCheckBox(tr("Iniciar minimizado en la bandeja del sistema"))
+        self.minimized = QCheckBox(tr(pick(N_("Iniciar minimizado en la bandeja del sistema"),
+                                           N_("Iniciar oculto (solo el icono en la barra de menús)"))))
         self.minimized.setChecked(g.start_minimized)
         form.addRow("", self.minimized)
         self.auto_discover = QCheckBox(tr("Buscar impresoras automáticamente al conectarse a una red (Wi‑Fi / LAN)"))
@@ -109,7 +112,7 @@ class SettingsPage(Page):
         self.retention.setValue(g.retention_days)
         form.addRow(tr("Guardar historial"), self.retention)
         self.language = QComboBox()
-        self.language.addItem(tr("Automático (el del instalador o el de Windows)"), "")
+        self.language.addItem(tr(pick(N_("Automático (el del instalador o el de Windows)"), N_("Automático (el de la Mac)"))), "")
         for code, name in LANGUAGES.items():
             self.language.addItem(name, code)  # cada idioma con su propio nombre
         self.language.setCurrentIndex(max(0, self.language.findData(g.language)))
@@ -377,7 +380,8 @@ class SettingsPage(Page):
         elif not endpoint.needs_key:
             self.key_status.setText(tr("No hace falta clave para este proveedor."))
         elif self.ctx.secrets.get(endpoint.key_name):
-            self.key_status.setText(tr("✓ Guardada para {0} (en el almacén seguro de Windows).", endpoint.provider.short))
+            self.key_status.setText(tr(pick(N_("✓ Guardada para {0} (en el almacén seguro de Windows)."),
+                                            N_("✓ Guardada para {0} (en el Llavero de la Mac).")), endpoint.provider.short))
         else:
             self.key_status.setText(tr("Falta la clave de {0}: pégala en Asistente → Conectar IA.", endpoint.provider.short))
 
@@ -420,7 +424,8 @@ class SettingsPage(Page):
     def _notifications_card(self) -> Card:
         card = Card(
             tr("Notificaciones y sonidos"),
-            tr("Qué te avisa LabelBridge y cómo suena en este PC. Los avisos salen junto al reloj de Windows."),
+            tr(pick(N_("Qué te avisa LabelBridge y cómo suena en este PC. Los avisos salen junto al reloj de Windows."),
+                    N_("Qué te avisa LabelBridge y cómo suena en esta Mac. Los avisos salen en el Centro de notificaciones."))),
         )
         grid = QGridLayout()
         grid.setHorizontalSpacing(14)

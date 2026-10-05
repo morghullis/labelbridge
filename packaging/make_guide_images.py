@@ -2,7 +2,7 @@
 
 Abre la app con datos de ejemplo (sin servicios ni impresoras reales), fotografía cada pantalla y
 resalta en dorado lo que hay que pulsar, con números que coinciden con las instrucciones de la guía.
-Lo que ocurre fuera de la app (Shopify, bandeja de Windows) se dibuja como ilustración.
+Lo que ocurre fuera de la app (Shopify, bandeja de Windows, barra de menús de la Mac) se dibuja como ilustración.
 
 Uso: python packaging/make_guide_images.py [--lang en]   (la compilación lo ejecuta antes de empaquetar)
 """
@@ -26,7 +26,16 @@ from labelbridge.app import _ensure_qt_plugin_path  # noqa: E402
 _ensure_qt_plugin_path()
 
 from PySide6.QtCore import QEventLoop, QPoint, QPointF, QRectF, Qt, QTimer  # noqa: E402
-from PySide6.QtGui import QColor, QFont, QImage, QLinearGradient, QPainter, QPainterPath, QPen  # noqa: E402
+from PySide6.QtGui import (  # noqa: E402
+    QColor,
+    QFont,
+    QFontMetrics,
+    QImage,
+    QLinearGradient,
+    QPainter,
+    QPainterPath,
+    QPen,
+)
 from PySide6.QtWidgets import QApplication, QLabel, QWidget  # noqa: E402
 
 LANG = sys.argv[sys.argv.index("--lang") + 1] if "--lang" in sys.argv else "es"
@@ -342,6 +351,65 @@ def sketch_tray() -> None:
     k.save("tray.png")
 
 
+def sketch_tray_mac() -> None:
+    """La barra de menús de la Mac: el icono de LabelBridge arriba a la derecha y su menú."""
+    k = Sketch(760, 380)
+    p = k.p
+    gradient = QLinearGradient(0, 0, 760, 380)
+    gradient.setColorAt(0, QColor("#6D5BD0"))
+    gradient.setColorAt(0.55, QColor("#3B82C4"))
+    gradient.setColorAt(1, QColor("#0F766E"))
+    p.fillRect(QRectF(0, 0, 760, 380), gradient)
+    p.fillRect(QRectF(0, 0, 760, 28), QColor(246, 246, 248, 225))
+    icon_rect = QRectF(476, 4, 20, 20)
+    x = 18.0
+    for i, item in enumerate(t("Finder Archivo Edición Visualización Ir Ventana Ayuda",
+                               "Finder File Edit View Go Window Help").split()):
+        width = QFontMetrics(font(13, bold=i == 0)).horizontalAdvance(item)
+        if x + width > icon_rect.left() - 44:  # el resto no cabe antes de los iconos de la derecha
+            break
+        k.text(x, 0, item, 13, bold=i == 0, color="#111827", width=width + 4, height=28)
+        x += width + 18
+    p.setPen(QPen(QColor("#111827"), 1.6))
+    p.setBrush(Qt.BrushStyle.NoBrush)
+    for r in (4, 8):  # Wi‑Fi
+        p.drawArc(QRectF(526 - r, 17 - r, r * 2, r * 2), 45 * 16, 90 * 16)
+    p.drawRoundedRect(QRectF(546, 9, 22, 11), 3, 3)  # batería
+    p.fillRect(QRectF(549, 12, 14, 5), QColor("#111827"))
+    k.text(590, 0, t("lun 5 oct  10:24", "Mon Oct 5  10:24 AM"), 13, color="#111827", width=166, height=28)
+    icon = QImage(str(ROOT / "assets" / "icons" / "app-64.png"))
+    if not icon.isNull():
+        p.drawImage(icon_rect, icon)
+    from labelbridge.i18n import tr
+
+    items = [tr("Abrir {0}", "LabelBridge"), tr("Asistente"), None, tr("Pausar impresión automática"),
+             tr("Imprimir etiqueta de prueba"), tr("Buscar actualizaciones"), None,
+             tr("Salir (detiene la impresión automática)")]
+    menu = QRectF(icon_rect.left() - 6, 32, 282, 8 + sum(9 if item is None else 26 for item in items))
+    p.setPen(QPen(QColor(0, 0, 0, 40), 1))
+    p.setBrush(QColor(250, 250, 252, 245))
+    p.drawRoundedRect(menu, 9, 9)
+    y, rows = menu.top() + 4, {}
+    for item in items:
+        if item is None:
+            p.setPen(QPen(QColor("#D1D5DB"), 1))
+            p.drawLine(QPointF(menu.left() + 12, y + 4.5), QPointF(menu.right() - 12, y + 4.5))
+            y += 9
+            continue
+        rows[item] = QRectF(menu.left() + 6, y, menu.width() - 12, 26)
+        k.text(menu.left() + 16, y, item, 13, color="#111827", width=menu.width() - 24, height=26)
+        y += 26
+    # El icono está pegado al borde de arriba: su número va a la izquierda, dentro de la barra.
+    draw_highlight(p, icon_rect.adjusted(-4, -3, 4, 3), None, 1)
+    draw_badge(p, 1, QPointF(icon_rect.left() - 22, icon_rect.center().y()), 12)
+    k.highlight(rows[tr("Pausar impresión automática")], 2)
+    k.text(24, 292, t("Clic en el icono de LabelBridge en la barra de menús", "Click the LabelBridge icon in the menu bar"),
+           15, bold=True, color="#F8FAFC", width=430)
+    k.text(24, 318, t("La app sigue trabajando aunque cierres la ventana.", "The app keeps working even if you close the window."),
+           13, color="#E2E8F0", width=430)
+    k.save("tray-mac.png")
+
+
 # --- capturas de la app ----------------------------------------------------------------------
 
 def demo_context():
@@ -516,6 +584,7 @@ def main() -> None:
     sketch_dev_dashboard()
     sketch_draft_order()
     sketch_tray()
+    sketch_tray_mac()
     window.quitting = True
     window.close()
 

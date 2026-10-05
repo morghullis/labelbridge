@@ -83,6 +83,14 @@ def system_language() -> str:
             code = locale.windows_locale.get(ctypes.windll.kernel32.GetUserDefaultUILanguage(), "")
         except Exception:
             code = ""
+    if not code and sys.platform == "darwin":
+        try:
+            from PySide6.QtCore import QLocale
+
+            languages = QLocale.system().uiLanguages()
+            code = languages[0] if languages else ""
+        except Exception:
+            code = ""
     if not code:
         for name in ("LC_ALL", "LC_MESSAGES", "LANG"):
             if os.environ.get(name):

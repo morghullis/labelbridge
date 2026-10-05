@@ -2,6 +2,16 @@
 
 English version of [CHANGELOG.md](CHANGELOG.md). Each published version shows these notes in the app's update window when the app is in English, and on the English download page.
 
+## 1.9.0
+
+- **LabelBridge for Mac.** New version for Macs with Apple Silicon (M1 or newer) and macOS 15 or newer: on the downloads page press **Download for Mac**, open the .dmg and drag LabelBridge to Applications. It does the same as on Windows: prints Shopify orders, buys labels, alerts with sounds and includes the assistant and the step-by-step guide.
+- On a Mac it lives in the **menu bar** (top right): closing the window keeps it printing, it opens by itself when you log in, and the window comes back from its icon or the Dock.
+- It prints on the Mac's printers (USB or installed in System Settings) and on network or Wi‑Fi printers without a driver; keys are stored in the Mac **Keychain**.
+- Updates also arrive on their own on the Mac: the app lets you know and updates with one click, keeping your settings and the permissions you already gave.
+- The first time, since the app isn't signed by Apple yet, the Mac asks you to confirm it: **System Settings → Privacy & Security → Open Anyway** (only once).
+- The downloads page offers Windows and Mac (your computer's first) and each version with both downloads.
+- If “Quit” is canceled (for example, with a label purchase in progress), the app no longer closes by itself after 20 seconds.
+
 ## 1.8.1
 
 - **Full code review** (architecture, bugs, security, screens and tests) and a fix for everything important it found:

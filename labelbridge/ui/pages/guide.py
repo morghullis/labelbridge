@@ -26,6 +26,7 @@ from ...assistant.providers import resolve
 from ...connectors.shopify import DEV_DASHBOARD_URL, SCOPES_BASIC, SCOPES_LABELS, ShopifyError, admin_url
 from ...i18n import N_, tr
 from ...secret_store import SHOPIFY_ACCESS_TOKEN, SHOPIFY_CLIENT_SECRET
+from ...system.platform import pick
 from ...updater import UPDATES_PAGE
 from ..actions import enqueue_test_label
 from ..context import AppContext
@@ -139,16 +140,17 @@ STEPS: list[Step] = [
     Step(
         "printer",
         N_("Conecta tu impresora de etiquetas"),
-        N_("Sirve cualquier impresora: USB o instalada en Windows, o por Wi‑Fi/red sin driver."),
+        pick(N_("Sirve cualquier impresora: USB o instalada en Windows, o por Wi‑Fi/red sin driver."),
+             N_("Sirve cualquier impresora: USB o instalada en la Mac, o por Wi‑Fi/red sin driver.")),
         N_("<ol>"
            "<li>Pulsa <b>Ir a Impresoras</b> (botón de abajo).</li>"
-           "<li><b>Si la impresora ya funciona en este PC</b> (USB o instalada): en ② <i>Instaladas en este equipo</i> "
+           "<li><b>Si la impresora ya funciona en este equipo</b> (USB o instalada): en ② <i>Instaladas en este equipo</i> "
            "selecciónala y pulsa ③ <b>Agregar a LabelBridge</b>.</li>"
            "<li><b>Si está en la red o Wi‑Fi</b>: en ② abre <i>En la red</i>, pulsa <b>Buscar en la red</b>, elige la "
            "tuya y pulsa <b>Agregar a LabelBridge</b>. No necesita driver. Si conoces la IP, también puedes usar "
            "① <b>Agregar</b>.</li>"
            "<li>En la ventana de la impresora (segunda imagen): ① <b>Alias</b> <code>etiquetas</code>, ② <b>Lenguaje</b> "
-           "<i>ZPL</i> si es Zebra o compatible (si no, <i>Driver de Windows</i>), ③ <b>Tamaño</b> 4 × 6 in y "
+           "<i>ZPL</i> si es Zebra o compatible (si no, el <i>Driver</i>), ③ <b>Tamaño</b> 4 × 6 in y "
            "④ <b>Guardar</b>.</li>"
            "</ol>"),
         _printer_ready,
@@ -266,26 +268,43 @@ STEPS: list[Step] = [
         "daily",
         N_("Déjalo funcionando para el día a día"),
         N_("LabelBridge trabaja solo, en segundo plano."),
-        N_("<ul>"
-           "<li>① <b>Iniciar LabelBridge al encender Windows</b> debe estar activado: si el PC se reinicia, vuelve a "
-           "imprimir solo.</li>"
-           "<li>Al cerrar la ventana la app <b>sigue funcionando</b> junto al reloj (① en la segunda imagen). Clic derecho "
-           "→ ② <i>Pausar impresión automática</i> si necesitas detenerla.</li>"
-           "<li>Deja el PC <b>encendido</b> y la impresora conectada. Si algo falla verás un aviso y la etiqueta se "
-           "reintenta sola.</li>"
-           "<li><b>¿Otro PC?</b> Descarga el instalador desde la <b>página de descargas</b>, instálalo y haz los pasos 1 a "
-           "3. Deja el conector Shopify activo <b>solo en un PC</b> (o reparte pedidos con el filtro por tag).</li>"
-           "<li>Si Windows dice <i>«Windows protegió su PC»</i> al instalar: <b>Más información → Ejecutar de todas "
-           "formas</b>.</li>"
-           "<li>Las <b>actualizaciones</b> llegan solas: la app te avisa y se actualiza con un clic.</li>"
-           "</ul>"),
+        pick(
+            N_("<ul>"
+               "<li>① <b>Iniciar LabelBridge al encender Windows</b> debe estar activado: si el PC se reinicia, vuelve a "
+               "imprimir solo.</li>"
+               "<li>Al cerrar la ventana la app <b>sigue funcionando</b> junto al reloj (① en la segunda imagen). Clic "
+               "derecho → ② <i>Pausar impresión automática</i> si necesitas detenerla.</li>"
+               "<li>Deja el PC <b>encendido</b> y la impresora conectada. Si algo falla verás un aviso y la etiqueta se "
+               "reintenta sola.</li>"
+               "<li><b>¿Otro PC?</b> Descarga el instalador desde la <b>página de descargas</b>, instálalo y haz los pasos "
+               "1 a 3. Deja el conector Shopify activo <b>solo en un PC</b> (o reparte pedidos con el filtro por tag).</li>"
+               "<li>Si Windows dice <i>«Windows protegió su PC»</i> al instalar: <b>Más información → Ejecutar de todas "
+               "formas</b>.</li>"
+               "<li>Las <b>actualizaciones</b> llegan solas: la app te avisa y se actualiza con un clic.</li>"
+               "</ul>"),
+            N_("<ul>"
+               "<li>① <b>Abrir LabelBridge al iniciar sesión en la Mac</b> debe estar activado: si la Mac se reinicia, "
+               "vuelve a imprimir sola.</li>"
+               "<li>Al cerrar la ventana la app <b>sigue funcionando</b> con su icono en la barra de menús (① en la segunda "
+               "imagen). Clic en el icono → ② <i>Pausar impresión automática</i> si necesitas detenerla.</li>"
+               "<li>Deja la Mac <b>encendida</b> (sin reposo) y la impresora conectada. Si algo falla verás un aviso y la "
+               "etiqueta se reintenta sola.</li>"
+               "<li><b>¿Otro equipo?</b> Descarga LabelBridge desde la <b>página de descargas</b> y haz los pasos 1 a 3. "
+               "Deja el conector Shopify activo <b>solo en un equipo</b> (o reparte pedidos con el filtro por tag).</li>"
+               "<li>Si la Mac no deja abrirla la primera vez: <b>Ajustes del Sistema → Privacidad y seguridad → Abrir "
+               "igualmente</b>.</li>"
+               "<li>Las <b>actualizaciones</b> llegan solas: la app te avisa y se actualiza con un clic.</li>"
+               "</ul>"),
+        ),
         _daily,
         [
             (N_("Ir a Ajustes"), "sliders", "nav:settings"),
             (N_("Página de descargas"), "link", f"url:{UPDATES_PAGE}"),
             (N_("Entendido"), "check", "ack:daily"),
         ],
-        images=[("daily.png", N_("Ajustes → General")), ("tray.png", N_("Bandeja de Windows (ilustración)"))],
+        images=[("daily.png", N_("Ajustes → General")),
+                pick(("tray.png", N_("Bandeja de Windows (ilustración)")),
+                     ("tray-mac.png", N_("Barra de menús de la Mac (ilustración)")))],
     ),
     Step(
         "n8n",

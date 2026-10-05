@@ -34,7 +34,7 @@ def update_server(tmp_path):
                         "version": state["version"],
                         "published_at": "2026-10-04T18:00:00Z",
                         "notes": "- Guía con capturas\n- Actualizaciones automáticas",
-                        "installer": {
+                        updater.INSTALLER_KEY: {  # el de este sistema (Windows o Mac)
                             "url": f"http://127.0.0.1:{port}/LabelBridge-Setup.exe",
                             "size": len(installer),
                             "sha256": hashlib.sha256(installer).hexdigest(),
@@ -82,7 +82,7 @@ def test_no_update_when_current(update_server):
 def test_manifest_requires_https(monkeypatch):
     from labelbridge import net
 
-    payload = {"version": "99.0.0", "installer": {"url": "http://evil.example/x.exe"}}
+    payload = {"version": "99.0.0", updater.INSTALLER_KEY: {"url": "http://evil.example/x.exe"}}
     monkeypatch.setattr(net, "request", lambda *a, **k: net.Response(200, json.dumps(payload).encode(), "x"))
     with pytest.raises(updater.UpdateError, match="segura"):
         updater.fetch_manifest("https://morghullis.github.io/labelbridge-updates/latest.json")
@@ -222,3 +222,85 @@ def test_updates_without_a_fingerprint_are_refused(update_server, tmp_path):
     with pytest.raises(updater.UpdateError, match="SHA-256"):
         updater.download(info, folder=tmp_path)
     assert not any(tmp_path.iterdir())
+
+
+def test_each_system_takes_its_own_installer(monkeypatch):
+    from labelbridge import net
+
+    payload = {"version": "99.0.0",
+               "installer": {"url": "https://example.com/LabelBridge-Setup-99.0.0.exe", "sha256": "a" * 64},
+               "installer_mac": {"url": "https://example.com/LabelBridge-99.0.0-mac.dmg", "sha256": "b" * 64}}
+    monkeypatch.setattr(net, "request", lambda *a, **k: net.Response(200, json.dumps(payload).encode(), "x"))
+    monkeypatch.setattr(updater, "INSTALLER_KEY", "installer")
+    assert updater.fetch_manifest("https://example.com/latest.json").url.endswith(".exe")
+    monkeypatch.setattr(updater, "INSTALLER_KEY", "installer_mac")
+    assert updater.fetch_manifest("https://example.com/latest.json").url.endswith("-mac.dmg")
+    del payload["installer_mac"]  # una versión publicada sin .dmg: la app de Mac no avisa de nada
+    with pytest.raises(updater.NotForThisSystem):
+        updater.fetch_manifest("https://example.com/latest.json")
+    assert updater.check_for_update("https://example.com/latest.json") is None
+
+
+def test_mac_apply_script_quotes_paths_and_keeps_the_old_app(tmp_path):
+    import shlex
+    import subprocess
+    from pathlib import Path
+
+    dmg = Path("/Users/José O'Neil/Library/Caches/LabelBridge-9.9.9-mac.dmg")
+    app = Path("/Applications/Label Bridge.app")
+    script = updater.mac_apply_script(dmg, app, 4321, Path("/Users/José O'Neil/Library/Application Support/LabelBridge/logs"))
+    assert shlex.quote(str(dmg)) in script and shlex.quote(str(app) + ".anterior") in script
+    assert "kill -0 4321" in script and "open " + shlex.quote(str(app)) + " --args --updated" in script
+    assert script.index("mv " + shlex.quote(str(app))) < script.index("ditto")  # la anterior se aparta antes de copiar
+    assert "open " + shlex.quote(str(dmg)) in script  # si no se pudo, queda el .dmg abierto para arrastrarla a mano
+    path = tmp_path / "aplicar.sh"
+    path.write_text(script, encoding="utf-8")
+    assert subprocess.run(["bash", "-n", str(path)], check=False).returncode == 0  # sintaxis válida
+
+
+def test_download_page_offers_the_mac_app(tmp_path):
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "packaging"))
+    import publish_update
+
+    archive = tmp_path / "archive"
+    archive.mkdir()
+    for version in ("1.6.0", "1.7.0", "1.7.1"):  # anteriores a la actual (en la prueba, dos con .dmg)
+        (archive / f"LabelBridge-Setup-{version}.exe").write_bytes(b"MZ" + version.encode())
+    for version in ("1.7.0", "1.7.1"):
+        (archive / f"LabelBridge-{version}-mac.dmg").write_bytes(b"dmg" + version.encode())
+    installer = tmp_path / f"LabelBridge-Setup-{__version__}.exe"
+    installer.write_bytes(b"MZ actual")
+    (tmp_path / f"LabelBridge-{__version__}-mac.dmg").write_bytes(b"dmg actual")
+    out = tmp_path / "site"
+    manifest = publish_update.build_site(out, archive, installer)
+    assert manifest["installer_mac"]["url"].endswith(f"LabelBridge-{__version__}-mac.dmg")
+    assert manifest["installer_mac"]["sha256"] == hashlib.sha256(b"dmg actual").hexdigest()
+    versions = {v["version"]: v for v in json.loads((out / "versions.json").read_text(encoding="utf-8"))}
+    assert versions["1.7.0"]["mac"]["url"].endswith("LabelBridge-1.7.0-mac.dmg") and "mac" not in versions["1.6.0"]
+    page = (out / "index.html").read_text(encoding="utf-8")
+    assert "Descargar para Mac" in page and "Descargar para Windows" in page and "Abrir igualmente" in page
+    assert "Download for Mac" in (out / "en.html").read_text(encoding="utf-8")
+    assert (out / f"LabelBridge-{__version__}-mac.dmg").exists() and (out / "LabelBridge-1.7.1-mac.dmg").exists()
+
+    (tmp_path / f"LabelBridge-{__version__}-mac.dmg").unlink()  # si la compilación de Mac falló, se publica Windows igual
+    manifest = publish_update.build_site(out, archive, installer)
+    assert "installer_mac" not in manifest and "installer" in manifest
+
+
+def test_old_mac_downloads_are_capped(tmp_path, monkeypatch):
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "packaging"))
+    import publish_update
+
+    monkeypatch.setattr(publish_update, "ARCHIVE_MAX_MAC", 2)
+    for version in ("1.9.0", "1.9.1", "1.9.2"):
+        (tmp_path / f"LabelBridge-Setup-{version}.exe").write_bytes(b"MZ")
+        (tmp_path / f"LabelBridge-{version}-mac.dmg").write_bytes(b"dmg")
+    entries = publish_update.archived(tmp_path, "9.9.9")
+    assert [e["version"] for e in entries if e["mac"]] == ["1.9.2"]  # la actual + 1 anterior de Mac
+    assert [e["version"] for e in entries] == ["1.9.2", "1.9.1", "1.9.0"]  # las de Windows siguen todas

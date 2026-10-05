@@ -18,7 +18,8 @@ from PySide6.QtWidgets import (
 )
 
 from ..config import MEDIA_PRESETS, PRINTER_KINDS, PrinterProfile
-from ..i18n import tr
+from ..i18n import N_, tr
+from ..system.platform import pick
 from .context import AppContext
 from .widgets import button, error, info, label, run_async
 
@@ -63,7 +64,7 @@ class PrinterDialog(QDialog):
                 names.insert(0, profile.system_name)
             self.system_name.addItems(names)
             self.system_name.setCurrentText(profile.system_name)
-            form.addRow(tr("Impresora de Windows"), self.system_name)
+            form.addRow(tr(pick(N_("Impresora de Windows"), N_("Impresora de la Mac"))), self.system_name)
         elif profile.kind == "network":
             self.host.setPlaceholderText("192.168.1.50")
             form.addRow(tr("IP o nombre"), self.host)
@@ -144,7 +145,8 @@ class PrinterDialog(QDialog):
         self.language.blockSignals(True)
         self.language.clear()
         if kind == "system":
-            self.language.addItem(tr("Driver de Windows (PDF, imágenes, etiquetas)"), "driver")
+            self.language.addItem(tr(pick(N_("Driver de Windows (PDF, imágenes, etiquetas)"),
+                                          N_("Driver de la Mac (PDF, imágenes, etiquetas)"))), "driver")
             self.language.addItem(tr("ZPL directo (Zebra y compatibles, sin pasar por el driver)"), "zpl")
         elif kind == "network" and protocol in ("ipp", "ipps"):
             self.language.addItem(tr("PDF (IPP Everywhere / AirPrint)"), "pdf")
@@ -178,7 +180,8 @@ class PrinterDialog(QDialog):
         elif kind == "system" and lang == "zpl":
             text = tr("Ideal para Zebra con driver ZDesigner: los PDF se convierten a ZPL y se envían en modo RAW.")
         elif kind == "system":
-            text = tr("Imprime a través del driver de Windows. Ajusta el tamaño de etiqueta igual que en el driver.")
+            text = tr(pick(N_("Imprime a través del driver de Windows. Ajusta el tamaño de etiqueta igual que en el driver."),
+                           N_("Imprime a través del driver de la Mac. Ajusta el tamaño de etiqueta igual que en el driver.")))
         else:
             text = tr("Modo de pruebas: guarda cada etiqueta como archivo en lugar de imprimirla.")
         self.hint.setText(text)
@@ -220,7 +223,7 @@ class PrinterDialog(QDialog):
         if p.alias.casefold() in others:
             return tr("Ya existe una impresora con el alias «{0}».", p.alias)
         if p.kind == "system" and not p.system_name:
-            return tr("Elige la impresora de Windows.")
+            return tr(pick(N_("Elige la impresora de Windows."), N_("Elige la impresora de la Mac.")))
         if p.kind == "network" and not p.host:
             return tr("Escribe la IP de la impresora.")
         return ""

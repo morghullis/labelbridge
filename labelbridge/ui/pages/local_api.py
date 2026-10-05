@@ -7,9 +7,10 @@ import json
 from PySide6.QtWidgets import QCheckBox, QFormLayout, QHBoxLayout, QLineEdit, QPlainTextEdit, QSpinBox
 
 from ...discovery import local_ipv4_addresses
-from ...i18n import tr
+from ...i18n import N_, tr
 from ...secret_store import LOCAL_API_KEY
 from ...services import generate_key
+from ...system.platform import pick
 from ..context import AppContext
 from ..widgets import Card, Page, Pill, SecretField, SwitchRow, button, confirm, copy_to_clipboard
 
@@ -34,7 +35,8 @@ class LocalApiPage(Page):
         self.port.setRange(1024, 65535)
         self.port.setValue(s.port)
         form.addRow(tr("Puerto"), self.port)
-        self.allow_lan = QCheckBox(tr("Permitir conexiones desde otros equipos de la red (Windows pedirá permiso de firewall)"))
+        self.allow_lan = QCheckBox(tr(pick(N_("Permitir conexiones desde otros equipos de la red (Windows pedirá permiso de firewall)"),
+                                           N_("Permitir conexiones desde otros equipos de la red (la Mac puede pedir permiso)"))))
         self.allow_lan.setChecked(s.allow_lan)
         form.addRow("", self.allow_lan)
         key_row = QHBoxLayout()

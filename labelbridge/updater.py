@@ -47,6 +47,10 @@ class UpdateError(Exception):
     pass
 
 
+class NotForThisSystem(UpdateError):
+    """La versión publicada no trae instalador para este sistema (p. ej. todavía sin versión para Mac)."""
+
+
 @dataclass
 class UpdateInfo:
     version: str
@@ -82,12 +86,19 @@ def is_newer(candidate: str, current: str = __version__) -> bool:
     return a + (0,) * (width - len(a)) > b + (0,) * (width - len(b))
 
 
+# Cada sistema tiene su instalador en latest.json: «installer» (Windows, .exe) e «installer_mac» (Mac con Apple
+# Silicon, .dmg).
+INSTALLER_KEY = "installer_mac" if sys.platform == "darwin" else "installer"
+
+
 def fetch_manifest(url: str = MANIFEST_URL) -> UpdateInfo:
     separator = "&" if "?" in url else "?"
     data = net.request("GET", f"{url}{separator}t={int(time.time())}", timeout=20, max_bytes=256 * 1024).json()
     if not isinstance(data, dict) or not data.get("version"):
         raise UpdateError(tr("La información de versión no es válida"))
-    installer = data.get("installer") or {}
+    installer = data.get(INSTALLER_KEY) or {}
+    if not installer.get("url"):
+        raise NotForThisSystem(tr("Esta versión todavía no está disponible para este sistema"))
     allowed = ("https://", "http://127.0.0.1") if url.startswith("http://127.0.0.1") else ("https://",)  # pruebas locales
     if not str(installer.get("url", "")).startswith(allowed):
         raise UpdateError(tr("El instalador publicado no tiene una URL segura"))
@@ -105,7 +116,10 @@ def fetch_manifest(url: str = MANIFEST_URL) -> UpdateInfo:
 
 def check_for_update(url: str = MANIFEST_URL) -> UpdateInfo | None:
     """Devuelve la versión publicada si es más nueva que la instalada."""
-    info = fetch_manifest(url)
+    try:
+        info = fetch_manifest(url)
+    except NotForThisSystem:
+        return None  # p. ej. una versión que todavía no salió para Mac
     return info if is_newer(info.version) else None
 
 
@@ -161,7 +175,10 @@ def download(
 
 
 def can_install() -> bool:
-    return sys.platform == "win32" and is_frozen()
+    from .system.platform import mac_opened_from_disk_image
+
+    # En la Mac, solo con la app ya en Aplicaciones (abierta desde el .dmg no se puede reemplazar).
+    return sys.platform in ("win32", "darwin") and is_frozen() and not mac_opened_from_disk_image()
 
 
 CREATE_NEW_PROCESS_GROUP = 0x00000200
@@ -221,8 +238,12 @@ def install_and_restart(installer: Path, app: Path | None = None) -> None:
     app se vuelve a abrir igualmente (con la versión anterior) y avisa (ver failed_update).
     """
     if not can_install():
-        raise UpdateError(tr("La instalación automática solo funciona en la app instalada de Windows"))
+        raise UpdateError(tr("La instalación automática solo funciona en la app instalada"))
     from .paths import logs_dir
+
+    if sys.platform == "darwin":
+        _install_mac(installer, logs_dir())
+        return
 
     script = installer.with_name("aplicar-actualizacion.ps1")
     # Con BOM: Windows PowerShell 5.1 lee así bien las rutas con tildes o eñes.
@@ -239,6 +260,66 @@ def install_and_restart(installer: Path, app: Path | None = None) -> None:
     except OSError:
         subprocess.Popen(command, creationflags=flags, close_fds=True)
     log.info("Actualización: el instalador se ejecutará al cerrar la app (%s)", installer.name)
+
+
+# Mac: cuando la app se cierra, se monta el .dmg, se reemplaza LabelBridge.app (la anterior queda hasta que la nueva
+# está copiada) y se vuelve a abrir. Si macOS no deja reemplazarla, se abre el .dmg para arrastrarla a mano y la app
+# avisa al abrirse (ver failed_update). Deja registro en logs/actualizacion.log.
+MAC_APPLY_SCRIPT = r"""#!/bin/bash
+# LabelBridge: aplica la actualización descargada. Lo genera la app; se puede borrar.
+exec >> @@LOG@@ 2>&1
+echo "$(date) Esperando a que LabelBridge (PID @@PID@@) termine de cerrarse..."
+for _ in $(seq 1 120); do kill -0 @@PID@@ 2>/dev/null || break; sleep 1; done
+if kill -0 @@PID@@ 2>/dev/null; then echo "La app no se cerró a tiempo: se cierra a la fuerza."; kill -9 @@PID@@; sleep 2; fi
+mount=$(mktemp -d /tmp/labelbridge-actualizacion.XXXXXX)
+if hdiutil attach -nobrowse -quiet -mountpoint "$mount" @@DMG@@; then
+  if [ -d "$mount/LabelBridge.app" ]; then
+    rm -rf @@OLD@@
+    if mv @@APP@@ @@OLD@@ && ditto "$mount/LabelBridge.app" @@APP@@; then
+      rm -rf @@OLD@@
+      echo "Versión nueva instalada"
+    else
+      echo "No se pudo copiar la versión nueva: se deja la anterior"
+      [ -d @@OLD@@ ] && rm -rf @@APP@@ && mv @@OLD@@ @@APP@@
+      manual=1
+    fi
+  else
+    echo "El .dmg no trae LabelBridge.app"
+  fi
+  hdiutil detach -quiet "$mount"
+else
+  echo "No se pudo abrir el .dmg"
+fi
+rmdir "$mount" 2>/dev/null
+open @@APP@@ --args --updated
+# Para instalarla a mano: la ventana del .dmg con LabelBridge y Aplicaciones, lista para arrastrar.
+[ -n "$manual" ] && open @@DMG@@
+exit 0
+"""
+
+
+def mac_apply_script(dmg: Path, app: Path, pid: int, logs: Path) -> str:
+    """Contenido del script de actualización de Mac (separado para poder probarlo)."""
+    import shlex
+
+    return (
+        MAC_APPLY_SCRIPT.replace("@@LOG@@", shlex.quote(str(logs / "actualizacion.log")))
+        .replace("@@PID@@", str(int(pid)))
+        .replace("@@DMG@@", shlex.quote(str(dmg)))
+        .replace("@@OLD@@", shlex.quote(str(app) + ".anterior"))
+        .replace("@@APP@@", shlex.quote(str(app)))
+    )
+
+
+def _install_mac(dmg: Path, logs: Path) -> None:
+    from .system.platform import mac_app_bundle
+
+    script = dmg.with_name("aplicar-actualizacion.sh")
+    script.write_text(mac_apply_script(dmg, mac_app_bundle(), os.getpid(), logs), encoding="utf-8")
+    script.chmod(0o755)
+    subprocess.Popen(["/bin/bash", str(script)], start_new_session=True, close_fds=True,
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    log.info("Actualización: la versión nueva se instalará al cerrar la app (%s)", dmg.name)
 
 
 class UpdateService(BackgroundService):

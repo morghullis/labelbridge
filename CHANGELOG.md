@@ -2,6 +2,16 @@
 
 Cada versión publicada muestra estas notas en la ventana de actualización de la app y en la página de descargas.
 
+## 1.9.0
+
+- **LabelBridge para Mac.** Nueva versión para Mac con Apple Silicon (M1 o más nueva) y macOS 15 o más nueva: en la página de descargas pulsa **Descargar para Mac**, abre el .dmg y arrastra LabelBridge a Aplicaciones. Hace lo mismo que en Windows: imprime los pedidos de Shopify, compra guías, avisa con sonidos y trae el asistente y la guía paso a paso.
+- En la Mac vive en la **barra de menús** (arriba a la derecha): al cerrar la ventana sigue imprimiendo, se abre sola al iniciar sesión y la ventana vuelve desde su icono o desde el Dock.
+- Imprime en las impresoras de la Mac (USB o instaladas en Ajustes del Sistema) y en las de red o Wi‑Fi sin driver; las claves se guardan en el **Llavero** de la Mac.
+- Las actualizaciones también llegan solas a la Mac: la app avisa y se actualiza con un clic, conservando tu configuración y los permisos que ya diste.
+- La primera vez, como la app todavía no está firmada por Apple, la Mac pide confirmarla: **Ajustes del Sistema → Privacidad y seguridad → Abrir igualmente** (solo una vez).
+- La página de descargas ofrece Windows y Mac (primero el de tu equipo) y cada versión con sus dos descargas.
+- Si «Salir» se cancela (por ejemplo, con una compra de guía en curso), la app ya no se cierra sola a los 20 segundos.
+
 ## 1.8.1
 
 - **Revisión completa del código** (arquitectura, errores, seguridad, pantallas y pruebas) y corrección de todo lo importante que encontró:

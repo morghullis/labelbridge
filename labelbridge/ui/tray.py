@@ -10,6 +10,7 @@ from PySide6.QtWidgets import QMenu, QSystemTrayIcon
 
 from .. import APP_NAME
 from ..i18n import tr
+from ..system.platform import MAC
 from . import alerts, icons
 from .context import AppContext
 
@@ -50,11 +51,11 @@ class Tray(QSystemTrayIcon):
         quit_action.triggered.connect(quit_app)
         self.setContextMenu(menu)
         self._menu = menu
-        self.activated.connect(
-            lambda reason: show_window()
-            if reason in (QSystemTrayIcon.ActivationReason.Trigger, QSystemTrayIcon.ActivationReason.DoubleClick)
-            else None
-        )
+        # En Windows, clic o doble clic en el icono abren la ventana. En la Mac el clic despliega el menú (y Qt lo
+        # informa también como «Trigger»): la ventana se abre con «Abrir LabelBridge».
+        opens_window = () if MAC else (QSystemTrayIcon.ActivationReason.Trigger,
+                                       QSystemTrayIcon.ActivationReason.DoubleClick)
+        self.activated.connect(lambda reason: show_window() if reason in opens_window else None)
         ctx.bridge.event.connect(self._on_event)
         self._update()
 

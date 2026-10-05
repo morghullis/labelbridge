@@ -33,6 +33,7 @@ from ..system import autostart, windows_printers
 from ..updater import UPDATES_PAGE
 from .secrets_guard import SecretsGuard
 from ..security.policy import is_local_network_host
+from ..system.platform import pick
 from ..i18n import N_, tr
 
 log = logging.getLogger(__name__)
@@ -1007,7 +1008,7 @@ class Toolbox:
                 "nombre exacto.",
                 _obj(),
                 self.list_windows_printers,
-                N_("Leyendo las impresoras de Windows"),
+                pick(N_("Leyendo las impresoras de Windows"), N_("Leyendo las impresoras de la Mac")),
             ),
             Tool(
                 "scan_network_printers",

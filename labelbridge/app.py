@@ -9,7 +9,8 @@ import threading
 from pathlib import Path
 
 from . import APP_NAME, __version__
-from .i18n import tr
+from .i18n import N_, tr
+from .system.platform import MAC, mac_opened_from_disk_image, pick
 
 log = logging.getLogger("labelbridge")
 
@@ -61,6 +62,18 @@ def _install_exception_hooks() -> None:
     threading.excepthook = thread_hook
 
 
+def _watch_dock(app, window) -> None:
+    """Mac: el icono del Dock (o abrir la app otra vez desde Aplicaciones) vuelve a mostrar la ventana cerrada."""
+    from PySide6.QtCore import Qt, QTimer
+
+    def reopen(state) -> None:
+        if state == Qt.ApplicationState.ApplicationActive and not window.isVisible():
+            window.show_and_raise()
+
+    # macOS también activa la app al abrirla: se escucha el Dock cuando ya arrancó (oculta, si así se pidió).
+    QTimer.singleShot(3000, lambda: app.applicationStateChanged.connect(reopen))
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv if argv is None else argv)
     _ensure_qt_plugin_path()
@@ -69,7 +82,7 @@ def main(argv: list[str] | None = None) -> int:
 
         return self_test(argv)
 
-    from PySide6.QtCore import QTimer
+    from PySide6.QtCore import QEvent, QTimer
     from PySide6.QtGui import QFont
     from PySide6.QtWidgets import QApplication, QMessageBox, QSystemTrayIcon
 
@@ -97,10 +110,20 @@ def main(argv: list[str] | None = None) -> int:
     from .ui.theme import apply_theme
     from .ui.tray import Tray
 
+    class Application(QApplication):
+        """Avisa cuando se pide cerrar la app entera (Salir, Cmd+Q, «Salir» del Dock o al cerrar sesión)."""
+
+        quit_requested = None
+
+        def event(self, event) -> bool:  # noqa: N802
+            if event.type() == QEvent.Type.Quit and self.quit_requested is not None:
+                self.quit_requested()
+            return super().event(event)
+
     QApplication.setApplicationName(APP_NAME)
     QApplication.setOrganizationName(APP_NAME)
     QApplication.setApplicationVersion(__version__)
-    app = QApplication(argv)
+    app = Application(argv)
     app.setQuitOnLastWindowClosed(False)
     # Idioma provisional (el del instalador o el de Windows) hasta leer la configuración.
     hints = installer_hints.read()
@@ -114,6 +137,13 @@ def main(argv: list[str] | None = None) -> int:
         instance.wait_until_free(20)
     if not instance.acquire():
         log.info("LabelBridge ya está abierto: se muestra la ventana existente")
+        return 0
+    if mac_opened_from_disk_image():
+        log.warning("Abierta desde la imagen de disco: se pide moverla a Aplicaciones")
+        QMessageBox.information(None, APP_NAME, tr(
+            "Primero mueve LabelBridge a la carpeta Aplicaciones: en la ventana de la imagen de disco, arrastra su "
+            "icono a Aplicaciones y ábrela desde ahí.\n\nAbierta desde aquí no podría abrirse sola al iniciar sesión "
+            "ni actualizarse."))
         return 0
     log.info("Iniciando %s %s", APP_NAME, __version__)
 
@@ -131,7 +161,8 @@ def main(argv: list[str] | None = None) -> int:
         QMessageBox.critical(
             None,
             APP_NAME,
-            tr("{0}.\n\nLabelBridge no se abre para no perder ni exponer datos. Reinicia el equipo y vuelve a intentarlo; si continúa, revisa el Administrador de credenciales de Windows.", exc),
+            tr(pick(N_("{0}.\n\nLabelBridge no se abre para no perder ni exponer datos. Reinicia el equipo y vuelve a intentarlo; si continúa, revisa el Administrador de credenciales de Windows."),
+                    N_("{0}.\n\nLabelBridge no se abre para no perder ni exponer datos. Reinicia la Mac y vuelve a intentarlo; si continúa, revisa el Llavero (Acceso a Llaveros).")), exc),
         )
         return 1
     cfg = ConfigManager(config_path(), protector)
@@ -155,14 +186,26 @@ def main(argv: list[str] | None = None) -> int:
 
     def quit_app() -> None:
         window.quitting = True
-        # Si algo se queda colgado al cerrar, el proceso termina igual a los 20 s (la actualización espera a
-        # que la app se cierre para instalar).
+        app.quit()
+
+    def start_watchdog() -> None:
+        # Si algo se queda colgado al cerrar, el proceso termina igual a los 20 s (la actualización espera a que la
+        # app se cierre para instalar). Arranca solo cuando la salida es segura: si se cancela (una compra en curso),
+        # la app sigue.
         watchdog = threading.Timer(20.0, lambda: os._exit(0))
         watchdog.daemon = True  # no retrasa un cierre normal
         watchdog.start()
-        app.quit()
 
+    app.aboutToQuit.connect(start_watchdog)
     window.quit_app = quit_app
+
+    def quit_requested() -> None:
+        # Cerrar la app entera no es «cerrar la ventana»: sin esto, Cmd+Q la escondería con el aviso de que sigue
+        # imprimiendo. Si algo cancela la salida (una compra en curso), la app sigue como siempre.
+        window.quitting = True
+        QTimer.singleShot(0, lambda: setattr(window, "quitting", False))
+
+    app.quit_requested = quit_requested
 
     def tray_message_clicked() -> None:
         if window.pending_update is not None:
@@ -180,6 +223,8 @@ def main(argv: list[str] | None = None) -> int:
         open_assistant=window.open_assistant,
     )
     instance.activated.connect(window.show_and_raise)
+    if MAC:
+        _watch_dock(app, window)
 
     def ensure_tray(attempts_left: int = 10) -> None:
         # Al iniciar sesión en Windows la bandeja puede tardar unos segundos en existir.

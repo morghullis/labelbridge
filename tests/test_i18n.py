@@ -135,7 +135,16 @@ def test_the_assistant_speaks_the_app_language(english):
 
     assert system_prompt().startswith(SYSTEM_PROMPT) and "responde en inglés" in system_prompt()
     i18n.set_language("es")
-    assert system_prompt() == SYSTEM_PROMPT
+    assert system_prompt().startswith(SYSTEM_PROMPT) and "responde en inglés" not in system_prompt()
+
+
+def test_the_assistant_knows_it_runs_on_a_mac(monkeypatch):
+    from labelbridge.assistant import prompt
+
+    monkeypatch.setattr(prompt, "MAC", False)
+    assert prompt.system_prompt() == prompt.SYSTEM_PROMPT
+    monkeypatch.setattr(prompt, "MAC", True)
+    assert prompt.system_prompt() == prompt.SYSTEM_PROMPT + prompt.MAC_NOTE and "Abrir igualmente" in prompt.MAC_NOTE
 
 
 def test_existing_installs_stay_in_spanish(tmp_path):

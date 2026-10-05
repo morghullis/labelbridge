@@ -47,9 +47,16 @@ def run(argv: list[str]) -> int:
         assert Path(certifi.where()).exists(), "falta el paquete de certificados"
         return f"keyring={type(keyring.get_keyring()).__name__}"
 
-    def windows_printing() -> str:
+    def system_printing() -> str:
+        if sys.platform == "darwin":
+            import shutil
+
+            from PySide6.QtPrintSupport import QPrinterInfo
+
+            assert shutil.which("lp"), "falta el comando lp (CUPS): no se podría imprimir en RAW"
+            return f"CUPS · {len(QPrinterInfo.availablePrinterNames())} impresora(s) en el sistema"
         if sys.platform != "win32":
-            return "no es Windows"
+            return "ni Windows ni Mac"
         import win32print
 
         printers = win32print.EnumPrinters(win32print.PRINTER_ENUM_LOCAL | win32print.PRINTER_ENUM_CONNECTIONS, None, 2)
@@ -322,7 +329,7 @@ def run(argv: list[str]) -> int:
 
     check("librerías", libraries)
     check("guía y actualizaciones", guide_and_updates)
-    check("impresión de Windows", windows_printing)
+    check("impresión del sistema", system_printing)
     check("etiqueta → PDF → ZPL", label_pipeline)
     check("seguridad", security)
     check("idiomas", languages)

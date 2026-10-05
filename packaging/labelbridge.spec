@@ -1,13 +1,17 @@
 # -*- mode: python ; coding: utf-8 -*-
-# PyInstaller: genera dist/LabelBridge/LabelBridge.exe (carpeta, arranque rápido y menos falsos positivos de antivirus)
-# Uso (en Windows): pyinstaller packaging/labelbridge.spec --noconfirm --clean
+# PyInstaller: en Windows genera dist/LabelBridge/LabelBridge.exe (carpeta: arranque rápido y menos falsos positivos de
+# antivirus); en Mac, dist/LabelBridge.app (después packaging/make_dmg.py hace el .dmg).
+# Uso: pyinstaller packaging/labelbridge.spec --noconfirm --clean
 
 import re
+import sys
 from pathlib import Path
 
 from PyInstaller.utils.hooks import copy_metadata
 
 ROOT = Path(SPECPATH).parent
+MAC = sys.platform == "darwin"
+WINDOWS = sys.platform == "win32"
 VERSION = re.search(r'__version__ = "([^"]+)"', (ROOT / "labelbridge" / "__init__.py").read_text()).group(1)
 parts = (VERSION.split(".") + ["0", "0", "0"])[:4]
 VERSION_TUPLE = tuple(int(p) for p in parts)
@@ -47,8 +51,8 @@ a = Analysis(
         *copy_metadata("anthropic"),
     ],
     hiddenimports=[
-        "keyring.backends.Windows",
-        "win32timezone",
+        *(["keyring.backends.Windows", "win32timezone"] if WINDOWS else []),
+        *(["keyring.backends.macOS"] if MAC else []),
         "PySide6.QtPdf",
         "PySide6.QtSvg",
         "PySide6.QtPrintSupport",
@@ -93,8 +97,30 @@ exe = EXE(
     exclude_binaries=True,
     name="LabelBridge",
     console=False,
-    icon=str(ROOT / "assets" / "icon.ico"),
-    version=str(version_file),
+    icon=str(ROOT / "assets" / ("icon.icns" if MAC else "icon.ico")),
+    version=str(version_file) if WINDOWS else None,
+    argv_emulation=False,
     upx=False,
 )
 coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name="LabelBridge")
+
+if MAC:
+    app = BUNDLE(
+        coll,
+        name="LabelBridge.app",
+        icon=str(ROOT / "assets" / "icon.icns"),
+        bundle_identifier="com.labelbridge.app",
+        version=VERSION,
+        info_plist={
+            "CFBundleName": "LabelBridge",
+            "CFBundleDisplayName": "LabelBridge",
+            "CFBundleShortVersionString": VERSION,
+            "CFBundleVersion": VERSION,
+            "LSMinimumSystemVersion": "15.0",
+            "LSApplicationCategoryType": "public.app-category.business",
+            "NSHighResolutionCapable": True,
+            # macOS pide permiso para usar la red local: buscar impresoras (Bonjour) e imprimir en ellas por IP.
+            "NSLocalNetworkUsageDescription": "LabelBridge busca impresoras en tu red local e imprime en ellas.",
+            "NSBonjourServices": ["_ipp._tcp", "_ipps._tcp", "_printer._tcp", "_pdl-datastream._tcp"],
+        },
+    )

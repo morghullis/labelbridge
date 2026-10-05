@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from .. import __version__
 from ..i18n import language
+from ..system.platform import MAC
 
 SYSTEM_PROMPT = f"""Eres el asistente de configuración integrado en LabelBridge {__version__}, una app de Windows que \
 imprime sola las etiquetas de los pedidos de Shopify. Hablas con quien está configurando este PC, normalmente sin \
@@ -99,6 +100,18 @@ inglés (Settings → Checkout → Order processing; Collect payment → Mark as
 }
 
 
+# En una Mac: lo que en las instrucciones dice «Windows» es la Mac.
+MAC_NOTE = """
+
+<sistema>
+Este equipo es una Mac. Las impresoras «de Windows» de las herramientas son las instaladas en la Mac (Ajustes del \
+Sistema → Impresoras y escáneres; para agregar una USB o de red al sistema, el usuario lo hace ahí). \
+install_windows_printer no funciona en Mac: para impresoras de red usa add_printer(connection=network). \
+start_with_windows abre LabelBridge al iniciar sesión. La app vive en la barra de menús (arriba a la derecha) y la \
+primera vez puede pedir Ajustes del Sistema → Privacidad y seguridad → Abrir igualmente.
+</sistema>"""
+
+
 def system_prompt() -> str:
     """Las instrucciones en el idioma de la app. Cambiar de idioma pide reiniciar, así que no cambian en la sesión."""
-    return SYSTEM_PROMPT + LANGUAGE_NOTES.get(language(), "")
+    return SYSTEM_PROMPT + (MAC_NOTE if MAC else "") + LANGUAGE_NOTES.get(language(), "")
