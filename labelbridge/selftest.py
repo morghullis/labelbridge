@@ -294,6 +294,23 @@ def run(argv: list[str]) -> int:
             raise AssertionError("la política de descargas no bloqueó una dirección reservada")
         return "AES-256-GCM · política de seguridad activa"
 
+    def notification_sounds() -> str:
+        """Los tonos de aviso se generan y el reproductor de Windows viene en el paquete (sin hacer ruido)."""
+        import wave
+
+        from .system import sounds
+
+        folder = Path(tempfile.mkdtemp(prefix="labelbridge-sonidos-"))
+        tones = [key for key in sounds.SOUNDS if key not in ("", "windows", "custom")]
+        for key in tones:
+            with wave.open(str(sounds.tone_file(key, 50, folder))) as wav:
+                assert wav.getnframes() > 0, f"el tono {key} salió vacío"
+        if sys.platform == "win32":
+            import importlib
+
+            importlib.import_module("winsound")
+        return f"{len(tones)} tonos"
+
     def guide_and_updates() -> str:
         from . import updater
         from .paths import resource_path
@@ -313,6 +330,7 @@ def run(argv: list[str]) -> int:
     check("interfaz en inglés", lambda: interface("en"))
     check("asistente", assistant)
     check("máscara animada", mascot)
+    check("sonidos de aviso", notification_sounds)
     lines.append("RESULTADO: " + ("OK" if ok else "FALLO"))
     report_path.write_text("\n".join(lines), encoding="utf-8")
     return 0 if ok else 1

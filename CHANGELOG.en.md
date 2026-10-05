@@ -2,6 +2,16 @@
 
 English version of [CHANGELOG.md](CHANGELOG.md). Each published version shows these notes in the app's update window when the app is in English, and on the English download page.
 
+## 1.8.0
+
+- **Buy labels from LabelBridge.** Any order that needs a person (Shopify rejected the purchase, the daily limit was reached, it's from before the app was connected…) has the **Buy label…** button in **Orders**: you pick the package (Shopify's or your own box with its dimensions, which can be remembered), the weight if needed and whether to email the customer, press **Confirm and buy**, and LabelBridge buys it with Shopify Shipping, prints it, and Shopify marks the order fulfilled with its tracking number.
+- Shopify's reasons are explained in plain words (“The package weight is missing”, “The customer's full phone number is missing”…).
+- FedEx: Shopify doesn't let any app buy its labels, so it's still one click in Shopify (and it prints by itself) or, if you prefer, it can be bought here with the carrier Shopify picks.
+- **Notifications and sounds** (Settings): for each event (new order, order that needs action, delivery delay, label printed, printing error) you choose whether to show a notification and which sound to play: cash register, chime, ding, bell, harp, bubble, alert, the Windows sound or your own .wav file. With volume, a button to preview each sound, quiet hours and a reminder for orders still waiting.
+- When a paid order comes in, LabelBridge notifies you with its sound: who, how much and which carrier it ships with.
+- **Delivery alerts.** New **Delays and deliveries** section in Orders (with its counter at the top): late deliveries, failed delivery attempts, shipments with problems, packages the carrier still hasn't received days after the label was bought and shipments on the way for too long, with buttons to track, copy the tracking number or open the order. They're checked by themselves every half hour and each one notifies once.
+- The Orders table shows how each shipment is going (“On the way · arrives…”, “Delivered on…”), and unshipped orders show how many days they've been waiting.
+
 ## 1.7.1
 
 - **FedEx labels: one click in Shopify and LabelBridge prints it by itself.** Shopify doesn't let any app buy FedEx labels automatically, so orders that ship with FedEx (items over US$1,000) show up in **Orders → Need action** with the **Buy in Shopify** button. As soon as you buy the label in the order, LabelBridge detects it, gets it from Shopify and prints it at 4 × 6 in on your label printer: no downloading or printing by hand.

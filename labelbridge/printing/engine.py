@@ -222,8 +222,8 @@ class PrintEngine:
             done = self.store.set_done(job["id"], profile.display_name())
             log.info("Impreso: %s → %s%s", job["title"], profile.display_name(), f" ({detail})" if detail else "")
             self.events.emit(ev.JOB, done)
-            if self.cfg.data.general.notify_printed:
-                self.events.notify(tr("Etiqueta impresa"), f"{job['title']} → {profile.display_name()}")
+            # Si sale el aviso o suena lo decide Ajustes → Notificaciones y sonidos.
+            self.events.notify(tr("Etiqueta impresa"), f"{job['title']} → {profile.display_name()}", kind="printed")
         except Exception as exc:
             self._handle_failure(job, profile, exc)
         finally:
@@ -248,8 +248,7 @@ class PrintEngine:
         else:
             updated = self.store.set_failed(job["id"], message, printer_name)
             log.error("Trabajo fallido: %s: %s", job["title"], message)
-            if self.cfg.data.general.notify_errors:
-                self.events.notify(tr("No se pudo imprimir"), f"{job['title']}: {message}", "error")
+            self.events.notify(tr("No se pudo imprimir"), f"{job['title']}: {message}", "error", kind="print_error")
         self.events.emit(ev.JOB, updated)
 
     def _document(self, job: dict[str, Any]) -> Document:

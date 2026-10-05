@@ -37,5 +37,6 @@ class Events:
             except Exception:
                 log.exception("Error en listener de eventos (%s)", kind)
 
-    def notify(self, title: str, message: str, level: str = "info") -> None:
-        self.emit(NOTIFY, {"title": title, "message": message, "level": level})
+    def notify(self, title: str, message: str, level: str = "info", kind: str = "") -> None:
+        """Aviso para la persona. `kind` (NOTIFY_EVENTS) decide en Ajustes si sale el aviso y con qué sonido."""
+        self.emit(NOTIFY, {"title": title, "message": message, "level": level, "kind": kind})

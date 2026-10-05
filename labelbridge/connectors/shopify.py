@@ -47,6 +47,7 @@ log = logging.getLogger(__name__)
 
 PAID_STATUSES = {"PAID", "PARTIALLY_REFUNDED", "AUTHORIZED"}
 FETCH_TRIES = 10  # vueltas buscando una guía comprada en Shopify antes de darla por perdida
+DELIVERY_CHECK_SECONDS = 1800  # cada cuánto se revisan los envíos en camino (retrasos y problemas)
 OPEN_FULFILLMENT = {"UNFULFILLED", "PARTIALLY_FULFILLED", "OPEN", "IN_PROGRESS", "PENDING_FULFILLMENT"}
 SHIPPABLE_METHODS = {"SHIPPING", "PICKUP_POINT", None}
 
@@ -192,6 +193,16 @@ def admin_url(shop: str, path: str = "") -> str:
     except ShopifyError:
         return "https://admin.shopify.com"
     return f"https://admin.shopify.com/store/{handle}" + (f"/{path}" if path else "")
+
+
+def package_input(p) -> dict[str, Any]:
+    """La caja propia de Ajustes (PackageSettings) como paquete de Shopify Shipping."""
+    return {
+        "type": p.type or "BOX",
+        "dimensions": {"length": float(p.length), "width": float(p.width), "height": float(p.height),
+                       "unit": p.dim_unit or "INCHES"},
+        "weight": {"value": float(p.weight), "unit": p.weight_unit or "OUNCES"},
+    }
 
 
 def _iso_to_ts(value: str) -> float:
@@ -401,19 +412,23 @@ class ShopifyClient:
         data = self.graphql(FULFILLMENT_ORDERS_QUERY, {"id": order_gid})
         return ((data.get("order") or {}).get("fulfillmentOrders") or {}).get("nodes") or []
 
-    def purchase_label(self, fulfillment_order_id: str, notify_customer: bool) -> str:
+    def purchase_label(
+        self, fulfillment_order_id: str, notify_customer: bool, *, package: dict | None = None,
+        total_weight: dict | None = None,
+    ) -> str:
+        """Compra la guía con Shopify Shipping. Sin `package`/`total_weight`, Shopify usa su paquete predeterminado y
+        calcula el peso con los productos."""
         ship_at = (datetime.now(timezone.utc) + timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%SZ")
-        data = self.graphql(
-            PURCHASE_MUTATION,
-            {
-                "input": {
-                    "fulfillmentOrderId": fulfillment_order_id,
-                    "shippingDatetime": ship_at,
-                    "notifyCustomer": bool(notify_customer),
-                }
-            },
-            mutation=True,
-        )
+        purchase: dict[str, Any] = {
+            "fulfillmentOrderId": fulfillment_order_id,
+            "shippingDatetime": ship_at,
+            "notifyCustomer": bool(notify_customer),
+        }
+        if package:
+            purchase["packageInfo"] = {"customPackage": package}
+        if total_weight:
+            purchase["totalWeight"] = total_weight
+        data = self.graphql(PURCHASE_MUTATION, {"input": purchase}, mutation=True)
         result = data.get("shippingLabelPurchase") or {}
         errors = result.get("userErrors") or []
         if errors:
@@ -458,6 +473,7 @@ class ShopifyService(BackgroundService):
         self._tag_queue: deque[str] = deque()
         self._limit_warned_day = 0.0
         self._cycle_lock = threading.Lock()
+        self._deliveries_at = time.time() - DELIVERY_CHECK_SECONDS + 120  # la primera, a los 2 minutos
         events.subscribe(self._on_event)
         engine.url_auth_providers.append(self._auth_headers_for)
 
@@ -555,6 +571,12 @@ class ShopifyService(BackgroundService):
                 client = self.client()
                 summary = self.cycle(client, settings, stop)
                 failures = 0
+                if time.time() - self._deliveries_at >= DELIVERY_CHECK_SECONDS:
+                    self._deliveries_at = time.time()
+                    try:
+                        self.check_deliveries()
+                    except (ShopifyError, net.NetworkError, net.HttpError) as exc:
+                        log.warning("Shopify: no se pudieron revisar las entregas: %s", exc)
                 self.set_status("ok", tr("Conectado a {0} · revisado a las {1}{2}", client.shop, time.strftime('%H:%M:%S'), summary))
             except (ShopifyError, net.NetworkError, net.HttpError) as exc:
                 failures += 1
@@ -630,6 +652,11 @@ class ShopifyService(BackgroundService):
         is_new = _iso_to_ts(order.get("createdAt", "")) >= since
         meta = {"order_gid": order.get("id"), "order_name": name, "order_id": legacy}
         queued = 0
+        announced = self._key(f"order:{legacy}:announced")
+        fresh = _iso_to_ts(order.get("createdAt", "")) >= self._announce_since()
+        if is_new and paid_ok and fresh and not self.store.seen(announced):
+            self.store.mark_seen(announced)
+            self._announce(order, s)
         noted = self.ledger(legacy).get("state")
         if noted in ACTION_STATES and order.get("displayFulfillmentStatus") not in OPEN_FULFILLMENT:
             # Se resolvió en Shopify (guía comprada ahí, p. ej. la de FedEx, o enviado): su guía se trae y se imprime.
@@ -681,36 +708,10 @@ class ShopifyService(BackgroundService):
                         tr("Pedido {0}: compra la guía de {1} en Shopify", name, rule.carrier),
                         tr("Shopify no deja comprar guías de {0} automáticamente: cómprala en el pedido (1 clic) y "
                            "LabelBridge la imprime sola.", rule.carrier),
-                        "error",
+                        "error", kind="action",
                     )
             else:
                 queued += self._buy_labels(client, s, order, meta, stop)
-        return queued
-
-    def retry_order(self, legacy: str) -> int:
-        """Vuelve a intentar la compra de la guía de un pedido («Reintentar compra» en Pedidos).
-
-        Solo olvida intentos que Shopify rechazó o que frenó el límite diario: si una compra quedó sin confirmar
-        o está en curso no se repite (se pagaría dos veces). Devuelve cuántas etiquetas quedaron en cola."""
-        s = self.cfg.data.shopify
-        state = self.ledger(legacy).get("state")
-        if state in ("uncertain", "purchasing"):
-            raise ShopifyError(tr("Esa compra no se confirmó o sigue en curso: revísala en Shopify antes de reintentar."))
-        if any(str(info.get("order_id")) == str(legacy) for info in self._pending().values()):
-            raise ShopifyError(tr("La compra de ese pedido sigue en curso."))
-        client = self.client()
-        order = client.order(legacy, s.metafield_namespace, s.metafield_key)
-        if order is None:
-            raise ShopifyError(tr("Shopify no encontró ese pedido."))
-        for fo in client.fulfillment_orders(order["id"]):
-            if fo.get("status") in ("OPEN", "IN_PROGRESS"):
-                key = self._key(f"fo:{str(fo['id']).rsplit('/', 1)[-1]}:label")
-                self.store.unmark_seen(key)
-                self.store.kv_set(key + ":intentos", "0")
-        with self._cycle_lock:
-            queued = self._process_order(client, s, order, 0.0, threading.Event())
-        if queued:
-            self.engine.wake()
         return queued
 
     def overview(self, days: int = 30, now: float | None = None) -> list[OrderRow]:
@@ -728,15 +729,33 @@ class ShopifyService(BackgroundService):
         rows = []
         for order in orders:
             legacy = str(order.get("legacyResourceId") or str(order.get("id", "")).rsplit("/", 1)[-1])
-            rows.append(classify(order, settings=s, ledger=ledgers.get(legacy), jobs=jobs.get(legacy), since=since, now=now))
+            rows.append(classify(order, settings=s, ledger=ledgers.get(legacy), jobs=jobs.get(legacy), since=since, now=now,
+                                 limits=self.cfg.data.notifications))
         return rows
+
+    def check_deliveries(self, now: float | None = None) -> int:
+        """Retrasos y problemas de entrega de los últimos 30 días: cada uno avisa una vez (con su sonido) y la
+        pestaña Pedidos se actualiza. Devuelve cuántos son nuevos."""
+        fresh = 0
+        for row in self.overview(days=30, now=now):
+            if not row.alert:
+                continue
+            key = self._key(f"alert:{row.legacy}:{row.alert}")
+            if self.store.seen(key):
+                continue
+            self.store.mark_seen(key)
+            fresh += 1
+            self.events.notify(tr("{0}: {1}", row.name, row.alert_title), row.alert_reason, "error", kind="delivery")
+        if fresh:
+            self.events.emit(ev.ORDERS, {"alerts": fresh})
+        return fresh
 
     def _enqueue(self, req: JobRequest) -> int:
         try:
             job, created = self.engine.submit(req, "shopify")
         except PolicyDenied as exc:
             log.error("Shopify: %s rechazado por seguridad: %s", req.title, exc)
-            self.events.notify(tr("Etiqueta bloqueada por seguridad"), f"{req.title}: {exc}", "error")
+            self.events.notify(tr("Etiqueta bloqueada por seguridad"), f"{req.title}: {exc}", "error", kind="action")
             return 0
         if created:
             log.info("Shopify: en cola %s", job["title"])
@@ -744,10 +763,21 @@ class ShopifyService(BackgroundService):
 
     # --- compra de etiquetas Shopify Shipping ----------------------------------------------------
     def _buy_labels(
-        self, client: ShopifyClient, s: ShopifySettings, order: dict, meta: dict, stop: threading.Event
+        self, client: ShopifyClient, s: ShopifySettings, order: dict, meta: dict, stop: threading.Event, *,
+        options: dict | None = None, fulfillment_orders: list[dict] | None = None, wait: float = 20,
     ) -> int:
+        """Compra la guía de cada orden de preparación abierta. Con `options` la pidió una persona desde Pedidos
+        (paquete, peso y aviso al cliente elegidos ahí; sin el límite diario de las compras automáticas)."""
         queued = 0
-        for fo in client.fulfillment_orders(order["id"]):
+        manual = options is not None
+        if manual:
+            package, weight, notify = options.get("package"), options.get("total_weight"), options.get("notify")
+        else:
+            package = package_input(s.package) if s.package.use_custom and s.package.auto else None
+            weight, notify = None, s.notify_customer
+        if fulfillment_orders is None:
+            fulfillment_orders = client.fulfillment_orders(order["id"])
+        for fo in fulfillment_orders:
             if stop.is_set():
                 break
             if fo.get("status") not in ("OPEN", "IN_PROGRESS"):
@@ -764,7 +794,7 @@ class ShopifyService(BackgroundService):
             if attempts >= 3:
                 continue
             today = self.store.start_of_today()
-            if self.store.count_seen(self._key("fo:"), today) >= max(0, s.max_labels_per_day):
+            if not manual and self.store.count_seen(self._key("fo:"), today) >= max(0, s.max_labels_per_day):
                 if self.ledger(meta["order_id"]).get("state") != "limit":
                     self._note(meta["order_id"], "limit", name=meta["order_name"])
                 if self._limit_warned_day != today:
@@ -772,14 +802,14 @@ class ShopifyService(BackgroundService):
                     self.events.notify(
                         tr("Límite diario de etiquetas"),
                         tr("Se alcanzó el máximo de {0} etiquetas compradas hoy. No se comprarán más.", s.max_labels_per_day),
-                        "error",
+                        "error", kind="action",
                     )
                 return queued
             self.store.kv_set(attempts_key, str(attempts + 1))
             # La compra se registra ANTES de pedirla: si algo falla a mitad, nunca se compra dos veces.
             self.store.mark_seen(key)
             try:
-                result_id = client.purchase_label(fo_id, s.notify_customer)
+                result_id = client.purchase_label(fo_id, bool(notify), package=package, total_weight=weight)
             except PurchaseRejected as exc:
                 # Shopify contestó que no compró: se puede volver a intentar (p. ej. tras corregir el paquete).
                 self.store.unmark_seen(key)
@@ -788,7 +818,7 @@ class ShopifyService(BackgroundService):
                 self.events.notify(
                     tr("No se pudo comprar la etiqueta"),
                     tr("{0}: {1}. Corrígelo y usa «Reprocesar» en la pantalla Shopify.", meta['order_name'], exc),
-                    "error",
+                    "error", kind="action",
                 )
                 continue
             except (ShopifyError, net.NetworkError, net.HttpError) as exc:
@@ -801,7 +831,7 @@ class ShopifyService(BackgroundService):
                 self.events.notify(
                     tr("Revisa la etiqueta en Shopify"),
                     tr("{0}: no se pudo confirmar si la etiqueta se compró ({1}). Revísalo en Shopify antes de comprarla a mano.", meta['order_name'], exc),
-                    "error",
+                    "error", kind="action",
                 )
                 continue
             pending = self._pending()
@@ -809,8 +839,71 @@ class ShopifyService(BackgroundService):
             self._save_pending(pending)
             self._note(meta["order_id"], "purchasing", name=meta["order_name"])
             log.info("Shopify: compra de etiqueta iniciada para %s", meta["order_name"])
-            queued += self._check_pending_purchases(client, wait_seconds=20, stop=stop)
+            queued += self._check_pending_purchases(client, wait_seconds=wait, stop=stop)
         return queued
+
+    def _announce_since(self) -> float:
+        """Desde cuándo se avisa de pedidos nuevos: desde que esta versión empezó a avisar (al actualizar, los
+        pedidos de antes que cambien en Shopify no suenan como nuevos)."""
+        value = self.store.kv_get(self._key("announce_since"))
+        if value is None:
+            value = str(time.time() - 300)
+            self.store.kv_set(self._key("announce_since"), value)
+        return float(value)
+
+    def _announce(self, order: dict, s: ShopifySettings) -> None:
+        """«Pedido nuevo» (con su sonido, según Ajustes): quién, cuánto y por qué paquetería sale."""
+        address = order.get("shippingAddress") or {}
+        money = (order.get("totalPriceSet") or {}).get("shopMoney") or {}
+        parts = [str(address.get("name") or "").strip()]
+        try:
+            parts.append(f"{float(money.get('amount') or 0):,.2f} {money.get('currencyCode') or ''}".strip())
+        except (TypeError, ValueError):
+            pass
+        if address:
+            rule = rule_for(s.shipping_rules, (order.get("shippingLine") or {}).get("title") or "", subtotal_of(order))
+            parts.append(tr("sale por {0}", rule.carrier if rule is not None else s.default_carrier))
+        self.events.notify(tr("Pedido nuevo {0}", order.get("name") or ""), " · ".join(p for p in parts if p),
+                           kind="new_order")
+
+    def buy_label_now(
+        self, legacy: str, *, package: dict | None = None, total_weight: dict | None = None, notify: bool | None = None
+    ) -> dict:
+        """«Comprar guía» desde Pedidos, confirmada por la persona: compra con Shopify Shipping (aunque se haya
+        llegado al límite diario o a los intentos automáticos), espera el resultado y la imprime. Shopify deja el
+        pedido preparado con su número de seguimiento.
+
+        Devuelve el registro del pedido: state purchased (carrier, tracking), failed (reason) o purchasing."""
+        s = self.cfg.data.shopify
+        busy = any(str(info.get("order_id")) == str(legacy) for info in self._pending().values())
+        if busy or self.ledger(legacy).get("state") in ("uncertain", "purchasing"):
+            raise ShopifyError(tr("Hay una compra de ese pedido en curso o sin confirmar: revísala en Shopify antes de comprar otra."))
+        client = self.client()
+        order = client.order(legacy, s.metafield_namespace, s.metafield_key)
+        if order is None:
+            raise ShopifyError(tr("Shopify no encontró ese pedido."))
+        if order.get("cancelledAt"):
+            raise ShopifyError(tr("Ese pedido está cancelado."))
+        open_fos = [
+            fo for fo in client.fulfillment_orders(order["id"])
+            if fo.get("status") in ("OPEN", "IN_PROGRESS")
+            and (fo.get("deliveryMethod") or {}).get("methodType") in SHIPPABLE_METHODS
+        ]
+        if not open_fos:
+            raise ShopifyError(tr("Ese pedido no tiene productos pendientes de envío."))
+        meta = {"order_gid": order.get("id"), "order_name": order.get("name") or legacy, "order_id": str(legacy)}
+        for fo in open_fos:  # la persona decide: se olvidan los intentos automáticos
+            key = self._key(f"fo:{str(fo['id']).rsplit('/', 1)[-1]}:label")
+            self.store.unmark_seen(key)
+            self.store.kv_set(key + ":intentos", "0")
+        options = {"package": package, "total_weight": total_weight,
+                   "notify": s.notify_customer if notify is None else bool(notify)}
+        with self._cycle_lock:
+            queued = self._buy_labels(client, s, order, meta, threading.Event(), options=options,
+                                      fulfillment_orders=open_fos, wait=45)
+        if queued:
+            self.engine.wake()
+        return {**self.ledger(legacy), "queued": queued}
 
     def _pending(self) -> dict[str, dict]:
         try:
@@ -844,27 +937,30 @@ class ShopifyService(BackgroundService):
                         self._note(
                             info.get("order_id", ""), "purchased", name=info.get("order_name"),
                             carrier=tracking.get("company"), tracking=tracking.get("number"),
+                            tracking_url=tracking.get("url"),
                         )
                     elif age > 600:
                         self._note(info.get("order_id", ""), "no_document", name=info.get("order_name"))
                         self.events.notify(
                             tr("Etiqueta comprada sin documento"),
                             tr("{0}: Shopify no entregó el PDF/ZPL. Imprímela desde Shopify.", info.get('order_name')),
-                            "error",
+                            "error", kind="action",
                         )
                         pending.pop(result_id)
                 elif status == "PURCHASE_FAILED":
-                    reason = "; ".join(e.get("message", "") for e in result.get("errors") or []) or tr("sin detalle")
+                    reason = "; ".join(f"{e.get('code') or ''} {e.get('message', '')}".strip()
+                                       for e in result.get("errors") or []) or tr("sin detalle")
                     log.error("Shopify: falló la compra de etiqueta de %s: %s", info.get("order_name"), reason)
                     self._note(info.get("order_id", ""), "failed", name=info.get("order_name"), reason=reason)
-                    self.events.notify(tr("Falló la compra de etiqueta"), f"{info.get('order_name')}: {reason}", "error")
+                    self.events.notify(tr("Falló la compra de etiqueta"), f"{info.get('order_name')}: {reason}", "error",
+                                       kind="action")
                     pending.pop(result_id)
                 elif age > 3600:
                     self._note(info.get("order_id", ""), "uncertain", name=info.get("order_name"))
                     self.events.notify(
                         tr("Compra de etiqueta sin respuesta"),
                         tr("{0}: revisa el pedido en Shopify.", info.get('order_name')),
-                        "error",
+                        "error", kind="action",
                     )
                     pending.pop(result_id)
             self._save_pending(pending)
@@ -939,7 +1035,7 @@ class ShopifyService(BackgroundService):
             tr("Guía sin imprimir"),
             tr("{0}: LabelBridge no pudo traer de Shopify la guía comprada. Imprímela desde el pedido en Shopify.",
                meta.get("order_name")),
-            "error",
+            "error", kind="action",
         )
 
     def print_order_labels(self, legacy: str, name: str) -> int:

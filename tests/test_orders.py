@@ -73,9 +73,10 @@ def make_order(
     }
 
 
-def usps(number: str = "9200190267338800106038") -> dict:
-    return {"status": "SUCCESS", "createdAt": iso(NOW), "trackingInfo": [
-        {"company": "USPS", "number": number, "url": f"https://tools.usps.com/?t={number}"}]}
+def usps(number: str = "9200190267338800106038", created: float = NOW, **delivery) -> dict:
+    """Un envío con guía de USPS; `delivery` = lo que informa la paquetería (displayStatus, inTransitAt…)."""
+    return {"status": "SUCCESS", "createdAt": iso(created), "trackingInfo": [
+        {"company": "USPS", "number": number, "url": f"https://tools.usps.com/?t={number}"}], **delivery}
 
 
 def settings(**changes) -> ShopifySettings:
@@ -121,6 +122,37 @@ def test_expensive_pieces_need_a_fedex_label_by_hand():
     assert row.needs_action and row.group == "fedex" and row.carrier == "FedEx" and row.action == "buy"
     assert row.status == "Comprar guía FedEx en Shopify" and "US$1,250.00" in row.reason
     assert "más de US$1,000.00" in row.reason and "imprime sola" in row.reason
+
+
+def test_delivery_progress_and_delay_alerts():
+    from types import SimpleNamespace
+
+    from labelbridge.connectors.orders_overview import in_group
+
+    def shipped(created: float = NOW - 3 * 86400, limits=None, **delivery):
+        order = make_order(labels=(("1", "5,68"),), fulfillments=(usps(created=created, **delivery),), fulfillment="FULFILLED")
+        return row_of(order, jobs=[{"status": "done", "updated_at": NOW}], limits=limits)
+
+    on_way = shipped(displayStatus="IN_TRANSIT", inTransitAt=iso(NOW - 86400), estimatedDeliveryAt=iso(NOW + 86400))
+    assert on_way.alert == "" and on_way.status.startswith("En camino · llega el")
+    delivered = shipped(displayStatus="DELIVERED", deliveredAt=iso(NOW - 3600))
+    assert delivered.alert == "" and delivered.status.startswith("Entregado el")
+    late = shipped(displayStatus="IN_TRANSIT", inTransitAt=iso(NOW - 4 * 86400), estimatedDeliveryAt=iso(NOW - 2 * 86400))
+    assert late.alert == "late" and late.status == "Entrega atrasada" and "2 día(s) de retraso" in late.alert_reason
+    attempted = shipped(displayStatus="ATTEMPTED_DELIVERY", inTransitAt=iso(NOW - 86400))
+    assert attempted.alert == "problem" and attempted.status == "Intento de entrega fallido"
+    not_scanned = shipped(displayStatus="LABEL_PRINTED")  # guía de hace 3 días que USPS todavía no recibe
+    assert not_scanned.alert == "no_scan" and "3 día(s)" in not_scanned.alert_reason and "USPS" in not_scanned.alert_reason
+    assert shipped(displayStatus="LABEL_PRINTED", created=NOW - 3600).alert == ""  # recién comprada: todavía no
+    slow = shipped(displayStatus="IN_TRANSIT", inTransitAt=iso(NOW - 9 * 86400))
+    assert slow.alert == "slow" and "9 días" in slow.alert_reason
+    relaxed = SimpleNamespace(no_scan_days=5, transit_days=14)  # Ajustes → alertas de entrega
+    assert shipped(displayStatus="LABEL_PRINTED", limits=relaxed).alert == ""
+    assert shipped(displayStatus="IN_TRANSIT", inTransitAt=iso(NOW - 9 * 86400), limits=relaxed).alert == ""
+    summary = summarize([on_way, delivered, late, attempted, not_scanned])
+    assert summary.alerts == 3 and summary.groups["delays"] == 3 and in_group(late, "delays")
+    waiting = row_of(make_order(subtotal=1500, created=NOW - 3 * 86400))  # FedEx sin comprar desde hace 3 días
+    assert waiting.needs_action and waiting.waiting_days == 3
 
 
 def test_a_cheap_express_goes_by_usps_automatically():
@@ -299,27 +331,37 @@ def test_a_label_shopify_does_not_hand_over_is_reported(core, monkeypatch):
     assert service._to_fetch() == {} and fake.purchases == []
 
 
-def test_retry_after_a_rejected_purchase(core, monkeypatch):
+def test_buying_from_the_app_after_shopify_rejected_it(core, monkeypatch):
     from labelbridge.connectors import shopify as shopify_module
 
     fake = FakeShopify(iso(datetime.now(timezone.utc).timestamp()))
     service, s = _service(core, monkeypatch, fake)
     real_purchase = shopify_module.ShopifyClient.purchase_label
 
-    def rejected(self, fo_id, notify):
-        raise shopify_module.PurchaseRejected("ADDRESS_INVALID La dirección no existe")
+    def rejected(self, fo_id, notify, **_options):
+        raise shopify_module.PurchaseRejected("TOTAL_WEIGHT_ZERO Non-zero total weight is required for purchase.")
 
     monkeypatch.setattr(shopify_module.ShopifyClient, "purchase_label", rejected)
     service.cycle(service.client(), s)
-    assert service.ledger("3001")["state"] == "failed" and "dirección" in service.ledger("3001")["reason"]
+    assert service.ledger("3001")["state"] == "failed" and "weight" in service.ledger("3001")["reason"]
 
+    # «Comprar guía…»: la persona pone su caja y el peso, confirma, y se compra, se imprime y Shopify queda al día.
     monkeypatch.setattr(shopify_module.ShopifyClient, "purchase_label", real_purchase)
-    assert service.retry_order("3001") >= 1  # «Reintentar compra»: se compra y queda en cola
-    assert service.ledger("3001")["state"] == "purchased" and len(fake.purchases) == 1
+    s.max_labels_per_day = 0  # el límite diario frena las compras automáticas, no las confirmadas
+    box = {"type": "BOX", "dimensions": {"length": 6.0, "width": 4.0, "height": 2.0, "unit": "INCHES"},
+           "weight": {"value": 3.0, "unit": "OUNCES"}}
+    result = service.buy_label_now("3001", package=box, total_weight={"value": 1.5, "unit": "POUNDS"}, notify=True)
+    assert result["state"] == "purchased" and result["queued"] >= 1 and result["tracking"] == "1Z999"
+    sent = fake.purchases[-1]
+    assert sent["packageInfo"] == {"customPackage": box} and sent["totalWeight"] == {"value": 1.5, "unit": "POUNDS"}
+    assert sent["notifyCustomer"] is True and len(fake.purchases) == 1
+    assert core.store.get_by_external("shopify", "shipping-5-0-0") is not None  # en la cola de impresión
 
     service._note("3002", "uncertain")
     with pytest.raises(ShopifyError):
-        service.retry_order("3002")  # sin confirmar: nunca se compra dos veces
+        service.buy_label_now("3002")  # una compra sin confirmar: nunca se compra dos veces
+    s.package.use_custom, s.package.auto = True, True  # la caja guardada también en las compras automáticas
+    assert shopify_module.package_input(s.package)["dimensions"]["unit"] == "INCHES"
 
 
 def test_overview_joins_shopify_with_what_labelbridge_did(core, monkeypatch):
@@ -328,7 +370,8 @@ def test_overview_joins_shopify_with_what_labelbridge_did(core, monkeypatch):
 
     now = datetime.now(timezone.utc).timestamp()
     nodes = [
-        make_order(1601, created=now - 600, labels=(("9", "7,10"),), fulfillments=(usps(),), fulfillment="FULFILLED"),
+        make_order(1601, created=now - 600, labels=(("9", "7,10"),), fulfillments=(usps(created=now - 500),),
+                   fulfillment="FULFILLED"),
         make_order(1602, created=now - 3600, subtotal=1800),
     ]
 

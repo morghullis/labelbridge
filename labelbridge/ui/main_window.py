@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from PySide6.QtCore import QSize, Qt
+from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtGui import QCloseEvent, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -101,6 +101,12 @@ class MainWindow(QMainWindow):
         for page in self.pages.values():
             self.stack.addWidget(page)
         self.pages["orders"].attention_changed.connect(self._set_orders_badge)
+        # Recordatorio de los pedidos que esperan a una persona (Ajustes → Notificaciones y sonidos).
+        self.attention = 0
+        self._reminder = QTimer(self)
+        self._reminder.timeout.connect(self._remind)
+        ctx.bridge.config_saved.connect(lambda section: section in ("notifications", "all") and self._schedule_reminder())
+        self._schedule_reminder()
         # El asistente flota sobre todas las pantallas (bubble abajo a la derecha; F1 lo abre y lo cierra).
         self.assistant = _assistant_dock(ctx, root, self.stack)
         if self.assistant is not None:
@@ -207,10 +213,26 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, tr("Asistente"), tr("No se pudo cargar el asistente en este equipo. "
                                    "El resto de LabelBridge funciona con normalidad."))
 
+    def _schedule_reminder(self) -> None:
+        minutes = max(0, int(self.ctx.cfg.data.notifications.remind_minutes or 0))
+        if minutes:
+            self._reminder.start(minutes * 60_000)
+        else:
+            self._reminder.stop()
+
+    def _remind(self) -> None:
+        if self.attention:
+            self.ctx.events.notify(
+                tr("Pedidos esperando"),
+                tr("{0} pedido(s) necesitan tu atención: ábrelos en la pestaña Pedidos.", self.attention),
+                "error", kind="action",
+            )
+
     def _set_orders_badge(self, count: int) -> None:
+        self.attention = count
         self.orders_badge.setText(str(count))
         self.orders_badge.setVisible(count > 0)
-        self.orders_badge.setToolTip(tr("{0} pedido(s) necesitan acción", count))
+        self.orders_badge.setToolTip(tr("{0} pedido(s) necesitan tu atención", count))
 
     def _mark_assistant_tab(self, is_open: bool) -> None:
         btn = self.nav_buttons["assistant"]

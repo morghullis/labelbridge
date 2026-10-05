@@ -106,6 +106,52 @@ def leftovers_in(widget, translated: set[str]) -> list[str]:
     return found
 
 
+def sample_rows(cfg) -> list:
+    """Pedidos de ejemplo: FedEx por comprar, una compra rechazada, un envío atrasado y uno entregado."""
+    import time
+    from datetime import datetime, timezone
+
+    from labelbridge.connectors.orders_overview import classify
+
+    now = time.time()
+
+    def iso(ts: float) -> str:
+        return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def order(number: int, subtotal: float = 300.0, fulfillment: dict | None = None) -> dict:
+        return {
+            "id": f"gid://shopify/Order/{number}", "legacyResourceId": str(number), "name": f"#{number}",
+            "createdAt": iso(now - 3 * 86400), "displayFinancialStatus": "PAID",
+            "displayFulfillmentStatus": "FULFILLED" if fulfillment else "UNFULFILLED", "tags": [],
+            "totalPriceSet": {"shopMoney": {"amount": str(subtotal + 20), "currencyCode": "USD"}},
+            "currentSubtotalPriceSet": {"shopMoney": {"amount": str(subtotal)}},
+            "shippingAddress": {"name": "Ana", "city": "Miami", "provinceCode": "FL", "countryCodeV2": "US"},
+            "shippingLine": {"title": "Express"}, "fulfillments": [fulfillment] if fulfillment else [],
+            "fulfillmentOrders": {"nodes": [{"status": "OPEN", "deliveryMethod": {"methodType": "SHIPPING"}}]},
+            "events": {"nodes": [{"createdAt": iso(now - 2 * 86400), "message": "5,68 $",
+                                  "action": "shipping_label_created_success", "arguments": [number]}] if fulfillment else []},
+        }
+
+    def shipment(**delivery) -> dict:
+        return {"status": "SUCCESS", "createdAt": iso(now - 2 * 86400),
+                "trackingInfo": [{"company": "USPS", "number": "9200", "url": "https://tools.usps.com"}], **delivery}
+
+    s = cfg.data.shopify
+    s.buy_shipping_label = True
+    return [
+        classify(order(1, 1500), settings=s, since=now - 30 * 86400, now=now),
+        classify(order(2), settings=s, since=now - 30 * 86400, now=now,
+                 ledger={"state": "failed", "reason": "TOTAL_WEIGHT_ZERO weight"}),
+        classify(order(3, fulfillment=shipment(displayStatus="IN_TRANSIT", inTransitAt=iso(now - 86400),
+                                               estimatedDeliveryAt=iso(now - 86400 * 2))), settings=s, now=now,
+                 jobs=[{"status": "done"}]),
+        classify(order(4, fulfillment=shipment(displayStatus="ATTEMPTED_DELIVERY")), settings=s, now=now),
+        classify(order(5, fulfillment=shipment(displayStatus="LABEL_PRINTED")), settings=s, now=now),
+        classify(order(6, fulfillment=shipment(displayStatus="DELIVERED", deliveredAt=iso(now - 3600))), settings=s,
+                 now=now),
+    ]
+
+
 def visible_leftovers() -> list[str]:
     """Abre la ventana con todas sus pantallas y diálogos y devuelve lo que no se traduciría."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -161,6 +207,22 @@ def visible_leftovers() -> list[str]:
         rules = ShippingRulesDialog(window, cfg.data.shopify.shipping_rules, cfg.data.shopify.default_carrier)
         found += [f"[reglas] {item}" for item in leftovers_in(rules, translated)]
         rules.close()
+        # Pedidos con datos: los que necesitan acción, los retrasos y la ventana «Comprar guía».
+        from labelbridge.ui.purchase_dialog import PurchaseDialog
+
+        rows = sample_rows(cfg)
+        orders = window.pages["orders"]
+        orders.all_rows = rows
+        orders._render()
+        app.processEvents()
+        found += [f"[pedidos con datos] {item}" for item in leftovers_in(orders, translated)]
+        for row in rows[:2]:
+            dialog = PurchaseDialog(window, window.ctx, row)
+            dialog.other_carrier.setChecked(True)
+            found += [f"[comprar guía] {item}" for item in leftovers_in(dialog, translated)]
+            dialog._done({"state": "purchased", "carrier": "USPS", "tracking": "9200"})
+            found += [f"[comprar guía] {item}" for item in leftovers_in(dialog, translated)]
+            dialog.close()
         import time
 
         from labelbridge.updater import UpdateInfo

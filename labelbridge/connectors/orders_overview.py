@@ -12,7 +12,8 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
-from ..i18n import N_, tr
+
+from ..i18n import N_, date_text, tr
 
 OVERVIEW_QUERY = """
 query LabelBridgeOverview($first: Int!, $after: String, $query: String!) {
@@ -31,7 +32,10 @@ query LabelBridgeOverview($first: Int!, $after: String, $query: String!) {
       currentSubtotalPriceSet { shopMoney { amount } }
       shippingAddress { name city provinceCode countryCodeV2 }
       shippingLine { title }
-      fulfillments(first: 5) { status createdAt trackingInfo { company number url } }
+      fulfillments(first: 5) {
+        status createdAt displayStatus inTransitAt deliveredAt estimatedDeliveryAt
+        trackingInfo { company number url }
+      }
       fulfillmentOrders(first: 5) { nodes { status deliveryMethod { methodType } } }
       events(
         first: 10
@@ -57,9 +61,95 @@ ACTION_STATES = {"manual", "failed", "uncertain", "limit", "no_document"}
 WAIT_SECONDS = 600  # un pedido nuevo sin guía después de esto ya es raro
 TEST_TAGS = ("prueba", "test")
 
+# Por qué Shopify no compró una guía (código de su respuesta → en palabras de cualquiera).
+PURCHASE_ERRORS = {
+    "TOTAL_WEIGHT_ZERO": N_("Falta el peso del paquete"),
+    "RATES_NOT_FOUND": N_("Shopify no encontró tarifas para este envío: revisa la dirección, la caja y el peso"),
+    "CARRIER_NOT_AVAILABLE": N_("La paquetería no está disponible para este envío"),
+    "PHONE_NUMBER_NOT_FULLY_QUALIFIED_DESTINATION": N_("Falta el teléfono completo del cliente (con código de país)"),
+    "PHONE_NUMBER_NOT_FULLY_QUALIFIED_ORIGIN": N_("Falta el teléfono completo de tu tienda (con código de país)"),
+    "TERMS_OF_SERVICE_NOT_ACCEPTED": N_("Acepta los términos de Shopify Shipping comprando una guía en Shopify una vez"),
+    "SHIPPING_DATE_IN_THE_PAST": N_("La fecha de envío quedó en el pasado"),
+    "FULFILLMENT_ORDER_INVALID": N_("El pedido ya no se puede enviar así (¿ya está preparado o cancelado?)"),
+    "PACKAGE_CARRIER_MISMATCH": N_("La caja no corresponde a la paquetería"),
+    "PURCHASE_FAILED": N_("La paquetería rechazó la compra: revisa los datos del envío"),
+}
+
+
+# Cómo va el envío, según lo que Shopify sabe de la paquetería.
+DELIVERY_STATUS = {
+    "CARRIER_PICKED_UP": N_("Recogido por la paquetería"),
+    "IN_TRANSIT": N_("En camino"),
+    "OUT_FOR_DELIVERY": N_("Sale para entrega hoy"),
+    "READY_FOR_PICKUP": N_("Listo para recoger"),
+    "PICKED_UP": N_("Recogido por el cliente"),
+    "DELIVERED": N_("Entregado"),
+}
+# Lo que la paquetería informa como problema: (título, qué pasó y qué hacer).
+DELIVERY_PROBLEMS = {
+    "ATTEMPTED_DELIVERY": (N_("Intento de entrega fallido"),
+                           N_("La paquetería intentó entregarlo y no pudo. Revisa el seguimiento y avisa al cliente si hace falta.")),
+    "DELAYED": (N_("Envío retrasado"), N_("La paquetería informa que el envío va con retraso.")),
+    "FAILURE": (N_("Problema con el envío"), N_("La paquetería reporta un problema con el envío: revisa el seguimiento.")),
+    "NOT_DELIVERED": (N_("No se pudo entregar"),
+                      N_("La paquetería no pudo entregarlo: revisa el seguimiento y contacta al cliente.")),
+}
+WAITING_FOR_CARRIER = {"", "LABEL_PURCHASED", "LABEL_PRINTED", "CONFIRMED", "FULFILLED", "SUBMITTED"}
+
+
+def _delivery(row: "OrderRow", fulfillments: list[dict], now: float, limits) -> None:
+    """Cómo va la entrega del último envío con seguimiento y si hay un retraso o un problema."""
+    shipments = [f for f in fulfillments if f.get("status") == "SUCCESS" and f.get("trackingInfo")]
+    if not shipments:
+        return
+    latest = max(shipments, key=lambda f: iso_ts(f.get("createdAt")))
+    status = str(latest.get("displayStatus") or "")
+    row.delivery, row.eta, row.delivered = status, iso_ts(latest.get("estimatedDeliveryAt")), iso_ts(latest.get("deliveredAt"))
+    if row.delivered or status in ("DELIVERED", "PICKED_UP", "CANCELED", "LABEL_VOIDED"):
+        return
+    if status in DELIVERY_PROBLEMS:
+        title, reason = DELIVERY_PROBLEMS[status]
+        row.alert, row.alert_title, row.alert_reason = "problem", tr(title), tr(reason)
+        return
+    if row.eta and now > row.eta + 12 * 3600:
+        row.alert, row.alert_title = "late", tr("Entrega atrasada")
+        row.alert_reason = tr("Debía llegar el {0} y todavía no se entrega ({1} día(s) de retraso).",
+                              date_text(row.eta, clock=""), max(1, int((now - row.eta) // 86400)))
+        return
+    in_transit, shipped_at = iso_ts(latest.get("inTransitAt")), iso_ts(latest.get("createdAt"))
+    no_scan = int(getattr(limits, "no_scan_days", 2) or 0)
+    if not in_transit and status in WAITING_FOR_CARRIER and no_scan and now - shipped_at > no_scan * 86400:
+        row.alert, row.alert_title = "no_scan", tr("La paquetería no lo ha recibido")
+        row.alert_reason = tr("La guía se compró hace {0} día(s) y {1} todavía no registra el paquete: ¿ya se entregó en la "
+                              "oficina o lo recogieron?", int((now - shipped_at) // 86400), row.carrier or tr("la paquetería"))
+        return
+    transit = int(getattr(limits, "transit_days", 7) or 0)
+    if in_transit and not row.eta and transit and now - in_transit > transit * 86400:
+        row.alert, row.alert_title = "slow", tr("Mucho tiempo en camino")
+        row.alert_reason = tr("Lleva {0} días en camino sin fecha de entrega: revisa el seguimiento.",
+                              int((now - in_transit) // 86400))
+
+
+def delivery_text(row: "OrderRow") -> str:
+    """«En camino · llega el 10/08», «Entregado el 10/07»…"""
+    text = tr(DELIVERY_STATUS[row.delivery])
+    if row.delivered:
+        return tr("{0} el {1}", text, date_text(row.delivered, year=False, clock=""))
+    if row.eta:
+        return tr("{0} · llega el {1}", text, date_text(row.eta, year=False, clock=""))
+    return text
+
+
+def friendly_reason(reason: str) -> str:
+    """El motivo de Shopify con su código traducido («TOTAL_WEIGHT_ZERO …» → «Falta el peso del paquete»)."""
+    text = (reason or "").strip()
+    code = text.split(" ", 1)[0].strip(":;,.")
+    return tr(PURCHASE_ERRORS[code]) if code in PURCHASE_ERRORS else text
+
 # Pestañas de la pantalla, en orden: (clave, título).
 GROUPS = (
     ("action", N_("Necesitan acción")),
+    ("delays", N_("Retrasos")),
     ("usps", N_("USPS")),
     ("fedex", N_("FedEx")),
     ("other", N_("Otras")),
@@ -95,6 +185,14 @@ class OrderRow:
     test: bool = False
     rule_carrier: str = ""  # paquetería según la regla del método de envío
     issue: str = ""  # código del problema, sin traducir (auto_fulfilled…)
+    problem: str = ""  # por qué Shopify no compró la guía, en palabras de cualquiera
+    delivery: str = ""  # cómo va el envío según la paquetería (IN_TRANSIT, DELIVERED…)
+    eta: float = 0.0  # fecha estimada de entrega
+    delivered: float = 0.0
+    alert: str = ""  # retraso o problema de entrega: problem | late | no_scan | slow
+    alert_title: str = ""
+    alert_reason: str = ""
+    waiting_days: int = 0  # días pagado y sin enviar (pedidos que necesitan acción)
 
     @property
     def needs_action(self) -> bool:
@@ -238,8 +336,11 @@ def classify(
     jobs: list[dict] | None = None,
     since: float = 0.0,
     now: float = 0.0,
+    limits=None,
 ) -> OrderRow:
-    """Un pedido de Shopify → una fila: paquetería, estado y, si hace falta, el porqué y qué hacer."""
+    """Un pedido de Shopify → una fila: paquetería, estado y, si hace falta, el porqué y qué hacer.
+
+    `limits` (NotificationSettings) marca los retrasos: días sin que la paquetería reciba el paquete y en camino."""
     legacy = str(order.get("legacyResourceId") or str(order.get("id", "")).rsplit("/", 1)[-1])
     address = order.get("shippingAddress") or {}
     money = (order.get("totalPriceSet") or {}).get("shopMoney") or {}
@@ -275,6 +376,8 @@ def classify(
     ]
     shipped = any(f.get("status") == "SUCCESS" for f in fulfillments)
     row.printed, row.print_error = print_state(jobs or [])
+    row.carrier = row.tracking[0][0] if row.tracking else ""
+    _delivery(row, fulfillments, now or datetime.now().timestamp(), limits)
 
     methods = {
         (fo.get("deliveryMethod") or {}).get("methodType")
@@ -300,10 +403,16 @@ def classify(
 
     def act(status: str, reason: str, action: str) -> OrderRow:
         row.state, row.status, row.reason, row.action = "action", status, reason, action
+        if not shipped and created and now:
+            row.waiting_days = int(max(0.0, now - created) // 86400)
         return row
 
     def keep(state: str, status: str) -> OrderRow:
         row.state, row.status = state, status
+        if state == "done" and row.alert:
+            row.status = row.alert_title
+        elif state == "done" and row.delivery in DELIVERY_STATUS:
+            row.status = delivery_text(row)
         return row
 
     financial = order.get("displayFinancialStatus") or ""
@@ -368,9 +477,10 @@ def classify(
             "buy",
         )
     if state == "failed":
+        row.problem = friendly_reason(ledger.get("reason") or "") or tr("Shopify no dio el motivo")
         return act(
             tr("No se pudo comprar la guía"),
-            tr("No se pudo comprar la guía: {0}. Corrígelo y pulsa «Reintentar compra».", ledger.get('reason') or 'Shopify no dio el motivo'),
+            tr("No se pudo comprar la guía: {0}. Pulsa «Comprar guía», corrige los datos (caja, peso) y confirma.", row.problem),
             "retry",
         )
     if state == "uncertain":
@@ -382,28 +492,26 @@ def classify(
     if state == "limit":
         return act(
             tr("Límite diario de guías"),
-            tr("Se alcanzó el máximo de {0} guías por día. Súbelo en Shopify → Máximo por día o pulsa «Reintentar compra» mañana.", getattr(s, 'max_labels_per_day', 0)),
+            tr("Se alcanzó el máximo de {0} guías por día en las compras automáticas. Pulsa «Comprar guía» para comprarla igual o sube el máximo en Shopify → Máximo por día.", getattr(s, 'max_labels_per_day', 0)),
             "retry",
         )
     if not getattr(s, "buy_shipping_label", False):
         return act(
             tr("Falta la guía"),
-            tr("La compra automática de guías está desactivada: cómprala a mano en Shopify o actívala en la pestaña "
-               "Shopify."),
-            "open",
+            tr("La compra automática de guías está desactivada: pulsa «Comprar guía» o actívala en la pestaña Shopify."),
+            "retry",
         )
     if created < since:
         return act(
             tr("Falta la guía"),
-            tr("Es de antes de conectar LabelBridge, por eso no se compró sola. Pulsa «Reintentar compra» o cómprala a "
-               "mano en Shopify."),
+            tr("Es de antes de conectar LabelBridge, por eso no se compró sola. Pulsa «Comprar guía»."),
             "retry",
         )
     if now - created < WAIT_SECONDS:
         return keep("waiting", tr("Comprando la guía…"))
     return act(
         tr("Falta la guía"),
-        tr("Sigue sin guía: revisa que LabelBridge esté conectado a Shopify y pulsa «Reintentar compra»."),
+        tr("Sigue sin guía: revisa que LabelBridge esté conectado a Shopify y pulsa «Comprar guía»."),
         "retry",
     )
 
@@ -418,6 +526,7 @@ class Summary:
     by_carrier: dict[str, tuple[int, float]] = field(default_factory=dict)  # paquetería → (guías, costo)
     groups: dict[str, int] = field(default_factory=dict)  # pestaña → pedidos
     auto_fulfill: int = 0  # pedidos preparados solos sin guía (ajuste de Shopify)
+    alerts: int = 0  # envíos con retraso o problema de entrega
 
 
 def summarize(rows: list[OrderRow]) -> Summary:
@@ -432,6 +541,9 @@ def summarize(rows: list[OrderRow]) -> Summary:
             summary.groups["action"] += 1
         if row.issue == "auto_fulfilled":
             summary.auto_fulfill += 1
+        if row.alert:
+            summary.alerts += 1
+            summary.groups["delays"] += 1
         summary.voided += row.voided
         if row.labels:
             summary.labels += row.labels
@@ -448,6 +560,8 @@ def in_group(row: OrderRow, group: str) -> bool:
         return True
     if group == "action":
         return row.needs_action
+    if group == "delays":
+        return bool(row.alert)
     return row.group == group
 
 

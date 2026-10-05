@@ -91,6 +91,8 @@ QPushButton[variant="segment"] {{
 QPushButton[variant="segment"]:hover {{ background: #F1F5F9; color: {TEXT}; }}
 QPushButton[variant="segment"]:checked {{ background: #EEF2FF; color: {ACCENT_HOVER}; border-color: #C7D2FE; }}
 QFrame#ActionItem {{ background: #FFFBEB; border: 1px solid #FDE68A; border-radius: 10px; }}
+QFrame#DelayItem {{ background: #FFF1F2; border: 1px solid #FECDD3; border-radius: 10px; }}
+QLabel#Overdue {{ background: #FFE4E6; color: #BE123C; border-radius: 9px; padding: 2px 9px; font-weight: 700; font-size: 11px; }}
 
 QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox, QPlainTextEdit, QTextEdit {{
     background: white; color: {TEXT}; border: 1px solid #CBD5E1; border-radius: 8px;

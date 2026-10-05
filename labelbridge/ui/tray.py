@@ -10,7 +10,7 @@ from PySide6.QtWidgets import QMenu, QSystemTrayIcon
 
 from .. import APP_NAME
 from ..i18n import tr
-from . import icons
+from . import alerts, icons
 from .context import AppContext
 
 
@@ -63,7 +63,7 @@ class Tray(QSystemTrayIcon):
         self.pause_action.setText(tr("Reanudar impresión automática") if paused else tr("Pausar impresión automática"))
         self.pause_action.setIcon(icons.icon("play" if paused else "pause"))
         queued = self.ctx.store.counts()["queued"]
-        state = "en pausa" if paused else "activo"
+        state = tr("en pausa") if paused else tr("activo")
         self.setToolTip(tr("{0} · {1} · {2} en cola", APP_NAME, state, queued))
 
     def _on_event(self, kind: str, data) -> None:
@@ -75,12 +75,15 @@ class Tray(QSystemTrayIcon):
             if now - self._last_notice.get(key, 0) < 30:
                 return  # evita repetir el mismo aviso en ráfaga
             self._last_notice[key] = now
-            icon = (
-                QSystemTrayIcon.MessageIcon.Warning
-                if data.get("level") == "error"
-                else QSystemTrayIcon.MessageIcon.Information
-            )
-            self.showMessage(data.get("title", APP_NAME), data.get("message", ""), icon, 6000)
+            kind = data.get("kind") or ""
+            if alerts.toast_enabled(self.ctx.cfg, kind):
+                icon = (
+                    QSystemTrayIcon.MessageIcon.Warning
+                    if data.get("level") == "error"
+                    else QSystemTrayIcon.MessageIcon.Information
+                )
+                self.showMessage(data.get("title", APP_NAME), data.get("message", ""), icon, 6000)
+            alerts.play_for(self.ctx.cfg, kind)  # el sonido va aparte: se puede tener sonido sin aviso
         elif kind == "connector" and isinstance(data, dict) and data.get("state") == "error":
             names = {"shopify": tr("Shopify"), "mqtt": "n8n (tiempo real)", "local_api": tr("API local")}
             name = names.get(data.get("name"), data.get("name"))

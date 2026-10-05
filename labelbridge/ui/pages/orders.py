@@ -39,7 +39,7 @@ from ...connectors.shopify import admin_url
 from ...i18n import N_, date_text, tr
 from .. import icons
 from ..context import AppContext
-from ..widgets import Card, Page, button, confirm, copy_to_clipboard, error, info, label, run_async
+from ..widgets import Card, Page, button, copy_to_clipboard, error, info, label, run_async
 
 PERIODS = (("today", N_("Hoy")), (7, N_("Últimos 7 días")), (30, N_("Últimos 30 días")), (60, N_("Últimos 60 días")))
 STALE_SECONDS = 60
@@ -63,7 +63,7 @@ ACTION_BUTTONS = {  # acción → (texto, icono)
     "buy": (N_("Comprar en Shopify"), "link"),
     "void": (N_("Anular en Shopify"), "link"),
     "reprint": (N_("Reimprimir guía"), "printer"),
-    "retry": (N_("Reintentar compra"), "retry"),
+    "retry": (N_("Comprar guía…"), "tag"),
 }
 
 
@@ -137,11 +137,11 @@ class OrdersModel(QAbstractTableModel):
         if role == Qt.ItemDataRole.UserRole:  # para ordenar
             return (row.name, row.created, row.customer, row.subtotal, row.carrier, row.cost, row.state)[col]
         if role == Qt.ItemDataRole.ForegroundRole and col == 6:
-            return QColor(STATE_COLORS.get(row.state, "#334155"))
+            return QColor("#BE123C" if row.alert else STATE_COLORS.get(row.state, "#334155"))
         if role == Qt.ItemDataRole.ToolTipRole:
             if col == 2:
                 return " · ".join(part for part in (row.customer, row.destination) if part)
-            lines = [row.reason or row.status]
+            lines = [row.alert_reason or row.reason or row.status]
             for carrier, number, _url in row.tracking:
                 lines.append(f"{carrier} {number}")
             if row.voided:
@@ -168,6 +168,9 @@ class ActionItem(QFrame):
         head.addWidget(label(who, "Muted"), 1)
         if row.subtotal:
             head.addWidget(label(tr("{0} en piezas", money(row.subtotal)), "Muted"))
+        overdue = max(1, int(page.ctx.cfg.data.notifications.unshipped_days or 0))
+        if row.waiting_days >= overdue:
+            head.addWidget(label(tr("{0} días sin enviar", row.waiting_days), "Overdue"))
         column.addLayout(head)
         title = label(row.status, "SectionTitle")
         title.setStyleSheet(f"color: {STATE_COLORS['action']};")
@@ -179,10 +182,51 @@ class ActionItem(QFrame):
         main = button(tr(text), icon_name, "primary")
         main.clicked.connect(lambda: page.run_action(row, row.action or "open"))
         actions.addWidget(main)
-        if row.action not in ("open", "void", "buy", ""):
+        if row.action == "buy":  # FedEx: un clic en Shopify, o aquí con otra paquetería
+            other = button(tr("Otra paquetería…"), "tag")
+            other.clicked.connect(lambda: page.run_action(row, "retry"))
+            actions.addWidget(other)
+        elif row.action not in ("open", "void", ""):
             other = button(tr("Abrir en Shopify"), "link")
             other.clicked.connect(lambda: page.run_action(row, "open"))
             actions.addWidget(other)
+        actions.addStretch(1)
+        column.addLayout(actions)
+
+
+class DelayItem(QFrame):
+    """Un envío con retraso o problema de entrega: qué pasa, desde cuándo y cómo rastrearlo."""
+
+    def __init__(self, row: OrderRow, page: "OrdersPage") -> None:
+        super().__init__()
+        self.setObjectName("DelayItem")
+        column = QVBoxLayout(self)
+        column.setContentsMargins(14, 12, 14, 12)
+        column.setSpacing(6)
+        head = QHBoxLayout()
+        head.setSpacing(10)
+        head.addWidget(carrier_chip(row.carrier))
+        head.addWidget(label(row.name, "CardTitle"))
+        who = " · ".join(part for part in (row.customer, row.destination) if part)
+        head.addWidget(label(who, "Muted"), 1)
+        if row.tracking:
+            head.addWidget(label(row.tracking[0][1], "Muted", selectable=True))
+        column.addLayout(head)
+        title = label(row.alert_title, "SectionTitle")
+        title.setStyleSheet("color: #BE123C;")
+        column.addWidget(title)
+        column.addWidget(label(row.alert_reason, wrap=True))
+        actions = QHBoxLayout()
+        actions.setSpacing(8)
+        track = button(tr("Rastrear"), "truck", "primary")
+        track.clicked.connect(lambda: page.run_action(row, "track"))
+        actions.addWidget(track)
+        copy = button(tr("Copiar seguimiento"), "copy")
+        copy.clicked.connect(lambda: page.run_action(row, "copy"))
+        actions.addWidget(copy)
+        shopify = button(tr("Abrir en Shopify"), "link")
+        shopify.clicked.connect(lambda: page.run_action(row, "open"))
+        actions.addWidget(shopify)
         actions.addStretch(1)
         column.addLayout(actions)
 
@@ -326,6 +370,7 @@ class OrdersPage(Page):
         stats = QHBoxLayout()
         stats.setSpacing(16)
         self.stat_action = self._stat(stats, tr("NECESITAN ACCIÓN"), "alert")
+        self.stat_delays = self._stat(stats, tr("RETRASOS"), "clock")
         self.stat_orders = self._stat(stats, tr("PEDIDOS"), "package")
         self.stat_labels = self._stat(stats, tr("GUÍAS COMPRADAS"), "tag")
         self.stat_carriers = self._stat(stats, tr("PROMEDIO POR GUÍA"), "truck")
@@ -336,6 +381,13 @@ class OrdersPage(Page):
         self.action_list.setSpacing(10)
         self.action_card.add(layout=self.action_list)
         self.add(self.action_card)
+
+        self.delay_card = Card(tr("Retrasos y entregas"))
+        self.delay_list = QVBoxLayout()
+        self.delay_list.setSpacing(10)
+        self.delay_card.add(layout=self.delay_list)
+        self.delay_card.setVisible(False)
+        self.add(self.delay_card)
 
         table_card = Card(tr("Todos los pedidos"))
         tabs = QHBoxLayout()
@@ -394,7 +446,7 @@ class OrdersPage(Page):
             (tr("Abrir en Shopify"), "link", "open"),
             (tr("Rastrear"), "truck", "track"),
             (tr("Reimprimir guía"), "printer", "reprint"),
-            (tr("Reintentar compra"), "retry", "retry"),
+            (tr("Comprar guía…"), "tag", "retry"),
         ):
             btn = button(text, icon_name)
             btn.clicked.connect(lambda _=False, a=action: self._selected_action(a))
@@ -510,24 +562,29 @@ class OrdersPage(Page):
         summary = summarize(rows)
         self._render_stats(summary)
         self._render_actions([row for row in rows if row.needs_action])
+        self._render_delays([row for row in rows if row.alert])
         for key, text in GROUPS:
             if key in self.tabs:
                 self.tabs[key].setText(f"{tr(text)}  {summary.groups.get(key, 0)}")
         self._fill_table()
         self._render_notice(summary)
-        self.attention_changed.emit(summary.action)
+        self.attention_changed.emit(summary.action + summary.alerts)
 
     def _render_stats(self, summary: Summary) -> None:
         value, detail = self.stat_action
         value.setText(str(summary.action))
         value.setStyleSheet(f"color: {STATE_COLORS['action']};" if summary.action else "")
         detail.setText(tr("Todo va solo") if not summary.action else tr("Míralos abajo, con el porqué"))
+        value, detail = self.stat_delays
+        value.setText(str(summary.alerts))
+        value.setStyleSheet("color: #BE123C;" if summary.alerts else "")
+        detail.setText(tr("Todo va a tiempo") if not summary.alerts else tr("Envíos con retraso o problemas"))
         value, detail = self.stat_orders
         value.setText(str(summary.orders))
         detail.setText(self.period.currentText())
         value, detail = self.stat_labels
         value.setText(money(summary.cost))
-        anuladas = f" · {money(summary.voided)} anuladas" if summary.voided else ""
+        anuladas = tr(" · {0} anuladas", money(summary.voided)) if summary.voided else ""
         detail.setText(tr("{0} guía(s){1}", summary.labels, anuladas))
         value, detail = self.stat_carriers
         parts = sorted(summary.by_carrier.items(), key=lambda item: -item[1][1])
@@ -545,6 +602,18 @@ class OrdersPage(Page):
             self.action_list.addWidget(ActionItem(row, self))
         if len(rows) > 20:
             self.action_list.addWidget(label(tr("…y {0} más en la tabla de abajo.", len(rows) - 20), "Muted"))
+
+    def _render_delays(self, rows: list[OrderRow]) -> None:
+        while self.delay_list.count():
+            item = self.delay_list.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self.delay_card.setVisible(bool(rows))
+        self.delay_card.title_label.setText(tr("Retrasos y entregas  {0}", len(rows)))
+        for row in rows[:20]:
+            self.delay_list.addWidget(DelayItem(row, self))
+        if len(rows) > 20:
+            self.delay_list.addWidget(label(tr("…y {0} más en «Retrasos», en la tabla de abajo.", len(rows) - 20), "Muted"))
 
     def _render_notice(self, summary: Summary) -> None:
         if summary.auto_fulfill:
@@ -599,8 +668,8 @@ class OrdersPage(Page):
             menu.addAction(icons.icon("copy"), tr("Copiar el número de seguimiento"), lambda: self.run_action(row, "copy"))
         if row.labels:
             menu.addAction(icons.icon("printer"), tr("Reimprimir la guía"), lambda: self.run_action(row, "reprint"))
-        if row.action == "retry":
-            menu.addAction(icons.icon("retry"), tr("Reintentar la compra"), lambda: self.run_action(row, "retry"))
+        if row.action in ("retry", "buy"):
+            menu.addAction(icons.icon("tag"), tr("Comprar guía…"), lambda: self.run_action(row, "retry"))
         menu.exec(self.view.viewport().mapToGlobal(pos))
 
     def run_action(self, row: OrderRow, action: str) -> None:
@@ -641,22 +710,13 @@ class OrdersPage(Page):
             info(self, tr("Reimprimir"), tr("La guía de {0} está otra vez en la cola de impresión.", row.name))
 
     def _retry(self, row: OrderRow) -> None:
-        if not confirm(
-            self,
-            tr("Reintentar la compra"),
-            tr("LabelBridge volverá a comprar la guía de {0} con Shopify Shipping y la imprimirá. Shopify cobra la guía en tu factura.\n\n¿Reintentar?", row.name),
-        ):
-            return
-        service = self.ctx.services.shopify
+        """«Comprar guía…»: los datos que hagan falta, confirmar, y se compra, se imprime y Shopify queda al día."""
+        from ..purchase_dialog import PurchaseDialog
 
-        def done(queued: int) -> None:
-            if queued:
-                info(self, tr("Reintentar la compra"), tr("Listo: la guía de {0} se compró y está en la cola.", row.name))
-            else:
-                info(self, tr("Reintentar la compra"), tr("Shopify no compró la guía todavía: mira el motivo en la lista."))
+        dialog = PurchaseDialog(self, self.ctx, row)
+        dialog.exec()
+        if dialog.bought:
             self.reload()
-
-        run_async(lambda: service.retry_order(row.legacy), done, lambda message: error(self, tr("Reintentar la compra"), message))
 
     def edit_rules(self) -> None:
         s = self.ctx.cfg.data.shopify

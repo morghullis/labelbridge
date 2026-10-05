@@ -251,7 +251,7 @@ def _purchase_service(core, monkeypatch, purchase_behaviour):
     monkeypatch.setattr("labelbridge.connectors.shopify.net.request", fake)
     calls = []
 
-    def purchase(self, fo_id, notify):
+    def purchase(self, fo_id, notify, **_options):
         calls.append(fo_id)
         raise purchase_behaviour(shopify_module)
 

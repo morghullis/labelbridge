@@ -63,6 +63,10 @@ anular desde el pedido en Shopify).
 6. Día a día: set_general(start_with_windows=true) y complete_guide_step(daily); si eligió la etiqueta interna en vez \
 de la guía, complete_guide_step(what).
 Si algo no se imprimió: diagnose_setup y get_recent_jobs(only_errors=true); reprint_job reimprime sin comprar otra guía.
+Pedidos que esperan a una persona (compra rechazada, límite diario, de antes de conectar): en Pedidos → «Comprar guía…» \
+se elige caja, peso y aviso al cliente, se confirma y LabelBridge la compra, la imprime y Shopify queda al día. Los \
+retrasos de entrega salen en Pedidos → «Retrasos y entregas». Avisos y sonidos (pedido nuevo, acción, retrasos, \
+horario de silencio) en Ajustes → Notificaciones y sonidos.
 </configuracion_tipica>
 
 <reglas>

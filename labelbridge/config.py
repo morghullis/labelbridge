@@ -101,6 +101,42 @@ class GeneralSettings:
     language: str = ""  # es | en; vacío: el que se eligió en el instalador o el de Windows
 
 
+# Avisos que se pueden configurar: aviso junto al reloj y sonido de cada uno.
+NOTIFY_EVENTS = {
+    "new_order": N_("Pedido nuevo"),
+    "action": N_("Pedido que necesita acción"),
+    "delivery": N_("Retraso o problema de entrega"),
+    "printed": N_("Guía impresa"),
+    "print_error": N_("Error de impresión"),
+}
+DEFAULT_SOUNDS = {"new_order": "register", "action": "alert", "delivery": "bell", "printed": "", "print_error": "alert"}
+
+
+@dataclass
+class NotificationSettings:
+    """Cómo avisa LabelBridge de cada cosa. Los avisos de «guía impresa» y «error de impresión» se encienden con
+    general.notify_printed y general.notify_errors (los mismos de siempre)."""
+
+    new_order: bool = True
+    action: bool = True
+    delivery: bool = True
+    sounds: dict = field(default_factory=lambda: dict(DEFAULT_SOUNDS))  # evento → SOUNDS ("" sin sonido)
+    volume: int = 80
+    custom_sound: str = ""  # .wav propio («Mi archivo»)
+    quiet: bool = False  # sin sonido de quiet_from a quiet_to (los avisos llegan igual)
+    quiet_from: str = "22:00"
+    quiet_to: str = "07:00"
+    remind_minutes: int = 0  # recordar los pedidos que necesitan acción cada tantos minutos (0: no)
+    # Alertas de entrega (pestaña Pedidos → «Retrasos»).
+    unshipped_days: int = 2  # pagado y sin enviar
+    no_scan_days: int = 2  # guía comprada y la paquetería todavía no lo recibe
+    transit_days: int = 7  # en camino sin fecha estimada
+
+    def sound(self, event: str) -> str:
+        chosen = self.sounds if isinstance(self.sounds, dict) else {}
+        return str(chosen.get(event, DEFAULT_SOUNDS.get(event, "")) or "")
+
+
 @dataclass
 class LabelSettings:
     """Etiqueta de pedido generada por LabelBridge (no es una etiqueta de paquetería con franqueo)."""
@@ -126,6 +162,25 @@ class ShippingRule:
     over: float = 0.0  # valor de las piezas (sin envío ni impuestos) a partir del cual se aplica
 
 
+# Tipos de paquete que acepta Shopify Shipping para una caja propia.
+PACKAGE_TYPES = {"BOX": N_("Caja"), "SOFT_PACK": N_("Sobre acolchado o bolsa"), "ENVELOPE": N_("Sobre")}
+
+
+@dataclass
+class PackageSettings:
+    """Caja propia para las guías (medidas de fuera y peso de la caja vacía). Sin ella, el paquete de Shopify."""
+
+    use_custom: bool = False  # al comprar desde LabelBridge, esta caja en vez del paquete predeterminado de Shopify
+    auto: bool = False  # también en las compras automáticas
+    type: str = "BOX"  # PACKAGE_TYPES
+    length: float = 6.0
+    width: float = 4.0
+    height: float = 2.0
+    dim_unit: str = "INCHES"  # INCHES | CENTIMETERS
+    weight: float = 3.0
+    weight_unit: str = "OUNCES"  # OUNCES | POUNDS | GRAMS | KILOGRAMS
+
+
 @dataclass
 class ShopifySettings:
     enabled: bool = False
@@ -149,6 +204,7 @@ class ShopifySettings:
     shipping_rules: list[ShippingRule] = field(default_factory=lambda: [ShippingRule("", "FedEx", False, 1000.0)])
     default_carrier: str = "USPS"
     notify_customer: bool = False
+    package: PackageSettings = field(default_factory=PackageSettings)
     max_labels_per_day: int = 50
     metafield_label: bool = False
     metafield_namespace: str = "custom"
@@ -239,6 +295,7 @@ class Settings:
     local_api: LocalApiSettings = field(default_factory=LocalApiSettings)
     security: SecuritySettings = field(default_factory=SecuritySettings)
     assistant: AssistantSettings = field(default_factory=AssistantSettings)
+    notifications: NotificationSettings = field(default_factory=NotificationSettings)
 
 
 def _coerce(value: Any, default: Any) -> Any:

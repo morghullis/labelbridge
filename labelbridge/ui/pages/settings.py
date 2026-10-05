@@ -4,17 +4,21 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from PySide6.QtCore import QUrl
+from PySide6.QtCore import Qt, QTime, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
+    QFileDialog,
     QFormLayout,
+    QGridLayout,
     QHBoxLayout,
     QLineEdit,
     QPlainTextEdit,
+    QSlider,
     QSpinBox,
+    QTimeEdit,
 )
 
 from ... import APP_NAME, __version__
@@ -29,14 +33,17 @@ from ...assistant.providers import (
     resolve,
     valid_model,
 )
-from ...config import ASSISTANT_EFFORTS
+from ...config import ASSISTANT_EFFORTS, NOTIFY_EVENTS
 from ...events import CONFIG_EXTERNAL
-from ...i18n import LANGUAGES, tr
+from ...i18n import LANGUAGES, N_, tr
 from ...paths import data_dir, logs_dir, output_dir
-from ...system import autostart
+from ...system import autostart, sounds
 from ...updater import UPDATES_PAGE
 from ..context import AppContext
-from ..widgets import Card, Page, button, confirm, label, run_async
+from ..widgets import Card, Page, button, confirm, info, label, run_async
+
+REMIND_OPTIONS = {0: N_("No recordar"), 15: N_("Cada 15 minutos"), 30: N_("Cada 30 minutos"), 60: N_("Cada hora"),
+                  120: N_("Cada 2 horas")}
 
 
 def _combo(options: dict[str, str]) -> QComboBox:
@@ -91,12 +98,6 @@ class SettingsPage(Page):
         self.auto_discover = QCheckBox(tr("Buscar impresoras automáticamente al conectarse a una red (Wi‑Fi / LAN)"))
         self.auto_discover.setChecked(g.auto_discover)
         form.addRow("", self.auto_discover)
-        self.notify_errors = QCheckBox(tr("Avisar cuando una etiqueta no se pueda imprimir"))
-        self.notify_errors.setChecked(g.notify_errors)
-        form.addRow("", self.notify_errors)
-        self.notify_printed = QCheckBox(tr("Avisar cada vez que se imprime una etiqueta"))
-        self.notify_printed.setChecked(g.notify_printed)
-        form.addRow("", self.notify_printed)
         self.retries = QSpinBox()
         self.retries.setRange(0, 20)
         self.retries.setValue(g.max_retries)
@@ -114,6 +115,7 @@ class SettingsPage(Page):
         form.addRow(tr("Idioma / Language"), self.language)
         general.add(layout=form)
         self.add(general)
+        self.add(self._notifications_card())
 
         label_card = Card(
             tr("Etiqueta de pedido generada"),
@@ -413,6 +415,141 @@ class SettingsPage(Page):
 
         run_async(fetch, done, failed)
 
+    # --- notificaciones y sonidos --------------------------------------------------------------
+    def _notifications_card(self) -> Card:
+        card = Card(
+            tr("Notificaciones y sonidos"),
+            tr("Qué te avisa LabelBridge y cómo suena en este PC. Los avisos salen junto al reloj de Windows."),
+        )
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(14)
+        grid.setVerticalSpacing(8)
+        grid.addWidget(label(tr("Aviso"), "Small"), 0, 1)
+        grid.addWidget(label(tr("Sonido"), "Small"), 0, 2)
+        self.alert_toasts: dict[str, QCheckBox] = {}
+        self.alert_sounds: dict[str, QComboBox] = {}
+        for row, (event, text) in enumerate(NOTIFY_EVENTS.items(), start=1):
+            grid.addWidget(label(tr(text)), row, 0)
+            toast = QCheckBox()
+            toast.setToolTip(tr("Mostrar el aviso junto al reloj"))
+            grid.addWidget(toast, row, 1, alignment=Qt.AlignmentFlag.AlignCenter)
+            sound = QComboBox()
+            for key, name in sounds.SOUNDS.items():
+                sound.addItem(tr(name), key)
+            sound.setMinimumWidth(190)
+            grid.addWidget(sound, row, 2)
+            test = button("", "play", "ghost", tr("Probar el sonido"))
+            test.clicked.connect(lambda _checked=False, combo=sound: self._test_sound(combo.currentData()))
+            grid.addWidget(test, row, 3)
+            self.alert_toasts[event], self.alert_sounds[event] = toast, sound
+        grid.setColumnStretch(4, 1)
+        # Los de imprimir son los ajustes de siempre (el asistente también los cambia).
+        self.notify_printed, self.notify_errors = self.alert_toasts["printed"], self.alert_toasts["print_error"]
+        card.add(layout=grid)
+
+        form = QFormLayout()
+        form.setSpacing(10)
+        self.volume = QSlider(Qt.Orientation.Horizontal)
+        self.volume.setRange(0, 100)
+        self.volume.setMaximumWidth(260)
+        self.volume_text = label("", "Muted")
+        self.volume.valueChanged.connect(lambda value: self.volume_text.setText(f"{value} %"))
+        volume_row = QHBoxLayout()
+        volume_row.addWidget(self.volume)
+        volume_row.addWidget(self.volume_text)
+        volume_row.addStretch(1)
+        form.addRow(tr("Volumen"), volume_row)
+        self.custom_sound = QLineEdit()
+        self.custom_sound.setPlaceholderText(tr("Un archivo .wav para «Mi archivo (.wav)»"))
+        choose = button(tr("Elegir…"), "folder")
+        choose.clicked.connect(self._choose_sound)
+        custom_row = QHBoxLayout()
+        custom_row.addWidget(self.custom_sound, 1)
+        custom_row.addWidget(choose)
+        form.addRow(tr("Mi sonido"), custom_row)
+        self.quiet = QCheckBox(tr("Sin sonido de"))
+        self.quiet_from, self.quiet_to = QTimeEdit(), QTimeEdit()
+        for edit in (self.quiet_from, self.quiet_to):
+            edit.setDisplayFormat("HH:mm")
+        quiet_row = QHBoxLayout()
+        quiet_row.addWidget(self.quiet)
+        quiet_row.addWidget(self.quiet_from)
+        quiet_row.addWidget(label(tr("a")))
+        quiet_row.addWidget(self.quiet_to)
+        quiet_row.addWidget(label(tr("(los avisos llegan igual, en silencio)"), "Muted"))
+        quiet_row.addStretch(1)
+        form.addRow(tr("Horario de silencio"), quiet_row)
+        self.remind = QComboBox()
+        for minutes, text in REMIND_OPTIONS.items():
+            self.remind.addItem(tr(text), minutes)
+        self.remind.setToolTip(tr("Vuelve a avisar mientras haya pedidos esperando en «Necesitan acción»"))
+        self.remind.setMaximumWidth(260)
+        form.addRow(tr("Recordar pedidos que necesitan acción"), self.remind)
+        card.add(layout=form)
+
+        card.add(label(tr("Alertas de entrega"), "SectionTitle"))
+        delays = QFormLayout()
+        delays.setSpacing(10)
+        self.no_scan_days = _spin(1, 30, tr(" días"))
+        delays.addRow(tr("La paquetería no recibe el paquete después de"), self.no_scan_days)
+        self.transit_days = _spin(2, 60, tr(" días"))
+        delays.addRow(tr("En camino sin fecha de entrega más de"), self.transit_days)
+        self.unshipped_days = _spin(1, 30, tr(" días"))
+        delays.addRow(tr("Marcar los pedidos pagados sin enviar después de"), self.unshipped_days)
+        delays.addRow("", label(tr("También avisa si se pasa la fecha estimada de entrega o la paquetería reporta un problema "
+                                   "(intento fallido, retraso, no entregado)."), "Muted", wrap=True))
+        card.add(layout=delays)
+        self._load_notifications()
+        return card
+
+    def _load_notifications(self) -> None:
+        g, n = self.ctx.cfg.data.general, self.ctx.cfg.data.notifications
+        toasts = {"new_order": n.new_order, "action": n.action, "delivery": n.delivery,
+                  "printed": g.notify_printed, "print_error": g.notify_errors}
+        for event in NOTIFY_EVENTS:
+            self.alert_toasts[event].setChecked(bool(toasts[event]))
+            _select(self.alert_sounds[event], n.sound(event))
+        self.volume.setValue(max(0, min(100, n.volume)))
+        self.volume_text.setText(f"{self.volume.value()} %")
+        self.custom_sound.setText(n.custom_sound)
+        self.quiet.setChecked(n.quiet)
+        self.quiet_from.setTime(QTime.fromString(n.quiet_from, "HH:mm"))
+        self.quiet_to.setTime(QTime.fromString(n.quiet_to, "HH:mm"))
+        self.remind.setCurrentIndex(max(0, self.remind.findData(n.remind_minutes)))
+        self.no_scan_days.setValue(n.no_scan_days)
+        self.transit_days.setValue(n.transit_days)
+        self.unshipped_days.setValue(n.unshipped_days)
+
+    def _save_notifications(self) -> None:
+        g, n = self.ctx.cfg.data.general, self.ctx.cfg.data.notifications
+        n.new_order = self.alert_toasts["new_order"].isChecked()
+        n.action = self.alert_toasts["action"].isChecked()
+        n.delivery = self.alert_toasts["delivery"].isChecked()
+        g.notify_printed = self.alert_toasts["printed"].isChecked()
+        g.notify_errors = self.alert_toasts["print_error"].isChecked()
+        n.sounds = {event: self.alert_sounds[event].currentData() or "" for event in NOTIFY_EVENTS}
+        n.volume = self.volume.value()
+        n.custom_sound = self.custom_sound.text().strip()
+        n.quiet = self.quiet.isChecked()
+        n.quiet_from = self.quiet_from.time().toString("HH:mm")
+        n.quiet_to = self.quiet_to.time().toString("HH:mm")
+        n.remind_minutes = int(self.remind.currentData() or 0)
+        n.no_scan_days = self.no_scan_days.value()
+        n.transit_days = self.transit_days.value()
+        n.unshipped_days = self.unshipped_days.value()
+        self.ctx.cfg.save("notifications")
+
+    def _test_sound(self, key: str) -> None:
+        if key == "custom" and not self.custom_sound.text().strip():
+            info(self, tr("Mi sonido"), tr("Elige primero un archivo .wav en «Mi sonido»."))
+            return
+        sounds.play(key, self.volume.value(), self.custom_sound.text().strip())
+
+    def _choose_sound(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, tr("Elegir sonido"), "", tr("Sonido WAV (*.wav)"))
+        if path:
+            self.custom_sound.setText(path)
+
     def load_from_config(self) -> None:
         """Muestra lo guardado (p. ej. después de que el asistente cambió la configuración)."""
         g = self.ctx.cfg.data.general
@@ -421,8 +558,7 @@ class SettingsPage(Page):
         self.autostart.setChecked(g.start_with_windows)
         self.minimized.setChecked(g.start_minimized)
         self.auto_discover.setChecked(g.auto_discover)
-        self.notify_errors.setChecked(g.notify_errors)
-        self.notify_printed.setChecked(g.notify_printed)
+        self._load_notifications()
         self.retries.setValue(g.max_retries)
         self.retention.setValue(g.retention_days)
         self.auto_update.setChecked(g.auto_update_check)
@@ -499,8 +635,6 @@ class SettingsPage(Page):
         g.start_minimized = self.minimized.isChecked()
         g.auto_discover = self.auto_discover.isChecked()
         g.auto_update_check = self.auto_update.isChecked()
-        g.notify_errors = self.notify_errors.isChecked()
-        g.notify_printed = self.notify_printed.isChecked()
         g.max_retries = self.retries.value()
         g.retention_days = self.retention.value()
         language_changed = (self.language.currentData() or "") != g.language
@@ -511,6 +645,7 @@ class SettingsPage(Page):
         lb.show_qr = self.show_qr.isChecked()
         lb.show_price = self.show_price.isChecked()
         self.ctx.cfg.save("general")
+        self._save_notifications()
         try:
             autostart.apply(g.start_with_windows)
         except OSError:

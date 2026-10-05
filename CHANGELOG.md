@@ -2,6 +2,16 @@
 
 Cada versión publicada muestra estas notas en la ventana de actualización de la app y en la página de descargas.
 
+## 1.8.0
+
+- **Comprar guía desde LabelBridge.** Cualquier pedido que necesite a una persona (Shopify rechazó la compra, se llegó al límite diario, es de antes de conectar la app…) tiene el botón **Comprar guía…** en **Pedidos**: eliges el paquete (el de Shopify o tu caja con sus medidas, que se puede recordar), el peso si hace falta y si avisar al cliente, pulsas **Confirmar y comprar** y LabelBridge la compra con Shopify Shipping, la imprime y Shopify deja el pedido preparado con su número de seguimiento.
+- Los motivos de Shopify se explican en palabras claras («Falta el peso del paquete», «Falta el teléfono completo del cliente»…).
+- FedEx: Shopify no deja que ninguna app compre sus guías, así que sigue siendo un clic en Shopify (y se imprime sola) o, si prefieres, se compra desde aquí con la paquetería que elija Shopify.
+- **Notificaciones y sonidos** (Ajustes): para cada cosa (pedido nuevo, pedido que necesita acción, retraso de entrega, guía impresa, error de impresión) eliges si sale el aviso y con qué sonido: caja registradora, campanita, ding, campana, arpa, burbuja, alerta, el sonido de Windows o tu propio archivo .wav. Con volumen, botón para probar cada sonido, horario de silencio y recordatorio de los pedidos que siguen esperando.
+- Al entrar un pedido pagado, LabelBridge avisa con su sonido: quién, cuánto y por qué paquetería sale.
+- **Alertas de entrega.** Nueva sección **Retrasos y entregas** en Pedidos (y su contador arriba): entregas atrasadas, intentos de entrega fallidos, envíos con problemas, paquetes que la paquetería todavía no recibió días después de comprar la guía y envíos que llevan demasiado tiempo en camino, con botones para rastrear, copiar el seguimiento o abrir el pedido. Se revisan solas cada media hora y cada una avisa una vez.
+- La tabla de Pedidos muestra cómo va cada envío («En camino · llega el…», «Entregado el…») y los pedidos sin enviar marcan cuántos días llevan esperando.
+
 ## 1.7.1
 
 - **Guías de FedEx: un clic en Shopify y LabelBridge la imprime sola.** Shopify no deja que ninguna app compre guías de FedEx automáticamente, así que los pedidos que salen por FedEx (piezas de más de US$1000) aparecen en **Pedidos → Necesitan acción** con el botón **Comprar en Shopify**. En cuanto compras la guía en el pedido, LabelBridge la detecta, la trae de Shopify y la imprime a 4 × 6 in en tu impresora de guías: sin descargarla ni imprimirla a mano.
