@@ -60,6 +60,7 @@ CARRIER_COLORS = {  # (fondo, texto)
 }
 ACTION_BUTTONS = {  # acción → (texto, icono)
     "open": (N_("Abrir en Shopify"), "link"),
+    "buy": (N_("Comprar en Shopify"), "link"),
     "void": (N_("Anular en Shopify"), "link"),
     "reprint": (N_("Reimprimir guía"), "printer"),
     "retry": (N_("Reintentar compra"), "retry"),
@@ -178,7 +179,7 @@ class ActionItem(QFrame):
         main = button(tr(text), icon_name, "primary")
         main.clicked.connect(lambda: page.run_action(row, row.action or "open"))
         actions.addWidget(main)
-        if row.action not in ("open", "void", ""):
+        if row.action not in ("open", "void", "buy", ""):
             other = button(tr("Abrir en Shopify"), "link")
             other.clicked.connect(lambda: page.run_action(row, "open"))
             actions.addWidget(other)
@@ -198,8 +199,8 @@ class ShippingRulesDialog(QDialog):
         outer.setSpacing(12)
         outer.addWidget(label(tr("Por qué paquetería sale cada pedido"), "CardTitle"))
         outer.addWidget(label(
-            tr("Se aplica la primera regla que se cumple. FedEx siempre se compra a mano: Shopify no deja comprar sus "
-               "guías automáticamente, así que esos pedidos aparecen en «Necesitan acción»."),
+            tr("Se aplica la primera regla que se cumple. Shopify no deja comprar guías de FedEx automáticamente: esos "
+               "pedidos aparecen en «Necesitan acción», la compras en Shopify con un clic y LabelBridge la imprime sola."),
             "Muted", wrap=True,
         ))
         self.grid = QGridLayout()
@@ -251,7 +252,7 @@ class ShippingRulesDialog(QDialog):
         carrier.setCurrentIndex(max(0, carrier.findData(rule.carrier)))
         mode = QComboBox()
         mode.addItem(tr("Sola (automática)"), True)
-        mode.addItem(tr("A mano"), False)
+        mode.addItem(tr("En Shopify (1 clic)"), False)
         mode.setCurrentIndex(0 if rule.auto else 1)
         remove = button("", "trash", "ghost", tr("Quitar esta regla"))
         entry = (over, method, carrier, mode, remove)
@@ -604,7 +605,7 @@ class OrdersPage(Page):
 
     def run_action(self, row: OrderRow, action: str) -> None:
         shop = self.ctx.cfg.data.shopify.shop
-        if action in ("open", "void"):
+        if action in ("open", "void", "buy"):
             QDesktopServices.openUrl(QUrl(admin_url(shop, f"orders/{row.legacy}")))
         elif action == "track":
             url = next((u for _c, _n, u in row.tracking if u), "")
@@ -627,10 +628,12 @@ class OrdersPage(Page):
             and str((job.get("meta") or {}).get("order_id")) == row.legacy
             and "tracking" in (job.get("meta") or {})
         ]
-        if not jobs:
-            info(self, tr("Reimprimir"), tr("LabelBridge no tiene el PDF de esta guía (se compró a mano): imprímela desde "
-                                        "el pedido en Shopify."))
-            self.run_action(row, "open")
+        if not jobs:  # se compró en Shopify: LabelBridge trae el PDF de ahí
+            run_async(
+                lambda: self.ctx.services.shopify.print_order_labels(row.legacy, row.name),
+                lambda _queued: info(self, tr("Reimprimir"), tr("La guía de {0} está en la cola de impresión.", row.name)),
+                lambda message: error(self, tr("Reimprimir"), message),
+            )
             return
         latest = max(jobs, key=lambda job: job.get("created_at") or 0)
         if self.ctx.store.reprint(latest["id"]):

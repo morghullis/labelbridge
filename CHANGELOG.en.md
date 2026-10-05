@@ -2,6 +2,12 @@
 
 English version of [CHANGELOG.md](CHANGELOG.md). Each published version shows these notes in the app's update window when the app is in English, and on the English download page.
 
+## 1.7.1
+
+- **FedEx labels: one click in Shopify and LabelBridge prints it by itself.** Shopify doesn't let any app buy FedEx labels automatically, so orders that ship with FedEx (items over US$1,000) show up in **Orders → Need action** with the **Buy in Shopify** button. As soon as you buy the label in the order, LabelBridge detects it, gets it from Shopify and prints it at 4 × 6 in on your label printer: no downloading or printing by hand.
+- The same goes for any order that was waiting for a person (rejected purchase, daily limit…): if its label is bought in Shopify, it prints by itself.
+- **Reprint label** (Orders) also works with labels bought in Shopify: LabelBridge gets the PDF from there.
+
 ## 1.7.0
 
 - **LabelBridge in English or Spanish.** The whole app is in both languages: tabs, windows, notices, the step-by-step guide with its screenshots, the test label and the notes of every update. The assistant answers in the app's language.

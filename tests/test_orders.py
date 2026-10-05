@@ -104,7 +104,7 @@ def test_label_costs_and_carrier_names():
 
 
 def test_fedex_rule_follows_the_value_of_the_pieces():
-    rules = ShopifySettings().shipping_rules  # por defecto: piezas de más de US$1000 → FedEx a mano
+    rules = ShopifySettings().shipping_rules  # por defecto: piezas de más de US$1000 → FedEx, comprada en Shopify
     rule = rule_for(rules, "Economy", 1250)
     assert rule is not None and rule.carrier == "FedEx" and not rule.auto
     assert rule_for(rules, "Express", 1250).carrier == "FedEx"  # con cualquier método
@@ -118,8 +118,9 @@ def test_fedex_rule_follows_the_value_of_the_pieces():
 
 def test_expensive_pieces_need_a_fedex_label_by_hand():
     row = row_of(make_order(subtotal=1250, method="Economy"))
-    assert row.needs_action and row.group == "fedex" and row.carrier == "FedEx" and row.action == "open"
-    assert "a mano" in row.status and "US$1,250.00" in row.reason and "más de US$1,000.00" in row.reason
+    assert row.needs_action and row.group == "fedex" and row.carrier == "FedEx" and row.action == "buy"
+    assert row.status == "Comprar guía FedEx en Shopify" and "US$1,250.00" in row.reason
+    assert "más de US$1,000.00" in row.reason and "imprime sola" in row.reason
 
 
 def test_a_cheap_express_goes_by_usps_automatically():
@@ -172,7 +173,7 @@ def test_summary_tabs_and_export():
     rows = [
         row_of(make_order(1, labels=(("1", "5,68"),), fulfillments=(usps(),), fulfillment="FULFILLED"),
                jobs=[{"status": "done"}]),
-        row_of(make_order(2, subtotal=2400)),  # FedEx a mano
+        row_of(make_order(2, subtotal=2400)),  # FedEx: se compra en Shopify
         row_of(make_order(3, delivery="PICK_UP")),
         row_of(make_order(4, financial="REFUNDED", labels=(("4", "5,68"),), voided=(("4", "5,68"),))),
     ]
@@ -213,9 +214,89 @@ def test_fedex_orders_are_never_bought_automatically(core, monkeypatch):
     service.cycle(service.client(), s)
     assert fake.purchases == []  # ni FedEx (no se puede) ni una USPS por error
     assert service.ledger("3001") ["state"] == "manual" and service.ledger("3001")["carrier"] == "FedEx"
-    assert any(kind == "notify" and "FedEx a mano" in data["title"] for kind, data in core.received)
+    assert any(kind == "notify" and "FedEx en Shopify" in data["title"] for kind, data in core.received)
     service.cycle(service.client(), s)
     assert sum(1 for kind, data in core.received if kind == "notify" and "FedEx" in data["title"]) == 1  # una vez
+
+
+class FedexBoughtInShopify(ExpensiveShopify):
+    """Pedido de FedEx: primero sin guía; después alguien la compra en el pedido en Shopify (un clic)."""
+
+    def __init__(self, now_iso: str) -> None:
+        super().__init__(now_iso)
+        self.bought = False
+        self.label_error = ""
+        self.label_queries = 0
+
+    def order(self, number: int, created: str, **extra) -> dict:
+        if self.bought:
+            extra.setdefault("displayFulfillmentStatus", "FULFILLED")
+        return super().order(number, created, **extra)
+
+    def __call__(self, method, url, **kwargs):
+        from labelbridge import net
+
+        query = (kwargs.get("json_body") or {}).get("query", "")
+        if "LabelBridgeOrderLabels" in query:
+            nodes = [
+                {"createdAt": self.now_iso, "message": "Compraste una etiqueta de envío por 38,20 $.",
+                 "action": "shipping_label_created_success", "arguments": [7001, "shipping_label_3001.pdf"]},
+                {"createdAt": self.now_iso, "message": "Compraste una etiqueta de envío por 5,68 $.",
+                 "action": "shipping_label_created_success", "arguments": [7000, "shipping_label_3001.pdf"]},
+                {"createdAt": self.now_iso, "message": "Has anulado una etiqueta de envío por 5,68 $.",
+                 "action": "shipping_label_cancelled_success", "arguments": [7000, "shipping_label_3001.pdf"]},
+            ] if self.bought and kwargs["json_body"]["variables"]["id"].endswith("/3001") else []
+            body = {"data": {"order": {"events": {"nodes": nodes}}}}
+            return net.Response(200, json.dumps(body).encode(), url)
+        if "LabelBridgeShippingLabel" in query:
+            self.label_queries += 1
+            assert kwargs["json_body"]["variables"]["id"] == "gid://shopify/ShippingLabel/7001"  # nunca la anulada
+            if self.label_error:
+                body = {"errors": [{"message": self.label_error}]}
+            else:
+                body = {"data": {"shippingLabel": {
+                    "id": "gid://shopify/ShippingLabel/7001",
+                    "trackingInfo": {"number": "771234567890", "company": "FedEx", "url": None},
+                    "shippingDocuments": [{"documentType": "LABEL", "format": "PDF", "url": "https://cdn.example.com/fedex-3001.pdf"}],
+                }}}
+            return net.Response(200, json.dumps(body).encode(), url)
+        return super().__call__(method, url, **kwargs)
+
+
+def test_fedex_bought_in_shopify_prints_by_itself(core, monkeypatch):
+    fake = FedexBoughtInShopify(iso(datetime.now(timezone.utc).timestamp()))
+    service, s = _service(core, monkeypatch, fake)
+    service.cycle(service.client(), s)
+    assert service.ledger("3001")["state"] == "manual" and fake.label_queries == 0
+
+    fake.bought = True  # la compran en Shopify: el pedido pasa a preparado y su historial tiene la guía
+    service.cycle(service.client(), s)
+    job = core.store.get_by_external("shopify", "shipping-7001-0-0")
+    assert job is not None and job["url"] == "https://cdn.example.com/fedex-3001.pdf" and job["format"] == "pdf"
+    assert job["meta"]["carrier"] == "FedEx" and job["meta"]["tracking"] == "771234567890"
+    assert job["meta"]["label_size"] == "4x6" and job["meta"]["order_id"] == "3001"
+    assert service.ledger("3001")["state"] == "resolved" and fake.purchases == []  # LabelBridge no compró nada
+
+    service.cycle(service.client(), s)  # otra vuelta: no se trae ni se imprime otra vez
+    assert fake.label_queries == 1 and len([j for j in core.store.list() if j["source"] == "shopify"]) == 1
+    with pytest.raises(ShopifyError):
+        service.print_order_labels("3002", "#3002")  # sin guía activa
+    assert service.print_order_labels("3001", "#3001") == 0  # «Reimprimir» con la guía ya en la cola: nada nuevo
+
+
+def test_a_label_shopify_does_not_hand_over_is_reported(core, monkeypatch):
+    from labelbridge.connectors import shopify as shopify_module
+
+    fake = FedexBoughtInShopify(iso(datetime.now(timezone.utc).timestamp()))
+    fake.label_error = "Field 'shippingLabel' doesn't exist on type 'QueryRoot'"
+    service, s = _service(core, monkeypatch, fake)
+    service.cycle(service.client(), s)
+    fake.bought = True
+    for _ in range(shopify_module.FETCH_TRIES):
+        service.cycle(service.client(), s)
+    assert service.ledger("3001")["state"] == "no_document"  # Pedidos → «Guía sin PDF»: imprimirla desde Shopify
+    assert any(kind == "notify" and "Guía sin imprimir" in data["title"] for kind, data in core.received)
+    assert service._to_fetch() == {} and fake.purchases == []
 
 
 def test_retry_after_a_rejected_purchase(core, monkeypatch):
@@ -297,7 +378,7 @@ def test_orders_page_puts_what_needs_a_person_first(core, monkeypatch, tmp_path)
     s = core.cfg.data.shopify
     s.enabled, s.shop, s.buy_shipping_label = True, "mi-tienda", True
     rows = [
-        classify(make_order(1, subtotal=1500), settings=s, since=SINCE, now=NOW),  # FedEx a mano
+        classify(make_order(1, subtotal=1500), settings=s, since=SINCE, now=NOW),  # FedEx: se compra en Shopify
         classify(make_order(2, labels=(("2", "5,68"),), fulfillments=(usps(),), fulfillment="FULFILLED"),
                  settings=s, jobs=[{"status": "done"}], since=SINCE, now=NOW),
         classify(make_order(3, delivery="PICK_UP"), settings=s, since=SINCE, now=NOW),
@@ -338,7 +419,7 @@ def test_shipping_rules_are_edited_and_saved(core, monkeypatch):
     extra_method.setText("Overnight")
     extra_carrier.setCurrentIndex(extra_carrier.findData("UPS"))
     extra_mode.setCurrentIndex(0)
-    assert extra_mode.isEnabled()  # solo FedEx queda fijo «a mano»
+    assert extra_mode.isEnabled()  # solo FedEx queda fijo «en Shopify»
     monkeypatch.setattr(orders_page.ShippingRulesDialog, "exec", lambda self: QDialog.DialogCode.Accepted)
     monkeypatch.setattr(orders_page, "ShippingRulesDialog", lambda *a, **k: dialog)
     page.edit_rules()

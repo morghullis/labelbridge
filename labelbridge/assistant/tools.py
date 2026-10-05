@@ -285,7 +285,7 @@ class Toolbox:
             "buy_shipping_label": s.buy_shipping_label,
             "shipping_label_printer": s.shipping_label_printer or "(predeterminada)",
             "shipping_label_size": s.label_size,
-            # Por qué paquetería sale cada pedido (pestaña Pedidos → Reglas de paquetería). FedEx siempre a mano.
+            # Por qué paquetería sale cada pedido (pestaña Pedidos → Reglas de paquetería). FedEx se compra en Shopify (1 clic) y se imprime sola.
             "carrier_rules": [
                 {"method_contains": r.method, "pieces_over_usd": r.over, "carrier": r.carrier,
                  "bought": "automatically" if r.auto else "by hand"}

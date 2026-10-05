@@ -98,7 +98,7 @@ def test_the_window_in_english(core, english):
     assert window.nav_buttons["orders"].text().strip() == "Orders"
     assert window.nav_buttons["settings"].text().strip() == "Settings"
     row = classify(make_order(subtotal=1500), settings=core.cfg.data.shopify, since=SINCE, now=NOW)
-    assert row.status == "Buy the FedEx label by hand" and "items over US$1,000.00" in row.reason
+    assert row.status == "Buy the FedEx label in Shopify" and "items over US$1,000.00" in row.reason
     window.quitting = True
     window.close()
 

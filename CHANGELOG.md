@@ -2,6 +2,12 @@
 
 Cada versión publicada muestra estas notas en la ventana de actualización de la app y en la página de descargas.
 
+## 1.7.1
+
+- **Guías de FedEx: un clic en Shopify y LabelBridge la imprime sola.** Shopify no deja que ninguna app compre guías de FedEx automáticamente, así que los pedidos que salen por FedEx (piezas de más de US$1000) aparecen en **Pedidos → Necesitan acción** con el botón **Comprar en Shopify**. En cuanto compras la guía en el pedido, LabelBridge la detecta, la trae de Shopify y la imprime a 4 × 6 in en tu impresora de guías: sin descargarla ni imprimirla a mano.
+- Lo mismo con cualquier pedido que esperaba a una persona (compra rechazada, límite diario…): si su guía se compra en Shopify, se imprime sola.
+- **Reimprimir guía** (Pedidos) también funciona con las guías compradas en Shopify: LabelBridge trae el PDF de ahí.
+
 ## 1.7.0
 
 - **LabelBridge en español o en inglés.** Toda la app está en los dos idiomas: pestañas, ventanas, avisos, la guía paso a paso con sus capturas, la etiqueta de prueba y las notas de cada actualización. El asistente responde en el idioma de la app.

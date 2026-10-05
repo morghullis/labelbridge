@@ -38,6 +38,7 @@ from .orders_overview import (
     OVERVIEW_QUERY_BASIC,
     OrderRow,
     classify,
+    label_events,
     rule_for,
     subtotal_of,
 )
@@ -45,6 +46,7 @@ from .orders_overview import (
 log = logging.getLogger(__name__)
 
 PAID_STATUSES = {"PAID", "PARTIALLY_REFUNDED", "AUTHORIZED"}
+FETCH_TRIES = 10  # vueltas buscando una guía comprada en Shopify antes de darla por perdida
 OPEN_FULFILLMENT = {"UNFULFILLED", "PARTIALLY_FULFILLED", "OPEN", "IN_PROGRESS", "PENDING_FULFILLMENT"}
 SHIPPABLE_METHODS = {"SHIPPING", "PICKUP_POINT", None}
 
@@ -116,6 +118,32 @@ query LabelBridgeLabelResult($id: ID!) {
         shippingDocuments { documentType format url }
       }
     }
+  }
+}
+"""
+
+# Guías del pedido según su historial: también las compradas a mano en el admin de Shopify (el evento lleva su id).
+ORDER_LABELS_QUERY = """
+query LabelBridgeOrderLabels($id: ID!) {
+  order(id: $id) {
+    events(
+      first: 20
+      sortKey: CREATED_AT
+      query: "action:shipping_label_created_success OR action:shipping_label_cancelled_success"
+    ) {
+      nodes { createdAt message ... on BasicEvent { action arguments } }
+    }
+  }
+}
+"""
+
+# Una guía por su id, con sus documentos para imprimir (API 2026-10).
+SHIPPING_LABEL_QUERY = """
+query LabelBridgeShippingLabel($id: ID!) {
+  shippingLabel(id: $id) {
+    id
+    trackingInfo { number company url }
+    shippingDocuments { documentType format url }
   }
 }
 """
@@ -398,6 +426,15 @@ class ShopifyClient:
     def label_result(self, result_id: str) -> dict[str, Any]:
         return self.graphql(LABEL_RESULT_QUERY, {"id": result_id}).get("node") or {}
 
+    def order_labels(self, order_gid: str) -> dict[str, dict[str, Any]]:
+        """Las guías del pedido ({id: {cost, voided…}}), también las compradas a mano en Shopify."""
+        return label_events(self.graphql(ORDER_LABELS_QUERY, {"id": order_gid}).get("order") or {})
+
+    def shipping_label(self, label_id: str) -> dict[str, Any]:
+        """Una guía con su seguimiento y sus documentos (PDF/ZPL) para imprimir."""
+        gid = label_id if str(label_id).startswith("gid://") else f"gid://shopify/ShippingLabel/{label_id}"
+        return self.graphql(SHIPPING_LABEL_QUERY, {"id": gid}).get("shippingLabel") or {}
+
     def add_tags(self, order_gid: str, tags: list[str]) -> None:
         data = self.graphql(TAGS_ADD_MUTATION, {"id": order_gid, "tags": tags}, mutation=True)
         errors = (data.get("tagsAdd") or {}).get("userErrors") or []
@@ -567,6 +604,7 @@ class ShopifyService(BackgroundService):
             self._key("resume"), json.dumps({"from": query_from, "after": next_after} if next_after else None)
         )
         queued += self._check_pending_purchases(client, stop=stop)
+        queued += self._fetch_bought_labels(client, stop)
         self._flush_tags(client)
         if queued:
             self.engine.wake()
@@ -594,7 +632,10 @@ class ShopifyService(BackgroundService):
         queued = 0
         noted = self.ledger(legacy).get("state")
         if noted in ACTION_STATES and order.get("displayFulfillmentStatus") not in OPEN_FULFILLMENT:
-            self._note(legacy, "resolved", name=name)  # ya se resolvió (guía a mano o enviado)
+            # Se resolvió en Shopify (guía comprada ahí, p. ej. la de FedEx, o enviado): su guía se trae y se imprime.
+            if s.buy_shipping_label:
+                self._queue_fetch(legacy, meta)
+            self._note(legacy, "resolved", name=name)
             noted = "resolved"
 
         if s.print_order_label and is_new and paid_ok and open_ok:
@@ -632,12 +673,14 @@ class ShopifyService(BackgroundService):
         if s.buy_shipping_label and is_new and paid_ok and open_ok:
             rule = rule_for(s.shipping_rules, (order.get("shippingLine") or {}).get("title") or "", subtotal_of(order))
             if rule is not None and not rule.auto:
-                # FedEx (y lo que se marque «a mano»): Shopify no deja comprarla por API; nunca otra paquetería.
+                # FedEx (y lo que se marque «en Shopify»): Shopify no deja comprarla por API, nunca otra paquetería.
+                # Se compra en el pedido con un clic y LabelBridge la imprime sola al verla (_fetch_bought_labels).
                 if noted != "manual":
                     self._note(legacy, "manual", name=name, carrier=rule.carrier)
                     self.events.notify(
-                        tr("Pedido {0}: guía de {1} a mano", name, rule.carrier),
-                        tr("Sale por {0}: cómprala en el pedido en Shopify (está en la pestaña Pedidos).", rule.carrier),
+                        tr("Pedido {0}: compra la guía de {1} en Shopify", name, rule.carrier),
+                        tr("Shopify no deja comprar guías de {0} automáticamente: cómprala en el pedido (1 clic) y "
+                           "LabelBridge la imprime sola.", rule.carrier),
                         "error",
                     )
             else:
@@ -827,6 +870,88 @@ class ShopifyService(BackgroundService):
             self._save_pending(pending)
             if not pending or time.time() >= deadline or stop.wait(2):
                 break
+        return queued
+
+    # --- guías compradas en Shopify (FedEx y las que esperaban a una persona) ------------------------
+    def _to_fetch(self) -> dict[str, dict]:
+        try:
+            return json.loads(self.store.kv_get(self._key("fetch")) or "{}")
+        except json.JSONDecodeError:
+            return {}
+
+    def _queue_fetch(self, legacy: str, meta: dict) -> None:
+        items = self._to_fetch()
+        items[str(legacy)] = {**meta, "tries": 0}
+        self.store.kv_set(self._key("fetch"), json.dumps(items, ensure_ascii=False))
+
+    def _print_bought_labels(self, client: ShopifyClient, meta: dict) -> tuple[int, int, int]:
+        """Trae de Shopify las guías activas del pedido y las encola (las que ya están en la cola no se repiten).
+
+        Devuelve (guías activas, guías sin documento, trabajos nuevos)."""
+        found = missing = queued = 0
+        for label_id, entry in client.order_labels(meta["order_gid"]).items():
+            if entry.get("voided") or not label_id.isdigit():
+                continue
+            found += 1
+            if self.store.get_by_external("shopify", f"shipping-{label_id}-0-0"):
+                continue  # ya se imprimió (la compró LabelBridge o ya se trajo)
+            documents, new = self._enqueue_documents({"shippingLabels": [client.shipping_label(label_id)]}, meta)
+            missing += 0 if documents else 1
+            queued += new
+        return found, missing, queued
+
+    def _fetch_bought_labels(self, client: ShopifyClient, stop: threading.Event | None = None) -> int:
+        """Pedidos que esperaban una persona y se prepararon en Shopify: su guía (p. ej. la de FedEx comprada con un
+        clic) se imprime sola. Si Shopify todavía no la muestra se reintenta unas vueltas (≈5 min)."""
+        items = self._to_fetch()
+        if not items:
+            return 0
+        queued = 0
+        for legacy, info in list(items.items()):
+            if stop is not None and stop.is_set():
+                break
+            meta = {k: v for k, v in info.items() if k != "tries"}
+            error = ""
+            try:
+                found, missing, new = self._print_bought_labels(client, meta)
+            except (ShopifyError, net.NetworkError, net.HttpError) as exc:
+                found, missing, new, error = 0, 0, 0, str(exc)
+                log.warning("Shopify: no se pudo traer la guía de %s: %s", meta.get("order_name"), exc)
+            queued += new
+            if found:
+                items.pop(legacy)
+                if new:
+                    log.info("Shopify: guía comprada en Shopify para %s, en cola", meta.get("order_name"))
+                if missing:
+                    self._no_document(legacy, meta)
+                continue
+            info["tries"] = int(info.get("tries", 0)) + 1
+            if info["tries"] >= FETCH_TRIES:
+                items.pop(legacy)  # sin guía: se envió de otra forma
+                if error:
+                    self._no_document(legacy, meta)
+        self.store.kv_set(self._key("fetch"), json.dumps(items, ensure_ascii=False))
+        return queued
+
+    def _no_document(self, legacy: str, meta: dict) -> None:
+        self._note(legacy, "no_document", name=meta.get("order_name"))  # Pedidos → «Guía sin PDF»
+        self.events.notify(
+            tr("Guía sin imprimir"),
+            tr("{0}: LabelBridge no pudo traer de Shopify la guía comprada. Imprímela desde el pedido en Shopify.",
+               meta.get("order_name")),
+            "error",
+        )
+
+    def print_order_labels(self, legacy: str, name: str) -> int:
+        """«Reimprimir guía» en Pedidos cuando LabelBridge no tiene el PDF (p. ej. se compró en Shopify)."""
+        meta = {"order_gid": f"gid://shopify/Order/{int(legacy)}", "order_name": name, "order_id": str(legacy)}
+        found, missing, queued = self._print_bought_labels(self.client(), meta)
+        if not found:
+            raise ShopifyError(tr("Ese pedido no tiene una guía activa en Shopify."))
+        if missing and not queued:
+            raise ShopifyError(tr("Shopify no entregó el PDF de esa guía: imprímela desde el pedido en Shopify."))
+        if queued:
+            self.engine.wake()
         return queued
 
     def _enqueue_documents(self, result: dict, info: dict) -> tuple[int, int]:
