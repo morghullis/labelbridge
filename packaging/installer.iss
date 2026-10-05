@@ -162,7 +162,8 @@ begin
   Result := RegKeyExists(HKLM64, Key) or RegKeyExists(HKLM32, Key);
 end;
 
-{ Los mismos parámetros, en modo «para todos» y con el idioma ya elegido. }
+{ Los mismos parámetros, en modo «para todos» y con el idioma ya elegido. El registro (/LOG) va a otro archivo:
+  este instalador todavía tiene abierto el suyo. }
 function AdminParams(): String;
 var
   I: Integer;
@@ -174,7 +175,10 @@ begin
     Param := Uppercase(ParamStr(I));
     if (Pos('/SL5=', Param) = 1) or (Pos('/LANG=', Param) = 1) or (Param = '/ALLUSERS') or (Param = '/CURRENTUSER') then
       continue;
-    Result := Result + ' ' + AddQuotes(ParamStr(I));
+    if Pos('/LOG=', Param) = 1 then
+      Result := Result + ' ' + AddQuotes(ChangeFileExt(ParamStr(I), '') + '-todos.log')
+    else
+      Result := Result + ' ' + AddQuotes(ParamStr(I));
   end;
 end;
 
@@ -182,12 +186,18 @@ end;
   también cuando lo lanza la actualización automática de una versión anterior. }
 function UpdateAdminInstall(): Boolean;
 var
+  Params: String;
   ResultCode: Integer;
 begin
-  Log('LabelBridge está instalada para todos los usuarios: se actualiza esa copia.');
+  Params := AdminParams();
+  Log('LabelBridge está instalada para todos los usuarios: se actualiza esa copia (' + Params + ').');
   if not WizardSilent then
     MsgBox(CustomMessage('AdminInstall'), mbInformation, MB_OK);
-  if not ShellExec('', ExpandConstant('{srcexe}'), AdminParams(), '', SW_SHOWNORMAL, ewWaitUntilTerminated, ResultCode) then
+  { Exec espera de verdad al otro instalador (y este, a su copia con permiso de administrador): quien lanzó este
+    instalador, como la actualización automática, sabe cuándo terminó. }
+  if Exec(ExpandConstant('{srcexe}'), Params, '', SW_SHOWNORMAL, ewWaitUntilTerminated, ResultCode) then
+    Log('El instalador para todos los usuarios terminó con código ' + IntToStr(ResultCode))
+  else
     Log('No se pudo abrir el instalador para todos los usuarios: ' + SysErrorMessage(ResultCode));
   Result := False;  { esta copia del instalador termina aquí }
 end;

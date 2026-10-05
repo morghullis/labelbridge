@@ -13,6 +13,9 @@ on:
       from_version:
         description: "Versión instalada desde la que se actualiza"
         default: "1.3.0"
+      cases:
+        description: "Casos a probar (D E F G H)"
+        default: "DEFGH"
 
 permissions:
   contents: read
@@ -76,6 +79,7 @@ jobs:
           "Con CREATE_NO_WINDOW (versión nueva): " + (Test-Path nowindow.txt)
 
       - name: "D) Actualizador de la versión instalada → instalador nuevo"
+        if: contains(inputs.cases, 'D')
         continue-on-error: true  # informativo: el actualizador de las versiones ≤ 1.3.0 no lanza el instalador
         shell: pwsh
         run: |
@@ -99,7 +103,7 @@ jobs:
           if (-not $running) { throw "D: la app no se volvió a abrir" }
 
       - name: "E) Actualizador nuevo → instalador nuevo"
-        if: always()
+        if: always() && contains(inputs.cases, 'E')
         shell: pwsh
         run: |
           Get-Process LabelBridge -ErrorAction SilentlyContinue | Stop-Process -Force
@@ -121,7 +125,7 @@ jobs:
           if (-not (Test-Path "$logs\instalador.log")) { throw "E: falta el registro del instalador" }
 
       - name: "F) Actualizador nuevo con una app que tarda en cerrarse"
-        if: always()
+        if: always() && contains(inputs.cases, 'F')
         shell: pwsh
         run: |
           Get-Process LabelBridge -ErrorAction SilentlyContinue | Stop-Process -Force
@@ -143,7 +147,7 @@ jobs:
           if (-not $running) { throw "F: la app no se volvió a abrir" }
 
       - name: "G) Instalada «para todos los usuarios» → el instalador nuevo actualiza esa copia"
-        if: always()
+        if: always() && contains(inputs.cases, 'G')
         shell: pwsh
         run: |
           function Uninstall-Copy($key) {
@@ -163,8 +167,14 @@ jobs:
           "Antes: $($before.DisplayVersion) en $($before.InstallLocation)"
           # Sin /ALLUSERS, como lo lanza el actualizador automático de la versión instalada.
           $setup = (Get-ChildItem dist\installer\*.exe)[0].FullName
-          (Start-Process $setup -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -PassThru).WaitForExit()
-          Start-Sleep 15
+          $log = Join-Path $env:RUNNER_TEMP "g-instalador.log"
+          $started = Get-Date
+          $proc = Start-Process $setup -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',"/LOG=`"$log`"" -PassThru
+          $proc.WaitForExit()
+          "El instalador terminó (código $($proc.ExitCode)) en $([int]((Get-Date) - $started).TotalSeconds) s"
+          foreach ($file in @($log, ($log -replace '\.log$', '-todos.log'))) {
+            if (Test-Path $file) { "----- $file"; Get-Content $file -Tail 40 } else { "----- (no existe) $file" }
+          }
           $after = (Get-ItemProperty $env:ADMINKEY).DisplayVersion
           "Después: $after · otra copia solo para el usuario: $(Test-Path $env:APPKEY)"
           if ($after -ne $env:NEW_VERSION) { throw "G: no se actualizó la copia para todos los usuarios" }
@@ -173,7 +183,7 @@ jobs:
           if (Test-Path $env:ADMINKEY) { throw "G: no se pudo desinstalar la copia para todos los usuarios" }
 
       - name: "H) Instalación nueva: solo para el usuario, sin pedir administrador"
-        if: always()
+        if: always() && contains(inputs.cases, 'H')
         shell: pwsh
         run: |
           Get-Process LabelBridge -ErrorAction SilentlyContinue | Stop-Process -Force
