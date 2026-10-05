@@ -244,18 +244,20 @@ def test_each_system_takes_its_own_installer(monkeypatch):
 def test_mac_apply_script_quotes_paths_and_keeps_the_old_app(tmp_path):
     import shlex
     import subprocess
-    from pathlib import Path
+    import sys
+    from pathlib import PurePosixPath as MacPath  # rutas de Mac también al probar en Windows
 
-    dmg = Path("/Users/José O'Neil/Library/Caches/LabelBridge-9.9.9-mac.dmg")
-    app = Path("/Applications/Label Bridge.app")
-    script = updater.mac_apply_script(dmg, app, 4321, Path("/Users/José O'Neil/Library/Application Support/LabelBridge/logs"))
+    dmg = MacPath("/Users/José O'Neil/Library/Caches/LabelBridge-9.9.9-mac.dmg")
+    app = MacPath("/Applications/Label Bridge.app")
+    script = updater.mac_apply_script(dmg, app, 4321, MacPath("/Users/José O'Neil/Library/Application Support/LabelBridge/logs"))
     assert shlex.quote(str(dmg)) in script and shlex.quote(str(app) + ".anterior") in script
     assert "kill -0 4321" in script and "open " + shlex.quote(str(app)) + " --args --updated" in script
     assert script.index("mv " + shlex.quote(str(app))) < script.index("ditto")  # la anterior se aparta antes de copiar
     assert "open " + shlex.quote(str(dmg)) in script  # si no se pudo, queda el .dmg abierto para arrastrarla a mano
-    path = tmp_path / "aplicar.sh"
-    path.write_text(script, encoding="utf-8")
-    assert subprocess.run(["bash", "-n", str(path)], check=False).returncode == 0  # sintaxis válida
+    if sys.platform != "win32":  # en Windows «bash» puede ser el de WSL sin Linux instalado
+        path = tmp_path / "aplicar.sh"
+        path.write_text(script, encoding="utf-8")
+        assert subprocess.run(["bash", "-n", str(path)], check=False).returncode == 0  # sintaxis válida
 
 
 def test_download_page_offers_the_mac_app(tmp_path):
