@@ -275,8 +275,11 @@ def test_floating_assistant_on_every_page(core):
     window.show()
     QApplication.processEvents()
     dock = window.assistant
-    assert "assistant" not in window.pages and all(key != "assistant" for key, _, _ in NAV)
-    for key, _, _ in NAV:  # el bubble está en todas las pantallas, abajo a la derecha
+    # Las pestañas de siempre siguen ahí, «Asistente» incluida (abre el chat flotante, no es una pantalla).
+    assert [key for key, _, _ in NAV] == ["guide", "assistant", "home", "printers", "shopify", "n8n", "api",
+                                         "history", "settings", "logs"]
+    assert "assistant" not in window.pages
+    for key in window.pages:  # el bubble está en todas las pantallas, abajo a la derecha
         window.navigate(key)
         QApplication.processEvents()
         assert dock.launcher.isVisible()
@@ -298,6 +301,20 @@ def test_floating_assistant_on_every_page(core):
     window.toggle_assistant()  # F1
     assert dock.is_open
     window.toggle_assistant()
+    assert wait_for(lambda: (QApplication.processEvents(), not dock.panel.isVisible())[1])
+
+    tab = window.nav_buttons["assistant"]
+    window.navigate("printers")
+    tab.click()  # la pestaña «Asistente» abre el chat encima de la pantalla en la que estás
+    assert dock.is_open and tab.isChecked()
+    assert window.stack.currentWidget() is window.pages["printers"] and window.nav_buttons["printers"].isChecked()
+    tab.click()  # y lo cierra
+    assert not dock.is_open and not tab.isChecked() and window.nav_buttons["printers"].isChecked()
+    assert wait_for(lambda: (QApplication.processEvents(), dock.launcher.isVisible())[1])
+    dock.launcher.clicked.emit()  # abierto desde el bubble: la pestaña también se marca
+    assert dock.is_open and tab.isChecked()
+    dock.panel.minimize.emit()
+    assert not tab.isChecked()
     assert wait_for(lambda: (QApplication.processEvents(), not dock.panel.isVisible())[1])
 
     window.open_assistant(connect=True, provider="gemini")

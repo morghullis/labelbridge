@@ -103,13 +103,14 @@ def run(argv: list[str]) -> int:
         engine = PrintEngine(store, cfg, events)
         services = Services(cfg, secrets, store, engine, events)
         window = MainWindow(AppContext(cfg, secrets, store, engine, services, events, QtBridge(events, cfg)))
-        for key, _, _ in NAV:
+        for key in window.pages:
             window.navigate(key)
             app.processEvents()
+        assert [key for key, _, _ in NAV if key not in window.pages] == ["assistant"], "faltan pantallas"
         window.quitting = True
         window.close()
         store.close()
-        return f"{len(NAV)} pantallas"
+        return f"{len(window.pages)} pantallas · {len(NAV)} pestañas"
 
     def assistant() -> str:
         """Una conversación completa con cada formato de API (Claude con el SDK empaquetado, OpenAI Responses, Chat

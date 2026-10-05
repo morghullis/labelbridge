@@ -26,6 +26,8 @@ def test_main_window_builds_and_navigates(core):
     tray = Tray(ctx, window.show_and_raise, lambda: None, lambda: None)
     window.show()
     for key, _, _ in NAV:
+        if key == "assistant":  # la pestaña abre el chat flotante (tests/test_mascot.py)
+            continue
         window.navigate(key)
         QApplication.processEvents()
         assert window.stack.currentWidget() is window.pages[key]

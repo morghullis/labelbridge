@@ -2,10 +2,10 @@
 
 Cada versión publicada muestra estas notas en la ventana de actualización de la app y en la página de descargas.
 
-## 1.5.1
+## 1.5.2
 
 - La máscara del asistente es el logo original tal cual (oro sobre negro, con su corona de seis gemas) y cobra vida encima: parpadea, mueve las pupilas hacia donde está el cursor, entrecierra o sonríe con los párpados, abre la boca al responder y enciende las gemas de la corona.
-- El asistente ahora es un bubble flotante: un botón dorado con la máscara de la marca, abajo a la derecha de todas las pantallas. Ábrelo cuando quieras sin salir de lo que estás haciendo (también con F1) y minimízalo con Esc.
+- El asistente ahora es un bubble flotante: un botón dorado con la máscara de la marca, abajo a la derecha de todas las pantallas. Ábrelo cuando quieras sin salir de lo que estás haciendo (también desde la pestaña «Asistente» o con F1) y minimízalo con Esc. Tus pestañas siguen igual: «Asistente» abre el mismo chat encima de la pantalla en la que estás y se marca con un borde dorado mientras está abierto.
 - La máscara está viva: parpadea, te sigue con la mirada y cambia de expresión según la conversación. Escucha mientras escribes, piensa (la corona se ilumina como un indicador de carga), trabaja mientras usa las herramientas, habla al responder, se alegra cuando algo queda listo, inclina la cabeza cuando te pregunta algo o pide permiso, se preocupa si hay un error y se duerme si no la usas.
 - Si cerraste el chat y llega una respuesta, el bubble salta y muestra un aviso con el número de mensajes nuevos.
 - Chat rediseñado para el panel: cabecera oscura con la máscara y el estado («Pensando…», «Agregando la impresora…»), avatares dorados y botones más claros.

@@ -36,6 +36,7 @@ log = logging.getLogger(__name__)
 
 NAV = (
     ("guide", "Guía paso a paso", "book"),
+    ("assistant", "Asistente", "chat"),  # no es una pantalla: abre y cierra el chat flotante
     ("home", "Inicio", "home"),
     ("printers", "Impresoras", "printer"),
     ("shopify", "Shopify", "shop"),
@@ -97,6 +98,8 @@ class MainWindow(QMainWindow):
             self.stack.addWidget(page)
         # El asistente flota sobre todas las pantallas (bubble abajo a la derecha; F1 lo abre y lo cierra).
         self.assistant = _assistant_dock(ctx, root, self.stack)
+        if self.assistant is not None:
+            self.assistant.toggled.connect(self._mark_assistant_tab)
         shortcut = QShortcut(QKeySequence(Qt.Key.Key_F1), self)
         shortcut.activated.connect(self.toggle_assistant)
         ctx.bridge.event.connect(self._on_event)
@@ -133,8 +136,12 @@ class MainWindow(QMainWindow):
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.setIcon(icons.icon(icon_name, "#CBD5E1", 18))
             btn.setIconSize(QSize(18, 18))
-            btn.clicked.connect(lambda _=False, k=key: self.navigate(k))
-            self.nav_group.addButton(btn)
+            if key == "assistant":  # se queda marcada (con borde dorado) mientras el chat está abierto
+                btn.setProperty("toggle", True)
+                btn.clicked.connect(self.toggle_assistant)
+            else:
+                btn.clicked.connect(lambda _=False, k=key: self.navigate(k))
+                self.nav_group.addButton(btn)
             self.nav_buttons[key] = btn
             col.addWidget(btn)
         col.addStretch(1)
@@ -181,15 +188,28 @@ class MainWindow(QMainWindow):
     def toggle_assistant(self) -> None:
         if self.assistant is not None:
             self.assistant.toggle()
+            return
+        self._mark_assistant_tab(False)
+        from PySide6.QtWidgets import QMessageBox
+
+        QMessageBox.information(self, "Asistente", "No se pudo cargar el asistente en este equipo. "
+                                "El resto de LabelBridge funciona con normalidad.")
+
+    def _mark_assistant_tab(self, is_open: bool) -> None:
+        btn = self.nav_buttons["assistant"]
+        btn.setChecked(is_open)
+        btn.setIcon(icons.icon("chat", "#FFFFFF" if is_open else "#CBD5E1", 18))
 
     def navigate(self, key: str) -> None:
-        if key == "assistant":  # el asistente ya no es una pantalla: se abre el chat flotante
+        if key == "assistant":  # el asistente no es una pantalla: se abre el chat flotante
             self.open_assistant()
             return
         page = self.pages.get(key)
         if page is None:
             return
         for name, btn in self.nav_buttons.items():
+            if name == "assistant":  # su marca sigue al chat, no a la pantalla
+                continue
             active = name == key
             btn.setChecked(active)
             icon_name = next(i for k, _, i in NAV if k == name)

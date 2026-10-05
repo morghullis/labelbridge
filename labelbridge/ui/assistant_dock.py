@@ -496,6 +496,8 @@ class AssistantPanel(QWidget):
 class AssistantDock(QObject):
     """El bubble y el panel, por encima de las pantallas de la ventana principal."""
 
+    toggled = Signal(bool)  # el chat se abrió (True) o se cerró (False): la pestaña «Asistente» lo refleja
+
     def __init__(self, ctx, host: QWidget, area: QWidget, connector=None) -> None:
         super().__init__(host)
         from .pages.assistant import AssistantPage
@@ -559,6 +561,7 @@ class AssistantDock(QObject):
             return
         self.is_open = True
         self._closing = False
+        self.toggled.emit(True)
         self.director.opened()
         self.launcher.hide()
         self.place()
@@ -572,6 +575,7 @@ class AssistantDock(QObject):
             return
         self.is_open = False
         self._closing = True
+        self.toggled.emit(False)
         focus = self.panel.focusWidget()
         self._return_focus = focus is not None and focus.hasFocus()
         self.director.closed()

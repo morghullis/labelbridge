@@ -43,6 +43,9 @@ QPushButton#NavButton {{
 }}
 QPushButton#NavButton:hover {{ background: #1E293B; color: white; }}
 QPushButton#NavButton:checked {{ background: {ACCENT}; color: white; font-weight: 600; }}
+QPushButton#NavButton[toggle="true"]:checked {{
+    background: #1E293B; color: white; font-weight: 600; border: 1px solid #B8892F; padding: 8px 11px;
+}}
 QFrame#SidebarStatus {{ background: #1E293B; border-radius: 10px; }}
 
 QLabel#PageTitle {{ font-size: 22px; font-weight: 700; }}

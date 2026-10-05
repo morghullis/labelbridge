@@ -116,7 +116,7 @@ STEPS: list[Step] = [
         "Escríbele tus datos (impresora, tienda…) y él hace los pasos de esta guía. Opcional.",
         "<ol>"
         "<li>Ábrelo con ① el <b>botón dorado de la máscara</b>, abajo a la derecha: está en todas las pantallas "
-        "(también con <b>F1</b>).</li>"
+        "(también con la pestaña <b>Asistente</b> o con <b>F1</b>).</li>"
         "<li>La primera vez, en <b>Conecta tu IA</b>: ② elige tu IA (<b>Claude, ChatGPT de OpenAI, Gemini</b>, otra "
         "compatible u Ollama en tu equipo), ③ pega tu <b>clave de API</b> y ④ pulsa <b>Guardar y probar</b>. Se paga "
         "por uso a tu proveedor: configurar todo suele costar menos de un dólar.</li>"
