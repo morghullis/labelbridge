@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from ..config import LabelSettings
+from ..i18n import date_text, tr
 
 
 @dataclass
@@ -62,7 +63,7 @@ def _format_date(value: str) -> str:
         return ""
     try:
         dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        return dt.astimezone().strftime("%d/%m/%Y %H:%M")
+        return date_text(dt.astimezone())
     except ValueError:
         return value[:16]
 
@@ -188,13 +189,13 @@ def sample_order() -> dict[str, Any]:
             "country": "México",
             "phone": "+52 55 1234 5678",
         },
-        "shipping_lines": [{"title": "Envío estándar"}],
+        "shipping_lines": [{"title": tr("Envío estándar")}],
         "line_items": [
-            {"quantity": 2, "name": "Camiseta básica - M / Negro", "sku": "CAM-M-NEG"},
-            {"quantity": 1, "name": "Gorra bordada", "sku": "GOR-01"},
-            {"quantity": 3, "name": "Calcetines deportivos (pack)", "sku": "CAL-3P"},
+            {"quantity": 2, "name": tr("Camiseta básica - M / Negro"), "sku": "CAM-M-NEG"},
+            {"quantity": 1, "name": tr("Gorra bordada"), "sku": "GOR-01"},
+            {"quantity": 3, "name": tr("Calcetines deportivos (pack)"), "sku": "CAL-3P"},
         ],
-        "note": "Entregar en recepción. Etiqueta de PRUEBA.",
+        "note": tr("Entregar en recepción. Etiqueta de PRUEBA."),
         "total_price": "749.00",
         "currency": "MXN",
     }

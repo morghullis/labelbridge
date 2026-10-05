@@ -7,6 +7,7 @@ from PySide6.QtGui import QFont, QFontMetricsF, QPainter
 
 from ..printing.barcode import code128_widths
 from .order import OrderLabelData
+from ..i18n import tr
 
 FONT_FAMILY = "Arial"
 BLACK = Qt.GlobalColor.black
@@ -138,7 +139,7 @@ def _draw_full(c: _Canvas, d: OrderLabelData, show_items: bool) -> None:
     # Remitente + fecha
     if d.sender_name or d.sender_lines:
         c.text(y, d.created, 2.6, x=c.left + c.width * 0.55, width=c.width * 0.45, align=Qt.AlignmentFlag.AlignRight)
-        y = c.text(y, d.sender_name or "Remitente", 3.2, bold=True, width=c.width * 0.58)
+        y = c.text(y, d.sender_name or tr("Remitente"), 3.2, bold=True, width=c.width * 0.58)
         for line in d.sender_lines[:3]:
             y = c.text(y, line, 2.6)
     else:
@@ -146,8 +147,8 @@ def _draw_full(c: _Canvas, d: OrderLabelData, show_items: bool) -> None:
     y = c.rule(y + 1.2 * mm, 0.6) + 1.5 * mm
 
     # Destinatario
-    y = c.text(y, "ENVIAR A:", 2.6, bold=True)
-    y = c.text(y, d.ship_name or "(sin nombre)", 6.2, bold=True, max_lines=2)
+    y = c.text(y, tr("ENVIAR A:"), 2.6, bold=True)
+    y = c.text(y, d.ship_name or tr("(sin nombre)"), 6.2, bold=True, max_lines=2)
     if d.company:
         y = c.text(y, d.company, 3.8, bold=True)
     for line in d.address_lines:
@@ -160,7 +161,7 @@ def _draw_full(c: _Canvas, d: OrderLabelData, show_items: bool) -> None:
     qr_size = 21 * mm if d.qr_url else 0
     left_w = c.width - (qr_size + 3 * mm if qr_size else 0)
     block_top = y
-    c.text(y, "PEDIDO", 2.6, bold=True, width=left_w)
+    c.text(y, tr("PEDIDO"), 2.6, bold=True, width=left_w)
     if d.shipping_method:
         c.text(y, d.shipping_method, 2.8, x=c.left + left_w * 0.4, width=left_w * 0.6, align=Qt.AlignmentFlag.AlignRight)
     y = c.text(y + 2.6 * mm, d.order_name, 8.0, bold=True, width=left_w)
@@ -187,8 +188,8 @@ def _draw_full(c: _Canvas, d: OrderLabelData, show_items: bool) -> None:
             y = c.text(y, f"{qty} × {text}", 3.3, shrink=False)
         hidden = len(d.items) - len(rows)
         if hidden > 0:
-            y = c.text(y, f"+ {hidden} producto(s) más", 3.0, bold=True, shrink=False)
+            y = c.text(y, tr("+ {0} producto(s) más", hidden), 3.0, bold=True, shrink=False)
     if d.note:
-        c.text(max(y + 1 * mm, c.bottom - note_h - footer_h), f"Nota: {d.note}", 2.9, max_lines=2)
+        c.text(max(y + 1 * mm, c.bottom - note_h - footer_h), tr("Nota: {0}", d.note), 2.9, max_lines=2)
     if d.total:
-        c.text(c.bottom - footer_h, f"Total: {d.total}", 3.0, bold=True, align=Qt.AlignmentFlag.AlignRight)
+        c.text(c.bottom - footer_h, tr("Total: {0}", d.total), 3.0, bold=True, align=Qt.AlignmentFlag.AlignRight)

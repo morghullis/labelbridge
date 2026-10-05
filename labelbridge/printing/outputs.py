@@ -15,6 +15,7 @@ from PySide6.QtGui import QImage, QPageLayout, QPageSize, QPainter, QPdfWriter
 from PySide6.QtPrintSupport import QPrinter, QPrinterInfo
 
 from ..config import LABEL_MEDIA, PrinterProfile
+from ..i18n import tr
 from . import QT_PRINT_LOCK, PermanentPrintError, PrintError, ipp, zpl
 from .pages import MM_PER_INCH, PageSource, render_fitted
 
@@ -102,7 +103,7 @@ def _draw_sources(
         for source in sources:
             for index in range(source.count()):
                 if not first and not new_page():
-                    raise PrintError("La impresora rechazó una página nueva")
+                    raise PrintError(tr("La impresora rechazó una página nueva"))
                 first = False
                 if source.vector:
                     w_mm, h_mm = source.size_mm(index) or DEFAULT_LABEL_MM
@@ -134,7 +135,7 @@ def print_with_driver(
     with QT_PRINT_LOCK:
         info = QPrinterInfo.printerInfo(profile.system_name)
         if info.isNull():
-            raise PrintError(f"La impresora '{profile.system_name}' no está instalada en este equipo")
+            raise PrintError(tr("La impresora '{0}' no está instalada en este equipo", profile.system_name))
         printer = QPrinter(info, QPrinter.PrinterMode.HighResolution)
         printer.setDocName(title or "LabelBridge")
         printer.setFullPage(True)
@@ -145,7 +146,7 @@ def print_with_driver(
         printer.setPageMargins(QMarginsF(0, 0, 0, 0), QPageLayout.Unit.Millimeter)
         painter = QPainter()
         if not painter.begin(printer):
-            raise PrintError(f"No se pudo iniciar el trabajo en '{profile.system_name}' (¿apagada o sin conexión?)")
+            raise PrintError(tr("No se pudo iniciar el trabajo en '{0}' (¿apagada o sin conexión?)", profile.system_name))
         try:
             _draw_sources(
                 painter,
@@ -197,18 +198,18 @@ def print_raw_system(printer_name: str, data: bytes, title: str) -> None:
         try:
             handle = win32print.OpenPrinter(printer_name)
         except pywintypes.error as exc:
-            raise PrintError(f"No se pudo abrir '{printer_name}': {exc.strerror}") from None
+            raise PrintError(tr("No se pudo abrir '{0}': {1}", printer_name, exc.strerror)) from None
         try:
             datatype = raw_datatype(_is_xps_driver(handle))
             try:
                 win32print.StartDocPrinter(handle, 1, (title or "LabelBridge", None, datatype))
             except pywintypes.error as exc:
-                raise PrintError(f"El spooler rechazó el trabajo {datatype}: {exc.strerror}") from None
+                raise PrintError(tr("El spooler rechazó el trabajo {0}: {1}", datatype, exc.strerror)) from None
             try:
                 win32print.StartPagePrinter(handle)
                 written = win32print.WritePrinter(handle, data)
                 if written != len(data):
-                    raise PrintError(f"El spooler solo aceptó {written} de {len(data)} bytes")
+                    raise PrintError(tr("El spooler solo aceptó {0} de {1} bytes", written, len(data)))
                 win32print.EndPagePrinter(handle)
             except BaseException:
                 win32print.AbortPrinter(handle)  # no enviar un trabajo a medias
@@ -225,9 +226,9 @@ def print_raw_system(printer_name: str, data: bytes, title: str) -> None:
             timeout=60,
         )
     except FileNotFoundError:
-        raise PermanentPrintError("No se encontró el comando 'lp' (CUPS)") from None
+        raise PermanentPrintError(tr("No se encontró el comando 'lp' (CUPS)")) from None
     if result.returncode != 0:
-        raise PrintError(f"lp falló: {result.stderr.decode('utf-8', 'replace').strip()}")
+        raise PrintError(tr("lp falló: {0}", result.stderr.decode('utf-8', 'replace').strip()))
 
 
 # --- red -----------------------------------------------------------------------------------
@@ -245,9 +246,9 @@ def send_tcp(host: str, port: int, data: bytes, timeout: float = 20.0) -> None:
             except OSError:
                 pass
     except socket.timeout:
-        raise PrintError(f"Tiempo de espera agotado conectando con {host}:{port}") from None
+        raise PrintError(tr("Tiempo de espera agotado conectando con {0}:{1}", host, port)) from None
     except OSError as exc:
-        raise PrintError(f"No se pudo conectar con {host}:{port} ({exc.strerror or exc})") from None
+        raise PrintError(tr("No se pudo conectar con {0}:{1} ({2})", host, port, exc.strerror or exc)) from None
 
 
 def send_ipp(profile: PrinterProfile, pdf: bytes, title: str, copies: int, actual_size: bool = False) -> str:
@@ -271,7 +272,7 @@ def send_ipp(profile: PrinterProfile, pdf: bytes, title: str, copies: int, actua
     except ipp.IppError as exc:
         raise PrintError(str(exc)) from None
     except OSError as exc:
-        raise PrintError(f"No se pudo conectar por IPP con {profile.host}:{profile.port} ({exc})") from None
+        raise PrintError(tr("No se pudo conectar por IPP con {0}:{1} ({2})", profile.host, profile.port, exc)) from None
     return fingerprint
 
 

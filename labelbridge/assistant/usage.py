@@ -12,6 +12,7 @@ from collections import deque
 from datetime import date
 from typing import Callable
 
+from ..i18n import tr
 from .providers import Usage
 
 FIELDS = ("input", "output", "cache_write", "cache_read", "calls", "cost")
@@ -53,8 +54,7 @@ class UsageMeter:
         budget = float(settings.daily_budget_usd or 0)
         if budget > 0 and self.today()["cost"] >= budget:
             return (
-                f"Se alcanzó el límite diario del asistente (≈ {budget:.2f} USD). Vuelve mañana o súbelo en "
-                "Ajustes → Asistente."
+                tr("Se alcanzó el límite diario del asistente (≈ {0:.2f} USD). Vuelve mañana o súbelo en Ajustes → Asistente.", budget)
             )
         now = self._clock()
         with self._lock:
@@ -62,6 +62,6 @@ class UsageMeter:
                 self._messages.popleft()
             if len(self._messages) >= max(1, int(settings.messages_per_hour)):
                 wait = int((3600 - (now - self._messages[0])) // 60) + 1
-                return f"Llegaste al máximo de {settings.messages_per_hour} mensajes por hora. Prueba en {wait} min."
+                return tr("Llegaste al máximo de {0} mensajes por hora. Prueba en {1} min.", settings.messages_per_hour, wait)
             self._messages.append(now)
         return ""

@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 
 from ...assistant.providers import resolve
 from ...connectors.shopify import DEV_DASHBOARD_URL, SCOPES_BASIC, SCOPES_LABELS, ShopifyError, admin_url
+from ...i18n import N_, tr
 from ...secret_store import SHOPIFY_ACCESS_TOKEN, SHOPIFY_CLIENT_SECRET
 from ...updater import UPDATES_PAGE
 from ..actions import enqueue_test_label
@@ -112,192 +113,192 @@ def _assistant_ready(ctx: AppContext) -> bool:
 STEPS: list[Step] = [
     Step(
         "assistant",
-        "¿Prefieres conversar? El asistente lo configura por ti",
-        "Escríbele tus datos (impresora, tienda…) y él hace los pasos de esta guía. Opcional.",
-        "<ol>"
-        "<li>Ábrelo con ① el <b>botón dorado de la máscara</b>, abajo a la derecha: está en todas las pantallas "
-        "(también con la pestaña <b>Asistente</b> o con <b>F1</b>).</li>"
-        "<li>La primera vez, en <b>Conecta tu IA</b>: ② elige tu IA (<b>Claude, ChatGPT de OpenAI, Gemini</b>, otra "
-        "compatible u Ollama en tu equipo), ③ pega tu <b>clave de API</b> y ④ pulsa <b>Guardar y probar</b>. Se paga "
-        "por uso a tu proveedor: configurar todo suele costar menos de un dólar.</li>"
-        "<li>⑤ Escríbele con tus palabras, por ejemplo: <i>«Tengo una Zebra por USB y quiero imprimir las guías de "
-        "Shopify Shipping de mi tienda»</i>. Él agrega la impresora, conecta la tienda y te dice qué falta; la máscara "
-        "te muestra si piensa, trabaja o te pregunta algo.</li>"
-        "<li>Antes de cada cambio te pide permiso. Las claves se piden en una ventana segura (o con ⑥ el "
-        "<b>candado</b>) y se quedan en este PC. Comprar guías siempre pide confirmación.</li>"
-        "</ol>",
+        N_("¿Prefieres conversar? El asistente lo configura por ti"),
+        N_("Escríbele tus datos (impresora, tienda…) y él hace los pasos de esta guía. Opcional."),
+        N_("<ol>"
+           "<li>Ábrelo con ① el <b>botón dorado de la máscara</b>, abajo a la derecha: está en todas las pantallas "
+           "(también con la pestaña <b>Asistente</b> o con <b>F1</b>).</li>"
+           "<li>La primera vez, en <b>Conecta tu IA</b>: ② elige tu IA (<b>Claude, ChatGPT de OpenAI, Gemini</b>, otra "
+           "compatible u Ollama en tu equipo), ③ pega tu <b>clave de API</b> y ④ pulsa <b>Guardar y probar</b>. Se paga "
+           "por uso a tu proveedor: configurar todo suele costar menos de un dólar.</li>"
+           "<li>⑤ Escríbele con tus palabras, por ejemplo: <i>«Tengo una Zebra por USB y quiero imprimir las guías de "
+           "Shopify Shipping de mi tienda»</i>. Él agrega la impresora, conecta la tienda y te dice qué falta; la máscara "
+           "te muestra si piensa, trabaja o te pregunta algo.</li>"
+           "<li>Antes de cada cambio te pide permiso. Las claves se piden en una ventana segura (o con ⑥ el "
+           "<b>candado</b>) y se quedan en este PC. Comprar guías siempre pide confirmación.</li>"
+           "</ol>"),
         _assistant_ready,
-        [("Abrir el asistente", "chat", "nav:assistant")],
+        [(N_("Abrir el asistente"), "chat", "nav:assistant")],
         optional=True,
         images=[
-            ("assistant-bubble.png", "El botón del asistente (en todas las pantallas)"),
-            ("assistant-connect.png", "Conecta tu IA"),
-            ("assistant.png", "El chat del asistente"),
+            ("assistant-bubble.png", N_("El botón del asistente (en todas las pantallas)")),
+            ("assistant-connect.png", N_("Conecta tu IA")),
+            ("assistant.png", N_("El chat del asistente")),
         ],
     ),
     Step(
         "printer",
-        "Conecta tu impresora de etiquetas",
-        "Sirve cualquier impresora: USB o instalada en Windows, o por Wi‑Fi/red sin driver.",
-        "<ol>"
-        "<li>Pulsa <b>Ir a Impresoras</b> (botón de abajo).</li>"
-        "<li><b>Si la impresora ya funciona en este PC</b> (USB o instalada): en ② <i>Instaladas en este equipo</i> "
-        "selecciónala y pulsa ③ <b>Agregar a LabelBridge</b>.</li>"
-        "<li><b>Si está en la red o Wi‑Fi</b>: en ② abre <i>En la red</i>, pulsa <b>Buscar en la red</b>, elige la "
-        "tuya y pulsa <b>Agregar a LabelBridge</b>. No necesita driver. Si conoces la IP, también puedes usar "
-        "① <b>Agregar</b>.</li>"
-        "<li>En la ventana de la impresora (segunda imagen): ① <b>Alias</b> <code>etiquetas</code>, ② <b>Lenguaje</b> "
-        "<i>ZPL</i> si es Zebra o compatible (si no, <i>Driver de Windows</i>), ③ <b>Tamaño</b> 4 × 6 in y "
-        "④ <b>Guardar</b>.</li>"
-        "</ol>",
+        N_("Conecta tu impresora de etiquetas"),
+        N_("Sirve cualquier impresora: USB o instalada en Windows, o por Wi‑Fi/red sin driver."),
+        N_("<ol>"
+           "<li>Pulsa <b>Ir a Impresoras</b> (botón de abajo).</li>"
+           "<li><b>Si la impresora ya funciona en este PC</b> (USB o instalada): en ② <i>Instaladas en este equipo</i> "
+           "selecciónala y pulsa ③ <b>Agregar a LabelBridge</b>.</li>"
+           "<li><b>Si está en la red o Wi‑Fi</b>: en ② abre <i>En la red</i>, pulsa <b>Buscar en la red</b>, elige la "
+           "tuya y pulsa <b>Agregar a LabelBridge</b>. No necesita driver. Si conoces la IP, también puedes usar "
+           "① <b>Agregar</b>.</li>"
+           "<li>En la ventana de la impresora (segunda imagen): ① <b>Alias</b> <code>etiquetas</code>, ② <b>Lenguaje</b> "
+           "<i>ZPL</i> si es Zebra o compatible (si no, <i>Driver de Windows</i>), ③ <b>Tamaño</b> 4 × 6 in y "
+           "④ <b>Guardar</b>.</li>"
+           "</ol>"),
         _printer_ready,
-        [("Ir a Impresoras", "printer", "nav:printers")],
-        images=[("printers.png", "Pantalla Impresoras"), ("printer-dialog.png", "Ventana de la impresora")],
+        [(N_("Ir a Impresoras"), "printer", "nav:printers")],
+        images=[("printers.png", N_("Pantalla Impresoras")), ("printer-dialog.png", N_("Ventana de la impresora"))],
     ),
     Step(
         "test",
-        "Imprime una etiqueta de prueba",
-        "Comprueba que la etiqueta sale completa y del tamaño correcto.",
-        "<ol>"
-        "<li>Pulsa ① <b>Imprimir prueba</b> (aquí abajo o en Inicio): sale una etiqueta de ejemplo (pedido #1001).</li>"
-        "<li>En ② <i>Últimos trabajos</i> debe aparecer <b>Impreso</b>. Revisa que no salga cortada ni girada; si sale "
-        "mal, ajusta <i>Tamaño</i>, <i>Rotación</i> o <i>Resolución</i> en <b>Impresoras → Editar</b>.</li>"
-        "<li>Si dice <b>Error</b> o <b>Reintentando</b>, el detalle en <b>Historial</b> explica la causa (impresora "
-        "apagada, sin papel, IP incorrecta…).</li>"
-        "</ol>",
+        N_("Imprime una etiqueta de prueba"),
+        N_("Comprueba que la etiqueta sale completa y del tamaño correcto."),
+        N_("<ol>"
+           "<li>Pulsa ① <b>Imprimir prueba</b> (aquí abajo o en Inicio): sale una etiqueta de ejemplo (pedido #1001).</li>"
+           "<li>En ② <i>Últimos trabajos</i> debe aparecer <b>Impreso</b>. Revisa que no salga cortada ni girada; si sale "
+           "mal, ajusta <i>Tamaño</i>, <i>Rotación</i> o <i>Resolución</i> en <b>Impresoras → Editar</b>.</li>"
+           "<li>Si dice <b>Error</b> o <b>Reintentando</b>, el detalle en <b>Historial</b> explica la causa (impresora "
+           "apagada, sin papel, IP incorrecta…).</li>"
+           "</ol>"),
         _test_printed,
-        [("Imprimir prueba", "printer", "test"), ("Ver historial", "clock", "nav:history")],
-        images=[("test-print.png", "Inicio"), ("test-result.png", "Últimos trabajos")],
+        [(N_("Imprimir prueba"), "printer", "test"), (N_("Ver historial"), "clock", "nav:history")],
+        images=[("test-print.png", N_("Inicio")), ("test-result.png", N_("Últimos trabajos"))],
     ),
     Step(
         "sender",
-        "Pon los datos de tu tienda en la etiqueta",
-        "El remitente que aparece arriba en cada etiqueta de pedido.",
-        "<ol>"
-        "<li>Ve a <b>Ajustes</b>.</li>"
-        "<li>① Escribe el nombre de la tienda y ② la dirección desde la que envías.</li>"
-        "<li>Elige si quieres mostrar los productos, el QR del pedido y el total, y pulsa ③ <b>Guardar ajustes</b>.</li>"
-        "</ol>",
+        N_("Pon los datos de tu tienda en la etiqueta"),
+        N_("El remitente que aparece arriba en cada etiqueta de pedido."),
+        N_("<ol>"
+           "<li>Ve a <b>Ajustes</b>.</li>"
+           "<li>① Escribe el nombre de la tienda y ② la dirección desde la que envías.</li>"
+           "<li>Elige si quieres mostrar los productos, el QR del pedido y el total, y pulsa ③ <b>Guardar ajustes</b>.</li>"
+           "</ol>"),
         _sender_ready,
-        [("Ir a Ajustes", "sliders", "nav:settings")],
-        images=[("sender.png", "Ajustes → Etiqueta de pedido generada")],
+        [(N_("Ir a Ajustes"), "sliders", "nav:settings")],
+        images=[("sender.png", N_("Ajustes → Etiqueta de pedido generada"))],
     ),
     Step(
         "shopify_app",
-        "Crea la app «LabelBridge» en Shopify (una sola vez)",
-        "Da permiso a LabelBridge para leer tus pedidos. Sirve para todos tus PCs.",
-        "<ol>"
-        "<li>Pulsa <b>Abrir Dev Dashboard</b> e inicia sesión con la cuenta dueña de la tienda.</li>"
-        "<li>② <b>Apps → Create app → Start from Dev Dashboard</b>. Nombre: <code>LabelBridge</code>.</li>"
-        "<li>③ En <b>Access scopes</b> pega los permisos con <b>Copiar permisos</b>: incluyen los de comprar las guías "
-        "de Shopify Shipping. (Si solo vas a imprimir la etiqueta interna basta <b>Solo lectura</b>: "
-        "<code>read_orders</code>).</li>"
-        "<li>④ En <b>Protected customer data</b> marca <b>Name</b>, <b>Address</b> y <b>Phone</b>: la etiqueta "
-        "necesita nombre, dirección y teléfono.</li>"
-        "<li>⑤ <b>Release</b> (publica la versión) e <b>Install app</b> en tu tienda.</li>"
-        "<li>⑥ En <b>App settings</b> copia el <b>Client ID</b> y el <b>Client secret</b>: los pegas en el paso "
-        "siguiente.</li>"
-        "</ol>"
-        "<p>¿Aparece <i>shop_not_permitted</i>? La app y la tienda deben estar en la misma organización del Dev "
-        "Dashboard.</p>",
+        N_("Crea la app «LabelBridge» en Shopify (una sola vez)"),
+        N_("Da permiso a LabelBridge para leer tus pedidos. Sirve para todos tus PCs."),
+        N_("<ol>"
+           "<li>Pulsa <b>Abrir Dev Dashboard</b> e inicia sesión con la cuenta dueña de la tienda.</li>"
+           "<li>② <b>Apps → Create app → Start from Dev Dashboard</b>. Nombre: <code>LabelBridge</code>.</li>"
+           "<li>③ En <b>Access scopes</b> pega los permisos con <b>Copiar permisos</b>: incluyen los de comprar las guías "
+           "de Shopify Shipping. (Si solo vas a imprimir la etiqueta interna basta <b>Solo lectura</b>: "
+           "<code>read_orders</code>).</li>"
+           "<li>④ En <b>Protected customer data</b> marca <b>Name</b>, <b>Address</b> y <b>Phone</b>: la etiqueta "
+           "necesita nombre, dirección y teléfono.</li>"
+           "<li>⑤ <b>Release</b> (publica la versión) e <b>Install app</b> en tu tienda.</li>"
+           "<li>⑥ En <b>App settings</b> copia el <b>Client ID</b> y el <b>Client secret</b>: los pegas en el paso "
+           "siguiente.</li>"
+           "</ol>"
+           "<p>¿Aparece <i>shop_not_permitted</i>? La app y la tienda deben estar en la misma organización del Dev "
+           "Dashboard.</p>"),
         _shopify_credentials,
         [
-            ("Abrir Dev Dashboard", "link", f"url:{DEV_DASHBOARD_URL}"),
-            ("Copiar permisos", "copy", f"copy:{SCOPES_LABELS}"),
-            ("Solo lectura", "copy", f"copy:{SCOPES_BASIC}"),
-            ("Ir a Shopify", "shop", "nav:shopify"),
+            (N_("Abrir Dev Dashboard"), "link", f"url:{DEV_DASHBOARD_URL}"),
+            (N_("Copiar permisos"), "copy", f"copy:{SCOPES_LABELS}"),
+            (N_("Solo lectura"), "copy", f"copy:{SCOPES_BASIC}"),
+            (N_("Ir a Shopify"), "shop", "nav:shopify"),
         ],
-        images=[("devdashboard.png", "Dev Dashboard de Shopify (ilustración)")],
+        images=[("devdashboard.png", N_("Dev Dashboard de Shopify (ilustración)"))],
     ),
     Step(
         "shopify_on",
-        "Conecta tu tienda",
-        "LabelBridge empieza a revisar los pedidos nuevos.",
-        "<ol>"
-        "<li>Ve a <b>Shopify</b> y ① activa <b>Conector Shopify activo</b>.</li>"
-        "<li>② Escribe tu tienda: <code>tu-tienda.myshopify.com</code>.</li>"
-        "<li>③ Pega el <b>Client ID</b> y el <b>Client secret</b> del paso anterior.</li>"
-        "<li>④ Pulsa <b>Guardar y probar conexión</b>: debe decir <i>✓ Conectado</i> y mostrar los permisos (si falta "
-        "alguno, te lo indica).</li>"
-        "<li>Se imprimen los pedidos <b>nuevos</b> desde ese momento. Para pedidos de horas anteriores usa "
-        "<i>Reprocesar las últimas X h</i>.</li>"
-        "</ol>",
+        N_("Conecta tu tienda"),
+        N_("LabelBridge empieza a revisar los pedidos nuevos."),
+        N_("<ol>"
+           "<li>Ve a <b>Shopify</b> y ① activa <b>Conector Shopify activo</b>.</li>"
+           "<li>② Escribe tu tienda: <code>tu-tienda.myshopify.com</code>.</li>"
+           "<li>③ Pega el <b>Client ID</b> y el <b>Client secret</b> del paso anterior.</li>"
+           "<li>④ Pulsa <b>Guardar y probar conexión</b>: debe decir <i>✓ Conectado</i> y mostrar los permisos (si falta "
+           "alguno, te lo indica).</li>"
+           "<li>Se imprimen los pedidos <b>nuevos</b> desde ese momento. Para pedidos de horas anteriores usa "
+           "<i>Reprocesar las últimas X h</i>.</li>"
+           "</ol>"),
         _shopify_connected,
-        [("Ir a Shopify", "shop", "nav:shopify")],
-        images=[("shopify-connect.png", "Pantalla Shopify → Conexión")],
+        [(N_("Ir a Shopify"), "shop", "nav:shopify")],
+        images=[("shopify-connect.png", N_("Pantalla Shopify → Conexión"))],
     ),
     Step(
         "what",
-        "Activa la guía de envío de Shopify Shipping",
-        "La etiqueta con franqueo que va en el paquete: LabelBridge la compra y la imprime sola.",
-        "<ol>"
-        "<li>En Shopify deja listo Shopify Shipping (<b>Configuración → Envío y entrega</b>): un <b>paquete "
-        "predeterminado</b>, la dirección de envío completa y un método de pago para las guías.</li>"
-        "<li>En la pantalla <b>Shopify</b> de LabelBridge activa ① <b>Guía de envío de Shopify Shipping</b> y elige a "
-        "la derecha ② la impresora de etiquetas. <b>Shopify cobra cada guía</b>; actívala en un solo PC.</li>"
-        "<li>③ La <b>Etiqueta de pedido de LabelBridge</b> es opcional (sin franqueo, para empacar). Déjala apagada si "
-        "solo quieres la guía, así no gastas dos etiquetas por pedido.</li>"
-        "<li>Pulsa <b>Guardar cambios</b>.</li>"
-        "</ol>"
-        "<p>¿Envías con otra paquetería? Usa la etiqueta desde un metafield o n8n, o la etiqueta de pedido, y pulsa "
-        "<b>Entendido</b>.</p>",
+        N_("Activa la guía de envío de Shopify Shipping"),
+        N_("La etiqueta con franqueo que va en el paquete: LabelBridge la compra y la imprime sola."),
+        N_("<ol>"
+           "<li>En Shopify deja listo Shopify Shipping (<b>Configuración → Envío y entrega</b>): un <b>paquete "
+           "predeterminado</b>, la dirección de envío completa y un método de pago para las guías.</li>"
+           "<li>En la pantalla <b>Shopify</b> de LabelBridge activa ① <b>Guía de envío de Shopify Shipping</b> y elige a "
+           "la derecha ② la impresora de etiquetas. <b>Shopify cobra cada guía</b>; actívala en un solo PC.</li>"
+           "<li>③ La <b>Etiqueta de pedido de LabelBridge</b> es opcional (sin franqueo, para empacar). Déjala apagada si "
+           "solo quieres la guía, así no gastas dos etiquetas por pedido.</li>"
+           "<li>Pulsa <b>Guardar cambios</b>.</li>"
+           "</ol>"
+           "<p>¿Envías con otra paquetería? Usa la etiqueta desde un metafield o n8n, o la etiqueta de pedido, y pulsa "
+           "<b>Entendido</b>.</p>"),
         _what_to_print,
-        [("Ir a Shopify", "shop", "nav:shopify"), ("Entendido", "check", "ack:what")],
-        images=[("shopify-what.png", "Pantalla Shopify → Qué imprimir en cada pedido")],
+        [(N_("Ir a Shopify"), "shop", "nav:shopify"), (N_("Entendido"), "check", "ack:what")],
+        images=[("shopify-what.png", N_("Pantalla Shopify → Qué imprimir en cada pedido"))],
     ),
     Step(
         "order",
-        "Haz un pedido de prueba",
-        "Comprueba todo de punta a punta con un pedido de prueba.",
-        "<ol>"
-        "<li>Pulsa <b>Crear pedido de prueba</b>: se abre ① <i>Pedidos preliminares</i> en Shopify.</li>"
-        "<li>② Agrega un producto y un cliente con dirección de envío.</li>"
-        "<li>③ Pulsa <b>Cobrar → Marcar como pagado</b> (no se le cobra a nadie).</li>"
-        "<li>En menos de un minuto sale la etiqueta y aparece en <b>Historial</b> con origen <i>Shopify</i>. Con la "
-        "compra de guías activa, ese pedido compra una guía real: si no la usas, anúlala desde el pedido en Shopify. "
-        "Después cancela o archiva el pedido.</li>"
-        "</ol>",
+        N_("Haz un pedido de prueba"),
+        N_("Comprueba todo de punta a punta con un pedido de prueba."),
+        N_("<ol>"
+           "<li>Pulsa <b>Crear pedido de prueba</b>: se abre ① <i>Pedidos preliminares</i> en Shopify.</li>"
+           "<li>② Agrega un producto y un cliente con dirección de envío.</li>"
+           "<li>③ Pulsa <b>Cobrar → Marcar como pagado</b> (no se le cobra a nadie).</li>"
+           "<li>En menos de un minuto sale la etiqueta y aparece en <b>Historial</b> con origen <i>Shopify</i>. Con la "
+           "compra de guías activa, ese pedido compra una guía real: si no la usas, anúlala desde el pedido en Shopify. "
+           "Después cancela o archiva el pedido.</li>"
+           "</ol>"),
         _test_order,
-        [("Crear pedido de prueba", "link", "url:draft"), ("Ver historial", "clock", "nav:history")],
-        images=[("draft-order.png", "Shopify → Pedidos preliminares (ilustración)")],
+        [(N_("Crear pedido de prueba"), "link", "url:draft"), (N_("Ver historial"), "clock", "nav:history")],
+        images=[("draft-order.png", N_("Shopify → Pedidos preliminares (ilustración)"))],
     ),
     Step(
         "daily",
-        "Déjalo funcionando para el día a día",
-        "LabelBridge trabaja solo, en segundo plano.",
-        "<ul>"
-        "<li>① <b>Iniciar LabelBridge al encender Windows</b> debe estar activado: si el PC se reinicia, vuelve a "
-        "imprimir solo.</li>"
-        "<li>Al cerrar la ventana la app <b>sigue funcionando</b> junto al reloj (① en la segunda imagen). Clic derecho "
-        "→ ② <i>Pausar impresión automática</i> si necesitas detenerla.</li>"
-        "<li>Deja el PC <b>encendido</b> y la impresora conectada. Si algo falla verás un aviso y la etiqueta se "
-        "reintenta sola.</li>"
-        "<li><b>¿Otro PC?</b> Descarga el instalador desde la <b>página de descargas</b>, instálalo y haz los pasos 1 a "
-        "3. Deja el conector Shopify activo <b>solo en un PC</b> (o reparte pedidos con el filtro por tag).</li>"
-        "<li>Si Windows dice <i>«Windows protegió su PC»</i> al instalar: <b>Más información → Ejecutar de todas "
-        "formas</b>.</li>"
-        "<li>Las <b>actualizaciones</b> llegan solas: la app te avisa y se actualiza con un clic.</li>"
-        "</ul>",
+        N_("Déjalo funcionando para el día a día"),
+        N_("LabelBridge trabaja solo, en segundo plano."),
+        N_("<ul>"
+           "<li>① <b>Iniciar LabelBridge al encender Windows</b> debe estar activado: si el PC se reinicia, vuelve a "
+           "imprimir solo.</li>"
+           "<li>Al cerrar la ventana la app <b>sigue funcionando</b> junto al reloj (① en la segunda imagen). Clic derecho "
+           "→ ② <i>Pausar impresión automática</i> si necesitas detenerla.</li>"
+           "<li>Deja el PC <b>encendido</b> y la impresora conectada. Si algo falla verás un aviso y la etiqueta se "
+           "reintenta sola.</li>"
+           "<li><b>¿Otro PC?</b> Descarga el instalador desde la <b>página de descargas</b>, instálalo y haz los pasos 1 a "
+           "3. Deja el conector Shopify activo <b>solo en un PC</b> (o reparte pedidos con el filtro por tag).</li>"
+           "<li>Si Windows dice <i>«Windows protegió su PC»</i> al instalar: <b>Más información → Ejecutar de todas "
+           "formas</b>.</li>"
+           "<li>Las <b>actualizaciones</b> llegan solas: la app te avisa y se actualiza con un clic.</li>"
+           "</ul>"),
         _daily,
         [
-            ("Ir a Ajustes", "sliders", "nav:settings"),
-            ("Página de descargas", "link", f"url:{UPDATES_PAGE}"),
-            ("Entendido", "check", "ack:daily"),
+            (N_("Ir a Ajustes"), "sliders", "nav:settings"),
+            (N_("Página de descargas"), "link", f"url:{UPDATES_PAGE}"),
+            (N_("Entendido"), "check", "ack:daily"),
         ],
-        images=[("daily.png", "Ajustes → General"), ("tray.png", "Bandeja de Windows (ilustración)")],
+        images=[("daily.png", N_("Ajustes → General")), ("tray.png", N_("Bandeja de Windows (ilustración)"))],
     ),
     Step(
         "n8n",
-        "n8n en tiempo real",
-        "Solo si usas n8n para guías de otra paquetería o flujos propios.",
-        "<ol>"
-        "<li>Crea un broker MQTT gratuito (EMQX Serverless) con dos usuarios: uno para n8n y otro para este PC.</li>"
-        "<li>En la pantalla <b>n8n</b> escribe servidor, usuario, contraseña y canal, y pulsa <b>Guardar y "
-        "probar</b>.</li>"
-        "<li>Importa las plantillas (botón <i>Abrir carpeta de plantillas</i>) y sigue su guía.</li>"
-        "</ol>",
+        N_("n8n en tiempo real"),
+        N_("Solo si usas n8n para guías de otra paquetería o flujos propios."),
+        N_("<ol>"
+           "<li>Crea un broker MQTT gratuito (EMQX Serverless) con dos usuarios: uno para n8n y otro para este PC.</li>"
+           "<li>En la pantalla <b>n8n</b> escribe servidor, usuario, contraseña y canal, y pulsa <b>Guardar y "
+           "probar</b>.</li>"
+           "<li>Importa las plantillas (botón <i>Abrir carpeta de plantillas</i>) y sigue su guía.</li>"
+           "</ol>"),
         _n8n,
-        [("Ir a n8n", "flow", "nav:n8n")],
+        [(N_("Ir a n8n"), "flow", "nav:n8n")],
         optional=True,
     ),
 ]
@@ -347,9 +348,12 @@ BADGE_STYLES = {
 
 
 def guide_image_path(name: str):
+    """La captura en el idioma de la app (assets/guide/en/ en inglés), o la española si no hay."""
+    from ...i18n import language
     from ...paths import resource_path
 
-    return resource_path("assets", "guide", name)
+    localized = resource_path("assets", "guide", language(), name)
+    return localized if language() != "es" and localized.exists() else resource_path("assets", "guide", name)
 
 
 class ImageViewer(QDialog):
@@ -403,11 +407,11 @@ class GuideImage(QWidget):
         picture = QLabel()
         picture.setPixmap(shown)
         picture.setCursor(Qt.CursorShape.PointingHandCursor)
-        picture.setToolTip("Clic para ver en grande")
+        picture.setToolTip(tr("Clic para ver en grande"))
         picture.setStyleSheet("QLabel { border: 1px solid #E2E8F0; border-radius: 8px; background: white; }")
         picture.mousePressEvent = lambda _event: ImageViewer(self.window(), self.pixmap, caption).exec()
         layout.addWidget(picture, 0, Qt.AlignmentFlag.AlignLeft)
-        layout.addWidget(label(f"▲ {caption} · clic para ampliar", "Small"))
+        layout.addWidget(label(tr("▲ {0} · clic para ampliar", caption), "Small"))
 
 
 class StepCard(QFrame):
@@ -427,14 +431,14 @@ class StepCard(QFrame):
         body = QVBoxLayout()
         body.setSpacing(6)
         head = QHBoxLayout()
-        title = label(step.title, "CardTitle", wrap=True)
+        title = label(tr(step.title), "CardTitle", wrap=True)
         head.addWidget(title, 1)
         self.status = Pill("off", "")
         head.addWidget(self.status, 0, Qt.AlignmentFlag.AlignTop)
         body.addLayout(head)
-        body.addWidget(label(step.summary, "Muted", wrap=True))
+        body.addWidget(label(tr(step.summary), "Muted", wrap=True))
 
-        self.toggle = button("Ver instrucciones", None, "ghost")
+        self.toggle = button(tr("Ver instrucciones"), None, "ghost")
         self.toggle.setStyleSheet("color: #4F46E5; font-weight: 600; text-align: left; padding-left: 0;")
         self.toggle.clicked.connect(lambda: self.set_expanded(not self.details.isVisible()))
         body.addWidget(self.toggle, 0, Qt.AlignmentFlag.AlignLeft)
@@ -443,7 +447,7 @@ class StepCard(QFrame):
         details_layout = QVBoxLayout(self.details)
         details_layout.setContentsMargins(0, 0, 0, 4)
         details_layout.setSpacing(12)
-        instructions = QLabel(_highlight_code(step.details))
+        instructions = QLabel(_highlight_code(tr(step.details)))
         instructions.setWordWrap(True)
         instructions.setTextFormat(Qt.TextFormat.RichText)
         instructions.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -453,7 +457,7 @@ class StepCard(QFrame):
         )
         details_layout.addWidget(instructions)
         for file_name, caption in step.images:
-            shot = GuideImage(file_name, caption)
+            shot = GuideImage(file_name, tr(caption))
             if shot.available:
                 details_layout.addWidget(shot)
         body.addWidget(self.details)
@@ -461,7 +465,7 @@ class StepCard(QFrame):
         actions = QHBoxLayout()
         actions.setSpacing(8)
         for index, (text, icon_name, action) in enumerate(step.actions):
-            btn = button(text, icon_name, "primary" if index == 0 else None)
+            btn = button(tr(text), icon_name, "primary" if index == 0 else None)
             btn.clicked.connect(lambda _=False, a=action, b=btn: run_action(a, b))
             actions.addWidget(btn)
         actions.addStretch(1)
@@ -471,15 +475,15 @@ class StepCard(QFrame):
 
     def set_expanded(self, expanded: bool) -> None:
         self.details.setVisible(expanded)
-        self.toggle.setText("Ocultar instrucciones" if expanded else "Ver instrucciones paso a paso")
+        self.toggle.setText(tr("Ocultar instrucciones") if expanded else tr("Ver instrucciones paso a paso"))
 
     def set_state(self, state: str) -> None:
         self.badge.setText("✓" if state == "done" else str(self.number))
         self.badge.setStyleSheet(
             f"QLabel {{ {BADGE_STYLES[state]} border-radius: 17px; font-weight: 700; font-size: 14px; }}"
         )
-        texts = {"done": ("ok", "Listo"), "current": ("info", "Siguiente paso"), "pending": ("off", "Pendiente"),
-                 "optional": ("off", "Opcional")}
+        texts = {"done": ("ok", tr("Listo")), "current": ("info", tr("Siguiente paso")), "pending": ("off", tr("Pendiente")),
+                 "optional": ("off", tr("Opcional"))}
         pill_state, text = texts[state]
         self.status.set_state(pill_state, text)
 
@@ -487,9 +491,9 @@ class StepCard(QFrame):
 class GuidePage(Page):
     def __init__(self, ctx: AppContext, navigate: Callable[[str], None]) -> None:
         super().__init__(
-            "Guía paso a paso",
-            "Sigue estos pasos una vez después de instalar. Cada uno se marca con ✓ cuando la app comprueba que "
-            "quedó listo.",
+            tr("Guía paso a paso"),
+            tr("Sigue estos pasos una vez después de instalar. Cada uno se marca con ✓ cuando la app comprueba que "
+               "quedó listo."),
         )
         self.ctx = ctx
         self.navigate = navigate
@@ -556,15 +560,15 @@ class GuidePage(Page):
         self.bar.setRange(0, total)
         self.bar.setValue(done)
         if done == total:
-            self.summary_title.setText("✓ ¡Todo listo! LabelBridge ya imprime solo")
+            self.summary_title.setText(tr("✓ ¡Todo listo! LabelBridge ya imprime solo"))
             self.summary_text.setText(
-                "Los pedidos nuevos de tu tienda se imprimen automáticamente. Puedes volver a esta guía cuando "
-                "quieras, por ejemplo al instalar en otro PC."
+                tr("Los pedidos nuevos de tu tienda se imprimen automáticamente. Puedes volver a esta guía cuando "
+                   "quieras, por ejemplo al instalar en otro PC.")
             )
         else:
-            self.summary_title.setText(f"Configuración: {done} de {total} pasos listos")
+            self.summary_title.setText(tr("Configuración: {0} de {1} pasos listos", done, total))
             self.summary_text.setText(
-                f"Siguiente: {current.step.title}." if current else "Revisa los pasos pendientes."
+                tr("Siguiente: {0}.", tr(current.step.title)) if current else tr("Revisa los pasos pendientes.")
             )
 
     def _run_action(self, action: str, origin: QPushButton) -> None:
@@ -577,7 +581,7 @@ class GuidePage(Page):
         elif kind == "copy":
             copy_to_clipboard(value)
             previous = origin.text()
-            origin.setText("¡Copiado!")
+            origin.setText(tr("¡Copiado!"))
             QTimer.singleShot(1500, lambda: origin.setText(previous))
         elif kind == "test":
             enqueue_test_label(self.ctx)
@@ -596,11 +600,11 @@ def guide_banner(ctx: AppContext, navigate: Callable[[str], None]) -> QWidget:
     row = QHBoxLayout()
     texts = QVBoxLayout()
     card.banner_title = label("", "CardTitle")  # type: ignore[attr-defined]
-    card.banner_text = label("Sigue la guía para dejar todo funcionando.", "Muted")  # type: ignore[attr-defined]
+    card.banner_text = label(tr("Sigue la guía para dejar todo funcionando."), "Muted")  # type: ignore[attr-defined]
     texts.addWidget(card.banner_title)  # type: ignore[attr-defined]
     texts.addWidget(card.banner_text)  # type: ignore[attr-defined]
     row.addLayout(texts, 1)
-    go = button("Continuar la guía", "list", "primary")
+    go = button(tr("Continuar la guía"), "list", "primary")
     go.clicked.connect(lambda: navigate("guide"))
     row.addWidget(go)
     card.add(layout=row)
@@ -610,4 +614,4 @@ def guide_banner(ctx: AppContext, navigate: Callable[[str], None]) -> QWidget:
 def update_guide_banner(card: QWidget, ctx: AppContext) -> None:
     done, total = progress(ctx)
     card.setVisible(done < total)
-    card.banner_title.setText(f"Configuración: {done} de {total} pasos listos")  # type: ignore[attr-defined]
+    card.banner_title.setText(tr("Configuración: {0} de {1} pasos listos", done, total))  # type: ignore[attr-defined]

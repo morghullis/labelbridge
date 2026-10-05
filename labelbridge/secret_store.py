@@ -15,6 +15,7 @@ import os
 import sys
 import threading
 from pathlib import Path
+from .i18n import tr
 
 log = logging.getLogger(__name__)
 
@@ -72,7 +73,7 @@ class SecretStore:
     @property
     def backend_name(self) -> str:
         if self._keyring is None:
-            return "archivo local cifrado (DPAPI)" if _dpapi_available() else "archivo local"
+            return tr("archivo local cifrado (DPAPI)") if _dpapi_available() else tr("archivo local")
         return type(self._keyring.get_keyring()).__name__
 
     def get(self, name: str, strict: bool = False) -> str:
@@ -86,7 +87,7 @@ class SecretStore:
                     value = self._keyring.get_password(SERVICE, name) or ""
                 except Exception as exc:
                     if strict:
-                        raise SecretStoreError(f"No se pudo leer {name} del almacén seguro") from exc
+                        raise SecretStoreError(tr("No se pudo leer {0} del almacén seguro", name)) from exc
                     log.exception("No se pudo leer el secreto %s del almacén seguro", name)
             if not value:
                 value = self._read_file().get(name, "")

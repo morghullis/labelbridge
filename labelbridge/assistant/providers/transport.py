@@ -14,6 +14,7 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from ...i18n import tr
 from ...net import USER_AGENT, ssl_context
 from .base import ProviderError
 
@@ -43,17 +44,17 @@ def urllib_transport(method: str, url: str, headers: dict, body: bytes | None, t
         with opener.open(request, timeout=timeout) as response:
             data = response.read(MAX_BYTES + 1)
             if len(data) > MAX_BYTES:
-                raise ProviderError("invalid_response", "La respuesta del servidor es demasiado grande")
+                raise ProviderError("invalid_response", tr("La respuesta del servidor es demasiado grande"))
             return response.status, {k.lower(): v for k, v in response.headers.items()}, data
     except urllib.error.HTTPError as exc:
         data = exc.read(256 * 1024) if exc.fp else b""
         return exc.code, {k.lower(): v for k, v in (exc.headers or {}).items()}, data
     except urllib.error.URLError as exc:
         if isinstance(exc.reason, (TimeoutError, socket.timeout)):
-            raise ProviderError("timeout", "El servidor tardó demasiado en responder") from None
+            raise ProviderError("timeout", tr("El servidor tardó demasiado en responder")) from None
         raise ProviderError("network", str(exc.reason)) from None
     except (TimeoutError, socket.timeout):
-        raise ProviderError("timeout", "El servidor tardó demasiado en responder") from None
+        raise ProviderError("timeout", tr("El servidor tardó demasiado en responder")) from None
     except OSError as exc:
         raise ProviderError("network", str(exc)) from None
 
@@ -120,10 +121,10 @@ class HttpJson:
                     data = None
                 reply = HttpReply(status, reply_headers, data, text)
                 if 300 <= status < 400:
-                    raise ProviderError("redirect", f"El servidor redirige a otra dirección (HTTP {status})", status)
+                    raise ProviderError("redirect", tr("El servidor redirige a otra dirección (HTTP {0})", status), status)
                 if status < 300:
                     if data is None:
-                        raise ProviderError("invalid_response", "El servidor no respondió con JSON", status)
+                        raise ProviderError("invalid_response", tr("El servidor no respondió con JSON"), status)
                     return reply
                 retry = status in RETRY_STATUS if retryable is None else retryable(reply)
                 if not retry or attempt >= self.retries:

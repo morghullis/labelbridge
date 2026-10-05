@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from .. import __version__
+from ..i18n import language
 
 SYSTEM_PROMPT = f"""Eres el asistente de configuración integrado en LabelBridge {__version__}, una app de Windows que \
 imprime sola las etiquetas de los pedidos de Shopify. Hablas con quien está configurando este PC, normalmente sin \
@@ -80,3 +81,20 @@ cambió y no repitas herramientas que ya fallaron igual.
 Español neutro, tuteo y frases cortas. Listas numeradas para lo que el usuario hace fuera de la app y **negritas** \
 para botones y menús. Sin tablas ni títulos. Respuestas breves: lo necesario para el siguiente paso.
 </estilo>"""
+
+# Con la app en inglés, el asistente contesta en inglés y nombra los botones como se ven en pantalla.
+LANGUAGE_NOTES = {
+    "en": """
+
+<idioma>
+La app está en inglés: responde en inglés (o en el idioma en que te escriba el usuario, si es otro), aunque estas \
+instrucciones y los datos de las herramientas estén en español. Nombra los botones y pestañas de LabelBridge como se \
+ven en inglés (Assistant → Connect AI, Orders → Need action, Settings) y los menús de Shopify como en su admin en \
+inglés (Settings → Checkout → Order processing; Collect payment → Mark as paid).
+</idioma>""",
+}
+
+
+def system_prompt() -> str:
+    """Las instrucciones en el idioma de la app. Cambiar de idioma pide reiniciar, así que no cambian en la sesión."""
+    return SYSTEM_PROMPT + LANGUAGE_NOTES.get(language(), "")

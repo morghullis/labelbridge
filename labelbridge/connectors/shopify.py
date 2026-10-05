@@ -25,6 +25,7 @@ from urllib.parse import urlencode, urlparse
 from .. import events as ev
 from .. import net
 from ..config import ConfigManager, ShopifySettings
+from ..i18n import tr
 from ..jobstore import JobStore
 from ..models import JobRequest
 from ..printing.engine import PrintEngine
@@ -152,7 +153,7 @@ def normalize_shop(shop: str) -> str:
     if value and "." not in value:
         value += ".myshopify.com"
     if not re.fullmatch(r"[a-z0-9][a-z0-9\-]*\.myshopify\.com", value):
-        raise ShopifyError("Usa el dominio interno de la tienda: mi-tienda.myshopify.com")
+        raise ShopifyError(tr("Usa el dominio interno de la tienda: mi-tienda.myshopify.com"))
     return value
 
 
@@ -217,7 +218,7 @@ class ShopifyClient:
         if self.auth_mode == "token":
             token = self.secrets.get(SHOPIFY_ACCESS_TOKEN)
             if not token:
-                raise ShopifyError("Falta el token de acceso de la Admin API (shpat_…)")
+                raise ShopifyError(tr("Falta el token de acceso de la Admin API (shpat_…)"))
             return token
         with self._token_lock:
             if not force and self._token and time.time() < self._token_expiry - 300:
@@ -227,7 +228,7 @@ class ShopifyClient:
     def _new_token(self) -> str:
         secret = self.secrets.get(SHOPIFY_CLIENT_SECRET)
         if not self.client_id or not secret:
-            raise ShopifyError("Faltan el Client ID y/o el Client secret de la app (Dev Dashboard)")
+            raise ShopifyError(tr("Faltan el Client ID y/o el Client secret de la app (Dev Dashboard)"))
         resp = net.request(
             "POST",
             f"https://{self.shop}/admin/oauth/access_token",
@@ -242,14 +243,14 @@ class ShopifyClient:
             detail = resp.body[:300].decode("utf-8", "replace")
             if "shop_not_permitted" in detail:
                 raise ShopifyError(
-                    "Shopify no permite client credentials en esta tienda: la app y la tienda deben estar "
-                    "en la misma organización del Dev Dashboard (ver docs/SHOPIFY.md)"
+                    tr("Shopify no permite client credentials en esta tienda: la app y la tienda deben estar "
+                       "en la misma organización del Dev Dashboard (ver docs/SHOPIFY.md)")
                 )
-            raise ShopifyError(f"Shopify rechazó las credenciales (HTTP {resp.status}): {detail}")
+            raise ShopifyError(tr("Shopify rechazó las credenciales (HTTP {0}): {1}", resp.status, detail))
         data = resp.json() or {}
         self._token = str(data.get("access_token") or "")
         if not self._token:
-            raise ShopifyError("Shopify no devolvió un token de acceso")
+            raise ShopifyError(tr("Shopify no devolvió un token de acceso"))
         self._token_expiry = time.time() + int(data.get("expires_in") or 86399)
         self.granted_scopes = str(data.get("scope") or "")
         log.info("Shopify: token renovado (válido 24 h)")
@@ -277,17 +278,17 @@ class ShopifyClient:
         if resp.status == 401 and self.auth_mode != "token" and not _refresh:
             return self.graphql(query, variables, mutation=mutation, _retry=_retry, _refresh=True)
         if resp.status == 401:
-            raise ShopifyError("Token inválido o revocado (HTTP 401)")
+            raise ShopifyError(tr("Token inválido o revocado (HTTP 401)"))
         if resp.status == 402:
-            raise ShopifyError("La tienda está pausada o sin plan activo (HTTP 402)")
+            raise ShopifyError(tr("La tienda está pausada o sin plan activo (HTTP 402)"))
         if resp.status == 404:
-            raise ShopifyError(f"Tienda o versión de API no encontrada ({self.shop}, {self.api_version})")
+            raise ShopifyError(tr("Tienda o versión de API no encontrada ({0}, {1})", self.shop, self.api_version))
         if (resp.status == 429 or (resp.status == 503 and not mutation)) and _retry < 3:
             time.sleep(float(resp.headers.get("retry-after", "2") or 2))
             return self.graphql(query, variables, mutation=mutation, _retry=_retry + 1)
         if resp.status >= 400:
             raise ShopifyError(
-                f"HTTP {resp.status}: {resp.body[:300].decode('utf-8', 'replace')}", uncertain=resp.status >= 500
+                tr("HTTP {0}: {1}", resp.status, resp.body[:300].decode('utf-8', 'replace')), uncertain=resp.status >= 500
             )
         payload = resp.json() or {}
         errors = payload.get("errors") or []
@@ -298,7 +299,7 @@ class ShopifyClient:
                 return self.graphql(query, variables, mutation=mutation, _retry=_retry + 1)
             messages = "; ".join(str(e.get("message", e)) for e in errors)
             if "access denied" in messages.lower() or "ACCESS_DENIED" in codes:
-                messages += " (faltan permisos/scopes en la app de Shopify)"
+                messages += tr(" (faltan permisos/scopes en la app de Shopify)")
             raise ShopifyError(messages, uncertain="INTERNAL_SERVER_ERROR" in codes)
         return payload.get("data") or {}
 
@@ -391,7 +392,7 @@ class ShopifyClient:
             raise PurchaseRejected("; ".join(f"{e.get('code') or ''} {e.get('message')}".strip() for e in errors))
         purchase = result.get("shippingLabelPurchaseResult") or {}
         if not purchase.get("id"):
-            raise ShopifyError("Shopify no devolvió el resultado de la compra", uncertain=True)
+            raise ShopifyError(tr("Shopify no devolvió el resultado de la compra"), uncertain=True)
         return str(purchase["id"])
 
     def label_result(self, result_id: str) -> dict[str, Any]:
@@ -509,7 +510,7 @@ class ShopifyService(BackgroundService):
 
     # --- bucle -----------------------------------------------------------------------------
     def run(self, stop: threading.Event, wake: threading.Event) -> None:
-        self.set_status("connecting", "Conectando con Shopify…")
+        self.set_status("connecting", tr("Conectando con Shopify…"))
         failures = 0
         while not stop.is_set():
             settings = self.cfg.data.shopify
@@ -517,7 +518,7 @@ class ShopifyService(BackgroundService):
                 client = self.client()
                 summary = self.cycle(client, settings, stop)
                 failures = 0
-                self.set_status("ok", f"Conectado a {client.shop} · revisado a las {time.strftime('%H:%M:%S')}{summary}")
+                self.set_status("ok", tr("Conectado a {0} · revisado a las {1}{2}", client.shop, time.strftime('%H:%M:%S'), summary))
             except (ShopifyError, net.NetworkError, net.HttpError) as exc:
                 failures += 1
                 self.set_status("error", str(exc))
@@ -525,7 +526,7 @@ class ShopifyService(BackgroundService):
             except Exception as exc:
                 failures += 1
                 log.exception("Shopify: error inesperado")
-                self.set_status("error", f"Error: {exc}")
+                self.set_status("error", tr("Error: {0}", exc))
             delay = max(15, settings.poll_seconds)
             if failures:
                 delay = min(600, delay * 2 ** min(failures, 4))
@@ -556,7 +557,7 @@ class ShopifyService(BackgroundService):
         newest = cursor
         for order in orders:
             if stop.is_set():
-                return " · detenido"  # sin guardar progreso: la próxima vuelta repite estos pedidos
+                return tr(" · detenido")  # sin guardar progreso: la próxima vuelta repite estos pedidos
             queued += self._process_order(client, settings, order, since, stop)
             if order.get("updatedAt", "") > newest:
                 newest = order["updatedAt"]
@@ -571,7 +572,7 @@ class ShopifyService(BackgroundService):
             self.engine.wake()
         if next_after:
             self.wake()  # quedan páginas: la siguiente vuelta empieza enseguida
-        return f" · {queued} etiqueta(s) en cola" if queued else ""
+        return tr(" · {0} etiqueta(s) en cola", queued) if queued else ""
 
     # --- por pedido ----------------------------------------------------------------------------
     def _process_order(
@@ -602,7 +603,7 @@ class ShopifyService(BackgroundService):
                 queued += self._enqueue(
                     JobRequest(
                         external_id=f"pedido-{legacy}",
-                        title=f"Pedido {name}",
+                        title=tr("Pedido {0}", name),
                         printer=s.order_label_printer,
                         format="order",
                         order=order,
@@ -620,7 +621,7 @@ class ShopifyService(BackgroundService):
                 queued += self._enqueue(
                     JobRequest(
                         external_id=f"metafield-{legacy}-{digest}",
-                        title=f"Etiqueta {name}",
+                        title=tr("Etiqueta {0}", name),
                         printer=s.metafield_printer,
                         url=url,
                         meta=meta,
@@ -635,8 +636,8 @@ class ShopifyService(BackgroundService):
                 if noted != "manual":
                     self._note(legacy, "manual", name=name, carrier=rule.carrier)
                     self.events.notify(
-                        f"Pedido {name}: guía de {rule.carrier} a mano",
-                        f"Sale por {rule.carrier}: cómprala en el pedido en Shopify (está en la pestaña Pedidos).",
+                        tr("Pedido {0}: guía de {1} a mano", name, rule.carrier),
+                        tr("Sale por {0}: cómprala en el pedido en Shopify (está en la pestaña Pedidos).", rule.carrier),
                         "error",
                     )
             else:
@@ -651,13 +652,13 @@ class ShopifyService(BackgroundService):
         s = self.cfg.data.shopify
         state = self.ledger(legacy).get("state")
         if state in ("uncertain", "purchasing"):
-            raise ShopifyError("Esa compra no se confirmó o sigue en curso: revísala en Shopify antes de reintentar.")
+            raise ShopifyError(tr("Esa compra no se confirmó o sigue en curso: revísala en Shopify antes de reintentar."))
         if any(str(info.get("order_id")) == str(legacy) for info in self._pending().values()):
-            raise ShopifyError("La compra de ese pedido sigue en curso.")
+            raise ShopifyError(tr("La compra de ese pedido sigue en curso."))
         client = self.client()
         order = client.order(legacy, s.metafield_namespace, s.metafield_key)
         if order is None:
-            raise ShopifyError("Shopify no encontró ese pedido.")
+            raise ShopifyError(tr("Shopify no encontró ese pedido."))
         for fo in client.fulfillment_orders(order["id"]):
             if fo.get("status") in ("OPEN", "IN_PROGRESS"):
                 key = self._key(f"fo:{str(fo['id']).rsplit('/', 1)[-1]}:label")
@@ -692,7 +693,7 @@ class ShopifyService(BackgroundService):
             job, created = self.engine.submit(req, "shopify")
         except PolicyDenied as exc:
             log.error("Shopify: %s rechazado por seguridad: %s", req.title, exc)
-            self.events.notify("Etiqueta bloqueada por seguridad", f"{req.title}: {exc}", "error")
+            self.events.notify(tr("Etiqueta bloqueada por seguridad"), f"{req.title}: {exc}", "error")
             return 0
         if created:
             log.info("Shopify: en cola %s", job["title"])
@@ -726,8 +727,8 @@ class ShopifyService(BackgroundService):
                 if self._limit_warned_day != today:
                     self._limit_warned_day = today
                     self.events.notify(
-                        "Límite diario de etiquetas",
-                        f"Se alcanzó el máximo de {s.max_labels_per_day} etiquetas compradas hoy. No se comprarán más.",
+                        tr("Límite diario de etiquetas"),
+                        tr("Se alcanzó el máximo de {0} etiquetas compradas hoy. No se comprarán más.", s.max_labels_per_day),
                         "error",
                     )
                 return queued
@@ -742,8 +743,8 @@ class ShopifyService(BackgroundService):
                 self._note(meta["order_id"], "failed", name=meta["order_name"], reason=str(exc))
                 log.error("Shopify rechazó la compra de la etiqueta de %s: %s", meta["order_name"], exc)
                 self.events.notify(
-                    "No se pudo comprar la etiqueta",
-                    f"{meta['order_name']}: {exc}. Corrígelo y usa «Reprocesar» en la pantalla Shopify.",
+                    tr("No se pudo comprar la etiqueta"),
+                    tr("{0}: {1}. Corrígelo y usa «Reprocesar» en la pantalla Shopify.", meta['order_name'], exc),
                     "error",
                 )
                 continue
@@ -755,9 +756,8 @@ class ShopifyService(BackgroundService):
                 self._note(meta["order_id"], "uncertain", name=meta["order_name"], reason=str(exc))
                 log.error("Shopify: compra de etiqueta sin confirmar para %s: %s", meta["order_name"], exc)
                 self.events.notify(
-                    "Revisa la etiqueta en Shopify",
-                    f"{meta['order_name']}: no se pudo confirmar si la etiqueta se compró ({exc}). "
-                    "Revísalo en Shopify antes de comprarla a mano.",
+                    tr("Revisa la etiqueta en Shopify"),
+                    tr("{0}: no se pudo confirmar si la etiqueta se compró ({1}). Revísalo en Shopify antes de comprarla a mano.", meta['order_name'], exc),
                     "error",
                 )
                 continue
@@ -805,22 +805,22 @@ class ShopifyService(BackgroundService):
                     elif age > 600:
                         self._note(info.get("order_id", ""), "no_document", name=info.get("order_name"))
                         self.events.notify(
-                            "Etiqueta comprada sin documento",
-                            f"{info.get('order_name')}: Shopify no entregó el PDF/ZPL. Imprímela desde Shopify.",
+                            tr("Etiqueta comprada sin documento"),
+                            tr("{0}: Shopify no entregó el PDF/ZPL. Imprímela desde Shopify.", info.get('order_name')),
                             "error",
                         )
                         pending.pop(result_id)
                 elif status == "PURCHASE_FAILED":
-                    reason = "; ".join(e.get("message", "") for e in result.get("errors") or []) or "sin detalle"
+                    reason = "; ".join(e.get("message", "") for e in result.get("errors") or []) or tr("sin detalle")
                     log.error("Shopify: falló la compra de etiqueta de %s: %s", info.get("order_name"), reason)
                     self._note(info.get("order_id", ""), "failed", name=info.get("order_name"), reason=reason)
-                    self.events.notify("Falló la compra de etiqueta", f"{info.get('order_name')}: {reason}", "error")
+                    self.events.notify(tr("Falló la compra de etiqueta"), f"{info.get('order_name')}: {reason}", "error")
                     pending.pop(result_id)
                 elif age > 3600:
                     self._note(info.get("order_id", ""), "uncertain", name=info.get("order_name"))
                     self.events.notify(
-                        "Compra de etiqueta sin respuesta",
-                        f"{info.get('order_name')}: revisa el pedido en Shopify.",
+                        tr("Compra de etiqueta sin respuesta"),
+                        tr("{0}: revisa el pedido en Shopify.", info.get('order_name')),
                         "error",
                     )
                     pending.pop(result_id)
@@ -850,7 +850,7 @@ class ShopifyService(BackgroundService):
                 queued += self._enqueue(
                     JobRequest(
                         external_id=f"shipping-{label_id}-{label_index}-{doc_index}",
-                        title=f"Etiqueta de {kind} {order_name}",
+                        title=tr("Etiqueta de envío {0}", order_name) if kind == "envío" else tr("Etiqueta de aduana {0}", order_name),
                         printer=printer,
                         format=fmt,
                         url=url,

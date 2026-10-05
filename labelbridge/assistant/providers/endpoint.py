@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 from ...secret_store import ANTHROPIC_API_KEY
 from .base import ProviderError
 from .catalog import DEFAULT_PROVIDER, EFFORTS, PROVIDERS, Provider, owner_of
+from ...i18n import tr
 
 INTERNAL_SUFFIXES = (".local", ".localhost", ".internal", ".lan", ".home.arpa")
 MODEL_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@+\-]{0,199}")
@@ -33,7 +34,7 @@ class Endpoint:
 
     @property
     def label(self) -> str:
-        return f"{self.provider.model_label(self.model) or 'el modelo que elijas'} de {self.provider.short}"
+        return tr("{0} de {1}", self.provider.model_label(self.model) or tr("el modelo que elijas"), self.provider.short)
 
 
 def provider_of(provider_id: str) -> Provider:
@@ -55,16 +56,16 @@ def check_base_url(url: str) -> str:
         parsed = urlparse(url)
         parsed.port  # noqa: B018 - valida el puerto (lanza ValueError si no es un número de 0 a 65535)
     except ValueError:
-        raise ProviderError("policy", "La dirección no es válida (revisa el servidor y el puerto)") from None
+        raise ProviderError("policy", tr("La dirección no es válida (revisa el servidor y el puerto)")) from None
     if parsed.scheme not in ("https", "http"):
-        raise ProviderError("policy", "La dirección debe empezar por https://")
+        raise ProviderError("policy", tr("La dirección debe empezar por https://"))
     if parsed.username or parsed.password:
-        raise ProviderError("policy", "La dirección no puede llevar usuario ni contraseña")
+        raise ProviderError("policy", tr("La dirección no puede llevar usuario ni contraseña"))
     if parsed.query or parsed.fragment:
-        raise ProviderError("policy", "La dirección no puede llevar parámetros (?…) ni #")
+        raise ProviderError("policy", tr("La dirección no puede llevar parámetros (?…) ni #"))
     host = (parsed.hostname or "").rstrip(".").lower()
     if not host:
-        raise ProviderError("policy", "Falta el servidor en la dirección")
+        raise ProviderError("policy", tr("Falta el servidor en la dirección"))
     local = host == "localhost" or host.endswith(INTERNAL_SUFFIXES)
     try:
         address = ipaddress.ip_address(host)
@@ -74,10 +75,10 @@ def check_base_url(url: str) -> str:
         if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
             address = address.ipv4_mapped
         if address.is_link_local or address.is_multicast or address.is_unspecified or address.is_reserved:
-            raise ProviderError("policy", "Esa dirección está reservada y no se permite")
+            raise ProviderError("policy", tr("Esa dirección está reservada y no se permite"))
         local = local or address.is_loopback or address.is_private
     if parsed.scheme == "http" and not local:
-        raise ProviderError("policy", "Para servidores en internet la dirección debe usar https://")
+        raise ProviderError("policy", tr("Para servidores en internet la dirección debe usar https://"))
     return url.rstrip("/")
 
 

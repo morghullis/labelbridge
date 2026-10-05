@@ -9,6 +9,7 @@ import threading
 from pathlib import Path
 
 from . import APP_NAME, __version__
+from .i18n import tr
 
 log = logging.getLogger("labelbridge")
 
@@ -109,6 +110,8 @@ def main(argv: list[str] | None = None) -> int:
     _install_exception_hooks()
 
     instance = SingleInstance()
+    if "--restart" in argv:  # reinicio pedido por la app (p. ej. al cambiar el idioma)
+        instance.wait_until_free(20)
     if not instance.acquire():
         log.info("LabelBridge ya está abierto: se muestra la ventana existente")
         return 0
@@ -128,8 +131,7 @@ def main(argv: list[str] | None = None) -> int:
         QMessageBox.critical(
             None,
             APP_NAME,
-            f"{exc}.\n\nLabelBridge no se abre para no perder ni exponer datos. Reinicia el equipo y vuelve a "
-            "intentarlo; si continúa, revisa el Administrador de credenciales de Windows.",
+            tr("{0}.\n\nLabelBridge no se abre para no perder ni exponer datos. Reinicia el equipo y vuelve a intentarlo; si continúa, revisa el Administrador de credenciales de Windows.", exc),
         )
         return 1
     cfg = ConfigManager(config_path(), protector)

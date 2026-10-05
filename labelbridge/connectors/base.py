@@ -6,6 +6,7 @@ import logging
 import threading
 
 from .. import events as ev
+from ..i18n import tr
 
 log = logging.getLogger(__name__)
 
@@ -17,7 +18,7 @@ class BackgroundService:
     def __init__(self, events: ev.Events) -> None:
         self.events = events
         self.state = "off"  # off | connecting | ok | warn | error
-        self.message = "Desactivado"
+        self.message = tr("Desactivado")
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
@@ -64,7 +65,7 @@ class BackgroundService:
             thread = self._thread
         if thread and thread is not threading.current_thread():
             thread.join(timeout)
-        self.set_status("off", "Desactivado")
+        self.set_status("off", tr("Desactivado"))
 
     def restart(self) -> None:
         self.stop()
@@ -92,4 +93,4 @@ class BackgroundService:
             self.run(stop, wake)
         except Exception as exc:
             log.exception("El servicio %s se detuvo por un error", self.name)
-            self.set_status("error", f"Detenido por un error: {exc}")
+            self.set_status("error", tr("Detenido por un error: {0}", exc))

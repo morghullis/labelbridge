@@ -12,6 +12,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlparse
+from .i18n import N_, tr
 
 MAX_CONTENT_BYTES = 25 * 1024 * 1024
 MAX_COPIES = 50
@@ -37,26 +38,26 @@ FORMAT_ALIASES = {
 }
 
 STATUS_LABELS = {
-    "queued": "En cola",
-    "printing": "Imprimiendo",
-    "done": "Impreso",
-    "failed": "Error",
-    "canceled": "Cancelado",
+    "queued": N_("En cola"),
+    "printing": N_("Imprimiendo"),
+    "done": N_("Impreso"),
+    "failed": N_("Error"),
+    "canceled": N_("Cancelado"),
 }
 
 def status_text(job: dict) -> str:
     """Estado legible; un trabajo en cola con error está esperando reintento."""
     if job.get("status") == "queued" and job.get("error"):
-        return "Reintentando"
-    return STATUS_LABELS.get(job.get("status", ""), job.get("status", ""))
+        return tr("Reintentando")
+    return tr(STATUS_LABELS.get(job.get("status", ""), job.get("status", "")))
 
 
 SOURCE_LABELS = {
-    "api": "API local",
-    "mqtt": "n8n · tiempo real",
-    "shopify": "Shopify",
-    "manual": "Manual",
-    "test": "Prueba",
+    "api": N_("API local"),
+    "mqtt": N_("n8n · tiempo real"),
+    "shopify": N_("Shopify"),
+    "manual": N_("Manual"),
+    "test": N_("Prueba"),
 }
 
 
@@ -87,40 +88,40 @@ def _decode_base64(value: str) -> bytes:
     try:
         data = base64.b64decode(text, validate=True)
     except (binascii.Error, ValueError) as exc:
-        raise JobError("content_base64 no es base64 válido") from exc
+        raise JobError(tr("content_base64 no es base64 válido")) from exc
     if not data:
-        raise JobError("content_base64 está vacío")
+        raise JobError(tr("content_base64 está vacío"))
     return data
 
 
 def parse_job(obj: Any, *, require_id: bool = True) -> JobRequest:
     if not isinstance(obj, dict):
-        raise JobError("Cada trabajo debe ser un objeto JSON")
+        raise JobError(tr("Cada trabajo debe ser un objeto JSON"))
 
     external_id = str(obj.get("id") or "").strip()
     if not external_id:
         if require_id:
-            raise JobError("Falta el campo 'id'")
+            raise JobError(tr("Falta el campo 'id'"))
         external_id = uuid.uuid4().hex
     if len(external_id) > 200:
-        raise JobError("'id' es demasiado largo (máx. 200)")
+        raise JobError(tr("'id' es demasiado largo (máx. 200)"))
 
     fmt_raw = str(obj.get("format") or "auto").strip().lower()
     fmt = FORMAT_ALIASES.get(fmt_raw)
     if fmt is None:
-        raise JobError(f"Formato desconocido: {fmt_raw}")
+        raise JobError(tr("Formato desconocido: {0}", fmt_raw))
 
     raw_copies = obj.get("copies")
     try:
         copies = 1 if raw_copies in (None, "") else int(raw_copies)
     except (TypeError, ValueError) as exc:
-        raise JobError("'copies' debe ser un número") from exc
+        raise JobError(tr("'copies' debe ser un número")) from exc
     if not 1 <= copies <= MAX_COPIES:
-        raise JobError(f"'copies' debe estar entre 1 y {MAX_COPIES}")
+        raise JobError(tr("'copies' debe estar entre 1 y {0}", MAX_COPIES))
 
     sources = [k for k in ("url", "content_base64", "content", "order") if obj.get(k) not in (None, "", {})]
     if len(sources) != 1:
-        raise JobError("Incluye exactamente uno de: url, content_base64, content u order")
+        raise JobError(tr("Incluye exactamente uno de: url, content_base64, content u order"))
     source = sources[0]
 
     req = JobRequest(
@@ -134,32 +135,32 @@ def parse_job(obj: Any, *, require_id: bool = True) -> JobRequest:
         url = str(obj["url"]).strip()
         parsed = urlparse(url)
         if parsed.scheme not in ("http", "https") or not parsed.netloc:
-            raise JobError("'url' debe empezar por http:// o https://")
+            raise JobError(tr("'url' debe empezar por http:// o https://"))
         req.url = url
         headers = obj.get("headers") or {}
         if not isinstance(headers, dict):
-            raise JobError("'headers' debe ser un objeto")
+            raise JobError(tr("'headers' debe ser un objeto"))
         req.headers = {str(k): str(v) for k, v in headers.items()}
     elif source == "content_base64":
         req.content = _decode_base64(str(obj["content_base64"]))
     elif source == "content":
         content = obj["content"]
         if not isinstance(content, str):
-            raise JobError("'content' debe ser texto (usa content_base64 para binarios)")
+            raise JobError(tr("'content' debe ser texto (usa content_base64 para binarios)"))
         req.content = content.encode("utf-8")
         if fmt == "auto":
             req.format = "zpl" if "^XA" in content.upper() else "raw"
     else:
         order = obj["order"]
         if not isinstance(order, dict):
-            raise JobError("'order' debe ser un objeto (pedido de Shopify)")
+            raise JobError(tr("'order' debe ser un objeto (pedido de Shopify)"))
         req.order = order
         req.format = "order"
 
     if req.content is not None and len(req.content) > MAX_CONTENT_BYTES:
-        raise JobError("El contenido supera el máximo de 25 MB")
+        raise JobError(tr("El contenido supera el máximo de 25 MB"))
     if req.format == "order" and req.order is None:
-        raise JobError("format 'order' requiere el campo 'order'")
+        raise JobError(tr("format 'order' requiere el campo 'order'"))
 
     meta = obj.get("meta")
     req.meta = meta if isinstance(meta, dict) else {}
@@ -177,7 +178,7 @@ def parse_jobs_payload(payload: Any, *, require_id: bool) -> list[JobRequest]:
     else:
         items = [payload]
     if not items:
-        raise JobError("No se recibió ningún trabajo")
+        raise JobError(tr("No se recibió ningún trabajo"))
     if len(items) > 100:
-        raise JobError("Máximo 100 trabajos por solicitud")
+        raise JobError(tr("Máximo 100 trabajos por solicitud"))
     return [parse_job(item, require_id=require_id) for item in items]

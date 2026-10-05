@@ -9,6 +9,7 @@ from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QMenu, QSystemTrayIcon
 
 from .. import APP_NAME
+from ..i18n import tr
 from . import icons
 from .context import AppContext
 
@@ -28,24 +29,24 @@ class Tray(QSystemTrayIcon):
         self.ctx = ctx
         self._last_notice: dict[str, float] = {}
         menu = QMenu()
-        open_action = menu.addAction(icons.icon("home"), f"Abrir {APP_NAME}")
+        open_action = menu.addAction(icons.icon("home"), tr("Abrir {0}", APP_NAME))
         open_action.triggered.connect(show_window)
         if open_assistant is not None:
-            assistant = menu.addAction(icons.icon("chat"), "Asistente")
+            assistant = menu.addAction(icons.icon("chat"), tr("Asistente"))
             assistant.triggered.connect(open_assistant)
         menu.addSeparator()
         self.pause_action = QAction(menu)
         self.pause_action.triggered.connect(lambda: ctx.engine.set_paused(not ctx.cfg.data.general.paused))
         menu.addAction(self.pause_action)
-        test = menu.addAction(icons.icon("printer"), "Imprimir etiqueta de prueba")
+        test = menu.addAction(icons.icon("printer"), tr("Imprimir etiqueta de prueba"))
         test.triggered.connect(print_test)
         if check_updates is not None:
-            updates = menu.addAction(icons.icon("download"), "Buscar actualizaciones")
+            updates = menu.addAction(icons.icon("download"), tr("Buscar actualizaciones"))
             updates.triggered.connect(check_updates)
         if message_clicked is not None:
             self.messageClicked.connect(message_clicked)
         menu.addSeparator()
-        quit_action = menu.addAction(icons.icon("power"), "Salir (detiene la impresión automática)")
+        quit_action = menu.addAction(icons.icon("power"), tr("Salir (detiene la impresión automática)"))
         quit_action.triggered.connect(quit_app)
         self.setContextMenu(menu)
         self._menu = menu
@@ -59,11 +60,11 @@ class Tray(QSystemTrayIcon):
 
     def _update(self) -> None:
         paused = self.ctx.cfg.data.general.paused
-        self.pause_action.setText("Reanudar impresión automática" if paused else "Pausar impresión automática")
+        self.pause_action.setText(tr("Reanudar impresión automática") if paused else tr("Pausar impresión automática"))
         self.pause_action.setIcon(icons.icon("play" if paused else "pause"))
         queued = self.ctx.store.counts()["queued"]
         state = "en pausa" if paused else "activo"
-        self.setToolTip(f"{APP_NAME} · {state} · {queued} en cola")
+        self.setToolTip(tr("{0} · {1} · {2} en cola", APP_NAME, state, queued))
 
     def _on_event(self, kind: str, data) -> None:
         if kind in ("job", "paused"):
@@ -81,10 +82,10 @@ class Tray(QSystemTrayIcon):
             )
             self.showMessage(data.get("title", APP_NAME), data.get("message", ""), icon, 6000)
         elif kind == "connector" and isinstance(data, dict) and data.get("state") == "error":
-            names = {"shopify": "Shopify", "mqtt": "n8n (tiempo real)", "local_api": "API local"}
+            names = {"shopify": tr("Shopify"), "mqtt": "n8n (tiempo real)", "local_api": tr("API local")}
             name = names.get(data.get("name"), data.get("name"))
             key = f"conn|{data.get('name')}"
             now = time.time()
             if now - self._last_notice.get(key, 0) > 600 and self.ctx.cfg.data.general.notify_errors:
                 self._last_notice[key] = now
-                self.showMessage(f"Problema con {name}", data.get("message", ""), QSystemTrayIcon.MessageIcon.Warning, 6000)
+                self.showMessage(tr("Problema con {0}", name), data.get("message", ""), QSystemTrayIcon.MessageIcon.Warning, 6000)

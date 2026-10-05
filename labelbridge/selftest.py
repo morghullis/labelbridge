@@ -82,8 +82,8 @@ def run(argv: list[str]) -> int:
         store.close()
         return f"PDF {len(pdf) // 1024} KB, ZPL {len(zpl) // 1024} KB"
 
-    def interface() -> str:
-        from . import paths
+    def interface(language: str = "es") -> str:
+        from . import i18n, paths
         from .config import ConfigManager
         from .events import Events
         from .jobstore import JobStore
@@ -95,22 +95,39 @@ def run(argv: list[str]) -> int:
         from .ui.theme import STYLESHEET
 
         app.setStyleSheet(STYLESHEET)
-        cfg = ConfigManager(paths.config_path())
-        cfg.data.local_api.enabled = False
-        secrets = SecretStore(paths.data_dir() / "secrets.json", backend="file")
-        store = JobStore(paths.db_path(), paths.spool_dir())
-        events = Events()
-        engine = PrintEngine(store, cfg, events)
-        services = Services(cfg, secrets, store, engine, events)
-        window = MainWindow(AppContext(cfg, secrets, store, engine, services, events, QtBridge(events, cfg)))
-        for key in window.pages:
-            window.navigate(key)
-            app.processEvents()
-        assert [key for key, _, _ in NAV if key not in window.pages] == ["assistant"], "faltan pantallas"
-        window.quitting = True
-        window.close()
-        store.close()
+        assert i18n.set_language(language) == language, f"no se pudo activar el idioma {language}"
+        try:
+            cfg = ConfigManager(paths.config_path())
+            cfg.data.local_api.enabled = False
+            secrets = SecretStore(paths.data_dir() / "secrets.json", backend="file")
+            store = JobStore(paths.db_path(), paths.spool_dir())
+            events = Events()
+            engine = PrintEngine(store, cfg, events)
+            services = Services(cfg, secrets, store, engine, events)
+            window = MainWindow(AppContext(cfg, secrets, store, engine, services, events, QtBridge(events, cfg)))
+            for key in window.pages:
+                window.navigate(key)
+                app.processEvents()
+            assert [key for key, _, _ in NAV if key not in window.pages] == ["assistant"], "faltan pantallas"
+            orders = window.nav_buttons["orders"].text().strip()
+            assert orders == {"es": "Pedidos", "en": "Orders"}[language], f"pestaña Pedidos: {orders!r}"
+            window.quitting = True
+            window.close()
+            store.close()
+        finally:
+            i18n.set_language("es")
         return f"{len(window.pages)} pantallas · {len(NAV)} pestañas"
+
+    def languages() -> str:
+        """La traducción al inglés viene en el paquete, con sus imágenes de la guía."""
+        from . import i18n
+        from .paths import resource_path
+
+        catalog = i18n.load_catalog("en")
+        assert len(catalog) > 500, f"traducción al inglés incompleta ({len(catalog)} textos)"
+        images = list(resource_path("assets", "guide", "en").glob("*.png"))
+        assert len(images) >= 8, f"faltan imágenes de la guía en inglés ({len(images)})"
+        return f"{len(catalog)} textos en inglés · {len(images)} imágenes de guía en inglés"
 
     def assistant() -> str:
         """Una conversación completa con cada formato de API (Claude con el SDK empaquetado, OpenAI Responses, Chat
@@ -291,7 +308,9 @@ def run(argv: list[str]) -> int:
     check("impresión de Windows", windows_printing)
     check("etiqueta → PDF → ZPL", label_pipeline)
     check("seguridad", security)
+    check("idiomas", languages)
     check("interfaz", interface)
+    check("interfaz en inglés", lambda: interface("en"))
     check("asistente", assistant)
     check("máscara animada", mascot)
     lines.append("RESULTADO: " + ("OK" if ok else "FALLO"))

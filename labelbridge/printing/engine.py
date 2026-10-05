@@ -17,6 +17,7 @@ from urllib.parse import urlparse
 from .. import events as ev
 from .. import net
 from ..config import LABEL_MEDIA, MEDIA_PRESETS, ConfigManager, PrinterProfile
+from ..i18n import tr
 from ..jobstore import JobStore
 from ..labels.order import normalize_order
 from ..labels.qt_label import draw_order_label
@@ -57,7 +58,7 @@ def resolve_printer(requested: str, cfg: ConfigManager) -> PrinterProfile:
     if not name:
         profile = cfg.default_printer()
         if profile is None:
-            raise PrintError("No hay impresora predeterminada. Configura una en la sección Impresoras.")
+            raise PrintError(tr("No hay impresora predeterminada. Configura una en la sección Impresoras."))
         return profile
     found = cfg.find_printer(name)
     if found:
@@ -66,11 +67,11 @@ def resolve_printer(requested: str, cfg: ConfigManager) -> PrinterProfile:
     if lowered.startswith(("tcp://", "raw://", "ipp://", "ipps://")):
         parsed = urlparse(name)
         if not parsed.hostname:
-            raise PermanentPrintError(f"Dirección de impresora inválida: {name}")
+            raise PermanentPrintError(tr("Dirección de impresora inválida: {0}", name))
         scheme = parsed.scheme.lower()
         port = parsed.port or (9100 if scheme in ("tcp", "raw") else 631)
         if port not in ADHOC_PORTS:
-            raise PermanentPrintError(f"Puerto {port} no permitido para impresoras indicadas en el trabajo")
+            raise PermanentPrintError(tr("Puerto {0} no permitido para impresoras indicadas en el trabajo", port))
         if scheme in ("tcp", "raw"):
             return PrinterProfile(
                 alias=name, kind="network", host=parsed.hostname, port=parsed.port or 9100,
@@ -83,7 +84,7 @@ def resolve_printer(requested: str, cfg: ConfigManager) -> PrinterProfile:
     installed = {p["name"].casefold(): p["name"] for p in outputs.list_system_printers()}
     if lowered.casefold() in installed:
         return PrinterProfile(alias=installed[lowered.casefold()], kind="system", system_name=installed[lowered.casefold()], media="auto")
-    raise PrintError(f"La impresora '{name}' no existe (ni como alias ni instalada en el equipo)")
+    raise PrintError(tr("La impresora '{0}' no existe (ni como alias ni instalada en el equipo)", name))
 
 
 class PrintEngine:
@@ -195,10 +196,10 @@ class PrintEngine:
         try:
             resp = net.request("GET", job["url"], headers=headers or None, timeout=45, url_guard=guard)
         except PolicyDenied as exc:
-            raise PermanentPrintError(f"Descarga bloqueada por seguridad: {exc}") from None
+            raise PermanentPrintError(tr("Descarga bloqueada por seguridad: {0}", exc)) from None
         data = resp.body
         if not data:
-            raise PrintError("El archivo descargado está vacío")
+            raise PrintError(tr("El archivo descargado está vacío"))
         fmt = job["format"]
         if fmt == "auto":
             fmt = detect_format(data, resp.content_type)
@@ -215,14 +216,14 @@ class PrintEngine:
         try:
             profile = resolve_printer(job["printer"], self.cfg)
             if not profile.enabled:
-                raise PrintError(f"La impresora '{profile.display_name()}' está desactivada")
+                raise PrintError(tr("La impresora '{0}' está desactivada", profile.display_name()))
             document = self._document(job)
             detail = self.deliver(document, profile, job["copies"], job["title"])
             done = self.store.set_done(job["id"], profile.display_name())
             log.info("Impreso: %s → %s%s", job["title"], profile.display_name(), f" ({detail})" if detail else "")
             self.events.emit(ev.JOB, done)
             if self.cfg.data.general.notify_printed:
-                self.events.notify("Etiqueta impresa", f"{job['title']} → {profile.display_name()}")
+                self.events.notify(tr("Etiqueta impresa"), f"{job['title']} → {profile.display_name()}")
         except Exception as exc:
             self._handle_failure(job, profile, exc)
         finally:
@@ -248,7 +249,7 @@ class PrintEngine:
             updated = self.store.set_failed(job["id"], message, printer_name)
             log.error("Trabajo fallido: %s: %s", job["title"], message)
             if self.cfg.data.general.notify_errors:
-                self.events.notify("No se pudo imprimir", f"{job['title']}: {message}", "error")
+                self.events.notify(tr("No se pudo imprimir"), f"{job['title']}: {message}", "error")
         self.events.emit(ev.JOB, updated)
 
     def _document(self, job: dict[str, Any]) -> Document:
@@ -279,7 +280,7 @@ class PrintEngine:
             media = profile.media_mm() or DEFAULT_LABEL_MM
             show_items = self.cfg.data.labels.show_items
             return [VectorSource(media, lambda p, r, dpi: draw_order_label(p, r, dpi, label, show_items))]
-        raise PermanentPrintError(f"Formato no soportado para esta impresora: {document.format}")
+        raise PermanentPrintError(tr("Formato no soportado para esta impresora: {0}", document.format))
 
     def order_zpl(self, order: dict[str, Any], profile: PrinterProfile, copies: int) -> bytes:
         label = normalize_order(order, self.cfg.data.labels, self._shop_domain_fn())
@@ -305,7 +306,7 @@ class PrintEngine:
 
         if profile.kind == "system":
             if not profile.system_name:
-                raise PermanentPrintError("La impresora no tiene nombre de Windows configurado")
+                raise PermanentPrintError(tr("La impresora no tiene nombre de Windows configurado"))
             if fmt in raw_formats:
                 outputs.print_raw_system(profile.system_name, document.data * copies, title)
                 return "RAW"
@@ -322,10 +323,10 @@ class PrintEngine:
 
         if profile.kind == "network":
             if not profile.host:
-                raise PermanentPrintError("La impresora de red no tiene IP configurada")
+                raise PermanentPrintError(tr("La impresora de red no tiene IP configurada"))
             if profile.protocol in ("ipp", "ipps"):
                 if fmt in raw_formats:
-                    raise PermanentPrintError("Las impresoras IPP no aceptan ZPL/RAW; usa una conexión RAW 9100")
+                    raise PermanentPrintError(tr("Las impresoras IPP no aceptan ZPL/RAW; usa una conexión RAW 9100"))
                 pdf = document.data if fmt == "pdf" and not document.size_mm else self._as_pdf(document, profile)
                 fingerprint = outputs.send_ipp(profile, pdf, title, copies, actual_size=bool(document.size_mm))
                 self._pin_certificate(profile, fingerprint)
@@ -340,7 +341,7 @@ class PrintEngine:
             outputs.send_tcp(profile.host, profile.port, self._as_zpl(document, profile, copies))
             return "ZPL 9100"
 
-        raise PermanentPrintError(f"Tipo de impresora desconocido: {profile.kind}")
+        raise PermanentPrintError(tr("Tipo de impresora desconocido: {0}", profile.kind))
 
     def _as_zpl(self, document: Document, profile: PrinterProfile, copies: int) -> bytes:
         if document.format == "order":
@@ -382,6 +383,6 @@ class PrintEngine:
         from ..labels.order import sample_order
 
         document = Document("order", order=sample_order())
-        detail = self.deliver(document, profile, 1, "Prueba LabelBridge")
+        detail = self.deliver(document, profile, 1, tr("Prueba LabelBridge"))
         self.store.kv_set("guide:test_printed", "1")
         return detail

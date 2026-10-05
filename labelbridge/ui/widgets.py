@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..i18n import tr
 from . import icons
 from .theme import ACCENT, STATE_COLORS
 
@@ -262,11 +263,11 @@ class SecretField(QWidget):
         self.edit.setEchoMode(QLineEdit.EchoMode.Password)
         self.edit.setPlaceholderText(placeholder)
         row.addWidget(self.edit, 1)
-        self.toggle = button("", "eye", "ghost", "Mostrar / ocultar")
+        self.toggle = button("", "eye", "ghost", tr("Mostrar / ocultar"))
         self.toggle.clicked.connect(self._toggle)
         row.addWidget(self.toggle)
         if copyable:
-            copy = button("", "copy", "ghost", "Copiar")
+            copy = button("", "copy", "ghost", tr("Copiar"))
             copy.clicked.connect(lambda: copy_to_clipboard(self.edit.text()))
             row.addWidget(copy)
 

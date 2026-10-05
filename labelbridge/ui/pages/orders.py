@@ -36,13 +36,15 @@ from PySide6.QtWidgets import (
 from ...config import CARRIERS, ShippingRule
 from ...connectors.orders_overview import CSV_COLUMNS, GROUPS, OrderRow, Summary, csv_rows, in_group, summarize
 from ...connectors.shopify import admin_url
+from ...i18n import N_, date_text, tr
 from .. import icons
 from ..context import AppContext
 from ..widgets import Card, Page, button, confirm, copy_to_clipboard, error, info, label, run_async
 
-PERIODS = (("today", "Hoy"), (7, "Últimos 7 días"), (30, "Últimos 30 días"), (60, "Últimos 60 días"))
+PERIODS = (("today", N_("Hoy")), (7, N_("Últimos 7 días")), (30, N_("Últimos 30 días")), (60, N_("Últimos 60 días")))
 STALE_SECONDS = 60
-COLUMNS = ["Pedido", "Fecha", "Cliente · destino", "Envío · piezas", "Paquetería", "Guía", "Estado"]
+COLUMNS = [N_("Pedido"), N_("Fecha"), N_("Cliente · destino"), N_("Envío · piezas"), N_("Paquetería"), N_("Guía"),
+           N_("Estado")]
 STATE_COLORS = {
     "action": "#B45309",
     "waiting": "#3730A3",
@@ -57,19 +59,19 @@ CARRIER_COLORS = {  # (fondo, texto)
     "DHL": ("#FEF9C3", "#A16207"),
 }
 ACTION_BUTTONS = {  # acción → (texto, icono)
-    "open": ("Abrir en Shopify", "link"),
-    "void": ("Anular en Shopify", "link"),
-    "reprint": ("Reimprimir guía", "printer"),
-    "retry": ("Reintentar compra", "retry"),
+    "open": (N_("Abrir en Shopify"), "link"),
+    "void": (N_("Anular en Shopify"), "link"),
+    "reprint": (N_("Reimprimir guía"), "printer"),
+    "retry": (N_("Reintentar compra"), "retry"),
 }
 
 
 def money(value: float) -> str:
-    return f"US${value:,.2f}"
+    return tr("US${0:,.2f}", value)
 
 
 def carrier_chip(carrier: str) -> QWidget:
-    text = carrier or "Sin envío"
+    text = carrier or tr("Sin envío")
     bg, fg = CARRIER_COLORS.get(carrier, ("#F1F5F9", "#334155"))
     chip = label(text)
     chip.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -82,7 +84,7 @@ def carrier_chip(carrier: str) -> QWidget:
 
 def guide_text(row: OrderRow) -> str:
     if row.labels:
-        state = {"yes": "impresa", "failed": "sin imprimir", "pending": "imprimiendo"}.get(row.printed, "")
+        state = {"yes": tr("impresa"), "failed": tr("sin imprimir"), "pending": tr("imprimiendo")}.get(row.printed, "")
         return money(row.cost) + (f" · {state}" if state else "")
     if row.voided:
         return f"anulada ({money(row.voided)})"
@@ -107,7 +109,7 @@ class OrdersModel(QAbstractTableModel):
 
     def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):  # noqa: N802
         if role == Qt.ItemDataRole.DisplayRole and orientation == Qt.Orientation.Horizontal:
-            return COLUMNS[section]
+            return tr(COLUMNS[section])
         return None
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
@@ -117,7 +119,7 @@ class OrdersModel(QAbstractTableModel):
             if col == 0:
                 return row.name
             if col == 1:
-                return datetime.fromtimestamp(row.created).strftime("%d/%m %H:%M") if row.created else ""
+                return date_text(row.created, year=False) if row.created else ""
             if col == 2:
                 return " · ".join(part for part in (row.customer, row.destination) if part)
             if col == 3:
@@ -130,7 +132,7 @@ class OrdersModel(QAbstractTableModel):
             if col == 5:
                 return guide_text(row)
             if col == 6:
-                return row.status + (" · prueba" if row.test else "")
+                return row.status + (tr(" · prueba") if row.test else "")
         if role == Qt.ItemDataRole.UserRole:  # para ordenar
             return (row.name, row.created, row.customer, row.subtotal, row.carrier, row.cost, row.state)[col]
         if role == Qt.ItemDataRole.ForegroundRole and col == 6:
@@ -142,7 +144,7 @@ class OrdersModel(QAbstractTableModel):
             for carrier, number, _url in row.tracking:
                 lines.append(f"{carrier} {number}")
             if row.voided:
-                lines.append(f"Guías anuladas: {money(row.voided)} (Shopify las devuelve)")
+                lines.append(tr("Guías anuladas: {0} (Shopify las devuelve)", money(row.voided)))
             return "\n".join(line for line in lines if line)
         return None
 
@@ -164,7 +166,7 @@ class ActionItem(QFrame):
         who = " · ".join(part for part in (row.customer, row.destination, row.method) if part)
         head.addWidget(label(who, "Muted"), 1)
         if row.subtotal:
-            head.addWidget(label(f"{money(row.subtotal)} en piezas", "Muted"))
+            head.addWidget(label(tr("{0} en piezas", money(row.subtotal)), "Muted"))
         column.addLayout(head)
         title = label(row.status, "SectionTitle")
         title.setStyleSheet(f"color: {STATE_COLORS['action']};")
@@ -173,11 +175,11 @@ class ActionItem(QFrame):
         actions = QHBoxLayout()
         actions.setSpacing(8)
         text, icon_name = ACTION_BUTTONS.get(row.action, ACTION_BUTTONS["open"])
-        main = button(text, icon_name, "primary")
+        main = button(tr(text), icon_name, "primary")
         main.clicked.connect(lambda: page.run_action(row, row.action or "open"))
         actions.addWidget(main)
         if row.action not in ("open", "void", ""):
-            other = button("Abrir en Shopify", "link")
+            other = button(tr("Abrir en Shopify"), "link")
             other.clicked.connect(lambda: page.run_action(row, "open"))
             actions.addWidget(other)
         actions.addStretch(1)
@@ -189,45 +191,46 @@ class ShippingRulesDialog(QDialog):
 
     def __init__(self, parent: QWidget, rules: list[ShippingRule], default_carrier: str) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Reglas de paquetería")
+        self.setWindowTitle(tr("Reglas de paquetería"))
         self.setMinimumWidth(720)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(22, 20, 22, 18)
         outer.setSpacing(12)
-        outer.addWidget(label("Por qué paquetería sale cada pedido", "CardTitle"))
+        outer.addWidget(label(tr("Por qué paquetería sale cada pedido"), "CardTitle"))
         outer.addWidget(label(
-            "Se aplica la primera regla que se cumple. FedEx siempre se compra a mano: Shopify no deja comprar sus "
-            "guías automáticamente, así que esos pedidos aparecen en «Necesitan acción».",
+            tr("Se aplica la primera regla que se cumple. FedEx siempre se compra a mano: Shopify no deja comprar sus "
+               "guías automáticamente, así que esos pedidos aparecen en «Necesitan acción»."),
             "Muted", wrap=True,
         ))
         self.grid = QGridLayout()
         self.grid.setHorizontalSpacing(8)
         self.grid.setVerticalSpacing(8)
-        for col, text in enumerate(("Piezas de más de", "Método de envío contiene", "Paquetería", "La guía se compra", "")):
+        headers = (tr("Piezas de más de"), tr("Método de envío contiene"), tr("Paquetería"), tr("La guía se compra"), "")
+        for col, text in enumerate(headers):
             self.grid.addWidget(label(text, "Small"), 0, col)
         outer.addLayout(self.grid)
         self.rows: list[tuple[QDoubleSpinBox, QLineEdit, QComboBox, QComboBox, QPushButton]] = []
         for rule in rules:
             self._add_row(rule)
-        add = button("Agregar regla", "plus", "ghost")
+        add = button(tr("Agregar regla"), "plus", "ghost")
         add.clicked.connect(lambda: self._add_row(ShippingRule("", "FedEx", False, 0.0)))
         outer.addWidget(add, 0, Qt.AlignmentFlag.AlignLeft)
         rest = QHBoxLayout()
-        rest.addWidget(label("Todo lo demás sale por"))
+        rest.addWidget(label(tr("Todo lo demás sale por")))
         self.default = QComboBox()
         for carrier in CARRIERS:
             if carrier != "FedEx":
                 self.default.addItem(carrier, carrier)
         self.default.setCurrentIndex(max(0, self.default.findData(default_carrier)))
         rest.addWidget(self.default)
-        rest.addWidget(label("y LabelBridge compra la guía sola."))
+        rest.addWidget(label(tr("y LabelBridge compra la guía sola.")))
         rest.addStretch(1)
         outer.addLayout(rest)
         buttons = QHBoxLayout()
         buttons.addStretch(1)
-        cancel = button("Cancelar")
+        cancel = button(tr("Cancelar"))
         cancel.clicked.connect(self.reject)
-        save = button("Guardar", "check", "primary")
+        save = button(tr("Guardar"), "check", "primary")
         save.clicked.connect(self.accept)
         buttons.addWidget(cancel)
         buttons.addWidget(save)
@@ -237,20 +240,20 @@ class ShippingRulesDialog(QDialog):
         over = QDoubleSpinBox()
         over.setRange(0, 1_000_000)
         over.setDecimals(2)
-        over.setPrefix("US$")
-        over.setSpecialValueText("Cualquier valor")
+        over.setPrefix(tr("US$"))
+        over.setSpecialValueText(tr("Cualquier valor"))
         over.setValue(float(rule.over or 0))
         method = QLineEdit(rule.method)
-        method.setPlaceholderText("Cualquiera (p. ej. Express)")
+        method.setPlaceholderText(tr("Cualquiera (p. ej. Express)"))
         carrier = QComboBox()
         for name in CARRIERS:
             carrier.addItem(name, name)
         carrier.setCurrentIndex(max(0, carrier.findData(rule.carrier)))
         mode = QComboBox()
-        mode.addItem("Sola (automática)", True)
-        mode.addItem("A mano", False)
+        mode.addItem(tr("Sola (automática)"), True)
+        mode.addItem(tr("A mano"), False)
         mode.setCurrentIndex(0 if rule.auto else 1)
-        remove = button("", "trash", "ghost", "Quitar esta regla")
+        remove = button("", "trash", "ghost", tr("Quitar esta regla"))
         entry = (over, method, carrier, mode, remove)
 
         def carrier_changed() -> None:
@@ -288,9 +291,9 @@ class OrdersPage(Page):
 
     def __init__(self, ctx: AppContext) -> None:
         super().__init__(
-            "Pedidos",
-            "Todo lo que llega de Shopify, ordenado: qué necesita tu atención y por qué, por qué paquetería sale y "
-            "cuánto costó cada guía.",
+            tr("Pedidos"),
+            tr("Todo lo que llega de Shopify, ordenado: qué necesita tu atención y por qué, por qué paquetería sale y "
+               "cuánto costó cada guía."),
         )
         self.ctx = ctx
         self.all_rows: list[OrderRow] = []
@@ -300,17 +303,17 @@ class OrdersPage(Page):
 
         self.period = QComboBox()
         for key, text in PERIODS:
-            self.period.addItem(text, key)
+            self.period.addItem(tr(text), key)
         self.period.setCurrentIndex(2)
         self.period.currentIndexChanged.connect(lambda _i: self.reload())
         self.header_actions.addWidget(self.period)
-        self.refresh_btn = button("Actualizar", "refresh")
+        self.refresh_btn = button(tr("Actualizar"), "refresh")
         self.refresh_btn.clicked.connect(self.reload)
         self.header_actions.addWidget(self.refresh_btn)
-        rules_btn = button("Reglas de paquetería", "sliders")
+        rules_btn = button(tr("Reglas de paquetería"), "sliders")
         rules_btn.clicked.connect(self.edit_rules)
         self.header_actions.addWidget(rules_btn)
-        self.export_btn = button("Exportar", "download", tooltip="Guardar la lista en un archivo para Excel (CSV)")
+        self.export_btn = button(tr("Exportar"), "download", tooltip=tr("Guardar la lista en un archivo para Excel (CSV)"))
         self.export_btn.clicked.connect(self.export_csv)
         self.header_actions.addWidget(self.export_btn)
 
@@ -321,19 +324,19 @@ class OrdersPage(Page):
 
         stats = QHBoxLayout()
         stats.setSpacing(16)
-        self.stat_action = self._stat(stats, "NECESITAN ACCIÓN", "alert")
-        self.stat_orders = self._stat(stats, "PEDIDOS", "package")
-        self.stat_labels = self._stat(stats, "GUÍAS COMPRADAS", "tag")
-        self.stat_carriers = self._stat(stats, "PROMEDIO POR GUÍA", "truck")
+        self.stat_action = self._stat(stats, tr("NECESITAN ACCIÓN"), "alert")
+        self.stat_orders = self._stat(stats, tr("PEDIDOS"), "package")
+        self.stat_labels = self._stat(stats, tr("GUÍAS COMPRADAS"), "tag")
+        self.stat_carriers = self._stat(stats, tr("PROMEDIO POR GUÍA"), "truck")
         self.add(layout=stats)
 
-        self.action_card = Card("Necesitan acción")
+        self.action_card = Card(tr("Necesitan acción"))
         self.action_list = QVBoxLayout()
         self.action_list.setSpacing(10)
         self.action_card.add(layout=self.action_list)
         self.add(self.action_card)
 
-        table_card = Card("Todos los pedidos")
+        table_card = Card(tr("Todos los pedidos"))
         tabs = QHBoxLayout()
         tabs.setSpacing(6)
         self.tab_group = QButtonGroup(self)
@@ -342,7 +345,7 @@ class OrdersPage(Page):
         for key, text in GROUPS:
             if key == "action":
                 continue
-            tab = button(text, None, "segment")
+            tab = button(tr(text), None, "segment")
             tab.setCheckable(True)
             tab.clicked.connect(lambda _=False, k=key: self._set_group(k))
             self.tab_group.addButton(tab)
@@ -351,7 +354,7 @@ class OrdersPage(Page):
         self.tabs["all"].setChecked(True)
         tabs.addStretch(1)
         self.search = QLineEdit()
-        self.search.setPlaceholderText("Buscar pedido, cliente o seguimiento…")
+        self.search.setPlaceholderText(tr("Buscar pedido, cliente o seguimiento…"))
         self.search.setClearButtonEnabled(True)
         self.search.setMinimumWidth(240)
         self.search.textChanged.connect(lambda _t: self._fill_table())
@@ -387,10 +390,10 @@ class OrdersPage(Page):
         table_card.add(self.view, stretch=1)
         bottom = QHBoxLayout()
         for text, icon_name, action in (
-            ("Abrir en Shopify", "link", "open"),
-            ("Rastrear", "truck", "track"),
-            ("Reimprimir guía", "printer", "reprint"),
-            ("Reintentar compra", "retry", "retry"),
+            (tr("Abrir en Shopify"), "link", "open"),
+            (tr("Rastrear"), "truck", "track"),
+            (tr("Reimprimir guía"), "printer", "reprint"),
+            (tr("Reintentar compra"), "retry", "retry"),
         ):
             btn = button(text, icon_name)
             btn.clicked.connect(lambda _=False, a=action: self._selected_action(a))
@@ -401,8 +404,8 @@ class OrdersPage(Page):
         table_card.add(layout=bottom)
         self.add(table_card)
         self.add(label(
-            "Los costos salen del historial de cada pedido en Shopify (también las guías que compres a mano allí). "
-            "Las guías anuladas se devuelven a tu factura de Shopify.",
+            tr("Los costos salen del historial de cada pedido en Shopify (también las guías que compres a mano allí). "
+               "Las guías anuladas se devuelven a tu factura de Shopify."),
             "Small", wrap=True,
         ))
         self.finish()
@@ -413,7 +416,7 @@ class OrdersPage(Page):
         self._reload_timer.timeout.connect(self.reload)
         ctx.bridge.event.connect(self._on_event)
         ctx.bridge.config_saved.connect(lambda section: section in ("shopify", "all") and self._reload_timer.start())
-        self._show_empty("Cargando pedidos de Shopify…")
+        self._show_empty(tr("Cargando pedidos de Shopify…"))
         QTimer.singleShot(1500, self.reload)  # al abrir la app: el aviso de la barra lateral sin entrar aquí
 
     # --- piezas --------------------------------------------------------------------------------------
@@ -461,14 +464,14 @@ class OrdersPage(Page):
         if not self._connected():
             self.all_rows = []
             self._render()
-            self._show_empty("Conecta tu tienda en la pestaña Shopify para ver aquí tus pedidos.")
+            self._show_empty(tr("Conecta tu tienda en la pestaña Shopify para ver aquí tus pedidos."))
             return
         if self.loading:
             self._reload_timer.start()  # termina la carga en curso y vuelve a mirar
             return
         self.loading = True
         self.refresh_btn.setEnabled(False)
-        self.refresh_btn.setText("Cargando…")
+        self.refresh_btn.setText(tr("Cargando…"))
         days = self._days()
         service = self.ctx.services.shopify
         run_async(lambda: service.overview(days=days), self._loaded, self._failed)
@@ -477,7 +480,7 @@ class OrdersPage(Page):
         self.loading = False
         self.loaded_at = time.time()
         self.refresh_btn.setEnabled(True)
-        self.refresh_btn.setText("Actualizar")
+        self.refresh_btn.setText(tr("Actualizar"))
         self.all_rows = rows
         self.notice.setVisible(False)
         self._render()
@@ -485,8 +488,8 @@ class OrdersPage(Page):
     def _failed(self, message: str) -> None:
         self.loading = False
         self.refresh_btn.setEnabled(True)
-        self.refresh_btn.setText("Actualizar")
-        self.notice.setText(f"No se pudieron cargar los pedidos de Shopify: {message}")
+        self.refresh_btn.setText(tr("Actualizar"))
+        self.notice.setText(tr("No se pudieron cargar los pedidos de Shopify: {0}", message))
         self.notice.setVisible(True)
 
     # --- pintar --------------------------------------------------------------------------------------
@@ -508,7 +511,7 @@ class OrdersPage(Page):
         self._render_actions([row for row in rows if row.needs_action])
         for key, text in GROUPS:
             if key in self.tabs:
-                self.tabs[key].setText(f"{text}  {summary.groups.get(key, 0)}")
+                self.tabs[key].setText(f"{tr(text)}  {summary.groups.get(key, 0)}")
         self._fill_table()
         self._render_notice(summary)
         self.attention_changed.emit(summary.action)
@@ -517,39 +520,36 @@ class OrdersPage(Page):
         value, detail = self.stat_action
         value.setText(str(summary.action))
         value.setStyleSheet(f"color: {STATE_COLORS['action']};" if summary.action else "")
-        detail.setText("Todo va solo" if not summary.action else "Míralos abajo, con el porqué")
+        detail.setText(tr("Todo va solo") if not summary.action else tr("Míralos abajo, con el porqué"))
         value, detail = self.stat_orders
         value.setText(str(summary.orders))
         detail.setText(self.period.currentText())
         value, detail = self.stat_labels
         value.setText(money(summary.cost))
         anuladas = f" · {money(summary.voided)} anuladas" if summary.voided else ""
-        detail.setText(f"{summary.labels} guía(s){anuladas}")
+        detail.setText(tr("{0} guía(s){1}", summary.labels, anuladas))
         value, detail = self.stat_carriers
         parts = sorted(summary.by_carrier.items(), key=lambda item: -item[1][1])
         value.setText(money(summary.cost / summary.labels) if summary.labels else "—")
-        detail.setText(" · ".join(f"{carrier} {money(cost)} ({count})" for carrier, (count, cost) in parts) or "Sin guías")
+        detail.setText(" · ".join(f"{carrier} {money(cost)} ({count})" for carrier, (count, cost) in parts) or tr("Sin guías"))
 
     def _render_actions(self, rows: list[OrderRow]) -> None:
         self._clear_actions()
-        self.action_card.title_label.setText(f"Necesitan acción  {len(rows)}" if rows else "Necesitan acción")
+        self.action_card.title_label.setText(tr("Necesitan acción  {0}", len(rows)) if rows else tr("Necesitan acción"))
         if not rows:
-            ok = label("✓ Nada pendiente: las guías se compran e imprimen solas.", "Hint", wrap=True)
+            ok = label(tr("✓ Nada pendiente: las guías se compran e imprimen solas."), "Hint", wrap=True)
             self.action_list.addWidget(ok)
             return
         for row in rows[:20]:
             self.action_list.addWidget(ActionItem(row, self))
         if len(rows) > 20:
-            self.action_list.addWidget(label(f"…y {len(rows) - 20} más en la tabla de abajo.", "Muted"))
+            self.action_list.addWidget(label(tr("…y {0} más en la tabla de abajo.", len(rows) - 20), "Muted"))
 
     def _render_notice(self, summary: Summary) -> None:
         if summary.auto_fulfill:
             shop = self.ctx.cfg.data.shopify.shop
             self.notice.setText(
-                f"Shopify marcó {summary.auto_fulfill} pedido(s) como preparados apenas se pagaron, sin guía. Así "
-                "LabelBridge no puede comprarla. Cámbialo en Shopify → Configuración → Pago → «Procesamiento de "
-                "pedidos» → «No preparar automáticamente ningún artículo»: "
-                f"<a href=\"{admin_url(shop, 'settings/checkout')}\">abrir ese ajuste</a>."
+                tr("Shopify marcó {0} pedido(s) como preparados apenas se pagaron, sin guía. Así LabelBridge no puede comprarla. Cámbialo en Shopify → Configuración → Pago → «Procesamiento de pedidos» → «No preparar automáticamente ningún artículo»: <a href=\"{1}\">abrir ese ajuste</a>.", summary.auto_fulfill, admin_url(shop, 'settings/checkout'))
             )
             self.notice.setVisible(True)
 
@@ -570,7 +570,7 @@ class OrdersPage(Page):
                     continue
             visible.append(row)
         self.model.set_rows(visible)
-        self.count.setText(f"{len(visible)} pedido(s)")
+        self.count.setText(tr("{0} pedido(s)", len(visible)))
 
     # --- acciones ------------------------------------------------------------------------------------
     def _selected(self) -> OrderRow | None:
@@ -583,7 +583,7 @@ class OrdersPage(Page):
     def _selected_action(self, action: str) -> None:
         row = self._selected()
         if row is None:
-            info(self, "Pedidos", "Elige un pedido de la tabla.")
+            info(self, tr("Pedidos"), tr("Elige un pedido de la tabla."))
             return
         self.run_action(row, action)
 
@@ -592,14 +592,14 @@ class OrdersPage(Page):
         if row is None:
             return
         menu = QMenu(self)
-        menu.addAction(icons.icon("link"), "Abrir en Shopify", lambda: self.run_action(row, "open"))
+        menu.addAction(icons.icon("link"), tr("Abrir en Shopify"), lambda: self.run_action(row, "open"))
         if row.tracking:
-            menu.addAction(icons.icon("truck"), "Rastrear el envío", lambda: self.run_action(row, "track"))
-            menu.addAction(icons.icon("copy"), "Copiar el número de seguimiento", lambda: self.run_action(row, "copy"))
+            menu.addAction(icons.icon("truck"), tr("Rastrear el envío"), lambda: self.run_action(row, "track"))
+            menu.addAction(icons.icon("copy"), tr("Copiar el número de seguimiento"), lambda: self.run_action(row, "copy"))
         if row.labels:
-            menu.addAction(icons.icon("printer"), "Reimprimir la guía", lambda: self.run_action(row, "reprint"))
+            menu.addAction(icons.icon("printer"), tr("Reimprimir la guía"), lambda: self.run_action(row, "reprint"))
         if row.action == "retry":
-            menu.addAction(icons.icon("retry"), "Reintentar la compra", lambda: self.run_action(row, "retry"))
+            menu.addAction(icons.icon("retry"), tr("Reintentar la compra"), lambda: self.run_action(row, "retry"))
         menu.exec(self.view.viewport().mapToGlobal(pos))
 
     def run_action(self, row: OrderRow, action: str) -> None:
@@ -611,7 +611,7 @@ class OrdersPage(Page):
             if url:
                 QDesktopServices.openUrl(QUrl(url))
             else:
-                info(self, "Rastrear", "Este pedido todavía no tiene número de seguimiento.")
+                info(self, tr("Rastrear"), tr("Este pedido todavía no tiene número de seguimiento."))
         elif action == "copy":
             if row.tracking:
                 copy_to_clipboard(row.tracking[0][1])
@@ -628,33 +628,32 @@ class OrdersPage(Page):
             and "tracking" in (job.get("meta") or {})
         ]
         if not jobs:
-            info(self, "Reimprimir", "LabelBridge no tiene el PDF de esta guía (se compró a mano): imprímela desde "
-                                     "el pedido en Shopify.")
+            info(self, tr("Reimprimir"), tr("LabelBridge no tiene el PDF de esta guía (se compró a mano): imprímela desde "
+                                        "el pedido en Shopify."))
             self.run_action(row, "open")
             return
         latest = max(jobs, key=lambda job: job.get("created_at") or 0)
         if self.ctx.store.reprint(latest["id"]):
             self.ctx.engine.wake()
-            info(self, "Reimprimir", f"La guía de {row.name} está otra vez en la cola de impresión.")
+            info(self, tr("Reimprimir"), tr("La guía de {0} está otra vez en la cola de impresión.", row.name))
 
     def _retry(self, row: OrderRow) -> None:
         if not confirm(
             self,
-            "Reintentar la compra",
-            f"LabelBridge volverá a comprar la guía de {row.name} con Shopify Shipping y la imprimirá. Shopify cobra "
-            "la guía en tu factura.\n\n¿Reintentar?",
+            tr("Reintentar la compra"),
+            tr("LabelBridge volverá a comprar la guía de {0} con Shopify Shipping y la imprimirá. Shopify cobra la guía en tu factura.\n\n¿Reintentar?", row.name),
         ):
             return
         service = self.ctx.services.shopify
 
         def done(queued: int) -> None:
             if queued:
-                info(self, "Reintentar la compra", f"Listo: la guía de {row.name} se compró y está en la cola.")
+                info(self, tr("Reintentar la compra"), tr("Listo: la guía de {0} se compró y está en la cola.", row.name))
             else:
-                info(self, "Reintentar la compra", "Shopify no compró la guía todavía: mira el motivo en la lista.")
+                info(self, tr("Reintentar la compra"), tr("Shopify no compró la guía todavía: mira el motivo en la lista."))
             self.reload()
 
-        run_async(lambda: service.retry_order(row.legacy), done, lambda message: error(self, "Reintentar la compra", message))
+        run_async(lambda: service.retry_order(row.legacy), done, lambda message: error(self, tr("Reintentar la compra"), message))
 
     def edit_rules(self) -> None:
         s = self.ctx.cfg.data.shopify
@@ -668,15 +667,15 @@ class OrdersPage(Page):
 
     def export_csv(self) -> None:
         if not self.all_rows:
-            info(self, "Exportar", "No hay pedidos para exportar en este período.")
+            info(self, tr("Exportar"), tr("No hay pedidos para exportar en este período."))
             return
-        default = str(Path.home() / f"pedidos-{datetime.now():%Y-%m-%d}.csv")
-        path, _ = QFileDialog.getSaveFileName(self, "Exportar pedidos", default, "CSV (*.csv)")
+        default = str(Path.home() / tr("pedidos-{0}.csv", f"{datetime.now():%Y-%m-%d}"))
+        path, _ = QFileDialog.getSaveFileName(self, tr("Exportar pedidos"), default, "CSV (*.csv)")
         if not path:
             return
         rows = sorted(self.all_rows, key=lambda row: row.created, reverse=True)
         with open(path, "w", newline="", encoding="utf-8-sig") as handle:  # con BOM: Excel lo abre bien
             writer = csv.writer(handle)
-            writer.writerow(CSV_COLUMNS)
+            writer.writerow([tr(column) for column in CSV_COLUMNS])
             writer.writerows(csv_rows(rows))
-        info(self, "Exportar", f"Se guardaron {len(rows)} pedidos en {path}.")
+        info(self, tr("Exportar"), tr("Se guardaron {0} pedidos en {1}.", len(rows), path))

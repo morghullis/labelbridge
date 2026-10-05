@@ -16,6 +16,7 @@ import uuid
 from typing import Any
 from urllib.parse import quote
 
+from ...i18n import tr
 from .base import (
     MAX_TOKENS,
     Entry,
@@ -135,7 +136,7 @@ class _OpenAIBase:
                 raise classify(reply)
             log.warning("Asistente: %s no admite «%s»; se sigue sin él", self.endpoint.model, dropped)
             self.unsupported.add(dropped)
-        raise ProviderError("bad_request", "La API rechazó la petición")
+        raise ProviderError("bad_request", tr("La API rechazó la petición"))
 
     def _get(self, path: str) -> Any:
         reply = self.http.call("GET", f"{self.endpoint.base_url}{path}", self._headers(), timeout=20.0, retryable=_retryable)
@@ -204,10 +205,10 @@ class ResponsesModel(_OpenAIBase):
 
     def _reply(self, data: dict) -> Reply:
         if not isinstance(data, dict):
-            raise ProviderError("invalid_response", "Respuesta sin formato")
+            raise ProviderError("invalid_response", tr("Respuesta sin formato"))
         if data.get("status") == "failed" or data.get("error"):
             error = data.get("error") or {}
-            raise ProviderError("overloaded", str(error.get("message") or "La respuesta falló"))
+            raise ProviderError("overloaded", str(error.get("message") or tr("La respuesta falló")))
         output = [item for item in data.get("output") or [] if isinstance(item, dict)]
         texts: list[str] = []
         calls: list[ToolCall] = []
@@ -333,7 +334,7 @@ class ChatModel(_OpenAIBase):
         choices = data.get("choices") if isinstance(data, dict) else None
         if not choices:
             error = data.get("error") if isinstance(data, dict) else None
-            raise ProviderError("invalid_response", str(error or "Respuesta sin contenido"))
+            raise ProviderError("invalid_response", str(error or tr("Respuesta sin contenido")))
         choice = choices[0] or {}
         message = choice.get("message") or {}
         finish = str(choice.get("finish_reason") or "")

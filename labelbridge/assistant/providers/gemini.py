@@ -13,6 +13,7 @@ import uuid
 from typing import Any
 from urllib.parse import quote
 
+from ...i18n import tr
 from .base import (
     MAX_TOKENS,
     Entry,
@@ -217,25 +218,25 @@ class GeminiModel:
             malformed += 1
             log.warning("Asistente: Gemini generó una llamada a herramienta mal formada; se repite (%s)", malformed)
             if malformed >= 2:
-                raise ProviderError("invalid_response", "El modelo se equivocó al usar una herramienta. Vuelve a intentarlo.")
-        raise ProviderError("bad_request", "La API rechazó la petición")
+                raise ProviderError("invalid_response", tr("El modelo se equivocó al usar una herramienta. Vuelve a intentarlo."))
+        raise ProviderError("bad_request", tr("La API rechazó la petición"))
 
     def _reply(self, data: Any) -> Reply | None:
         """La respuesta en formato común (None si hay que repetir la llamada)."""
         if not isinstance(data, dict):
-            raise ProviderError("invalid_response", "Respuesta sin formato")
+            raise ProviderError("invalid_response", tr("Respuesta sin formato"))
         usage = self._usage(data.get("usageMetadata"))
         candidates = data.get("candidates") or []
         if not candidates:
             if (data.get("promptFeedback") or {}).get("blockReason"):
                 return Reply(stop="refusal", usage=usage)
-            raise ProviderError("invalid_response", "Respuesta sin contenido")
+            raise ProviderError("invalid_response", tr("Respuesta sin contenido"))
         candidate = candidates[0] or {}
         finish = str(candidate.get("finishReason") or "")
         if finish in RETRY:
             return None
         if finish in FAILED:
-            raise ProviderError("invalid_response", f"Gemini cortó la respuesta ({finish})")
+            raise ProviderError("invalid_response", tr("Gemini cortó la respuesta ({0})", finish))
         parts = [part for part in (candidate.get("content") or {}).get("parts") or [] if isinstance(part, dict)]
         texts = [str(part["text"]).strip() for part in parts if "text" in part and not part.get("thought")]
         calls: list[ToolCall] = []

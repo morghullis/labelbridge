@@ -12,6 +12,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
+from ..i18n import N_, tr
 
 OVERVIEW_QUERY = """
 query LabelBridgeOverview($first: Int!, $after: String, $query: String!) {
@@ -58,12 +59,12 @@ TEST_TAGS = ("prueba", "test")
 
 # Pestañas de la pantalla, en orden: (clave, título).
 GROUPS = (
-    ("action", "Necesitan acción"),
-    ("usps", "USPS"),
-    ("fedex", "FedEx"),
-    ("other", "Otras"),
-    ("pickup", "Retiro en tienda"),
-    ("all", "Todos"),
+    ("action", N_("Necesitan acción")),
+    ("usps", N_("USPS")),
+    ("fedex", N_("FedEx")),
+    ("other", N_("Otras")),
+    ("pickup", N_("Retiro en tienda")),
+    ("all", N_("Todos")),
 )
 
 
@@ -93,6 +94,7 @@ class OrderRow:
     currency: str = "USD"
     test: bool = False
     rule_carrier: str = ""  # paquetería según la regla del método de envío
+    issue: str = ""  # código del problema, sin traducir (auto_fulfilled…)
 
     @property
     def needs_action(self) -> bool:
@@ -178,10 +180,10 @@ def rule_text(rule) -> str:
     """La condición de una regla, para explicar el porqué («piezas de más de US$1,000», «método Express»)."""
     parts = []
     if (getattr(rule, "method", "") or "").strip():
-        parts.append(f"método «{rule.method.strip()}»")
+        parts.append(tr("método «{0}»", rule.method.strip()))
     if float(getattr(rule, "over", 0) or 0) > 0:
-        parts.append(f"piezas de más de {_money(float(rule.over))}")
-    return " y ".join(parts)
+        parts.append(tr("piezas de más de {0}", _money(float(rule.over))))
+    return tr(" y ").join(parts)
 
 
 def label_events(order: dict) -> dict[str, dict[str, Any]]:
@@ -309,102 +311,99 @@ def classify(
         word = "Cancelado" if order.get("cancelledAt") else "Reembolsado"
         if active:
             return act(
-                f"{word} con guía activa",
-                f"{word}, pero su guía de {_money(row.cost)} sigue activa: anúlala en Shopify para recuperar el dinero.",
+                tr("{0} con guía activa", word),
+                tr("{0}, pero su guía de {1} sigue activa: anúlala en Shopify para recuperar el dinero.", word, _money(row.cost)),
                 "void",
             )
-        return keep("cancelled", word + (" · guía anulada" if row.voided else ""))
+        return keep("cancelled", word + (tr(" · guía anulada") if row.voided else ""))
     if kind == "pickup":
-        return keep("info", "Retirado en tienda" if shipped else "Retiro en tienda")
+        return keep("info", tr("Retirado en tienda") if shipped else tr("Retiro en tienda"))
     if kind == "local":
-        return keep("info", "Entrega local")
+        return keep("info", tr("Entrega local"))
     if kind == "none":
-        return keep("info", "Sin envío")
+        return keep("info", tr("Sin envío"))
 
     s = settings
     if active:
         if ledger.get("state") == "no_document" and row.printed != "yes":
             return act(
-                "Guía sin PDF",
-                "Shopify compró la guía pero no entregó el PDF para imprimir: imprímela desde el pedido en Shopify.",
+                tr("Guía sin PDF"),
+                tr("Shopify compró la guía pero no entregó el PDF para imprimir: imprímela desde el pedido en Shopify."),
                 "open",
             )
         if row.printed == "failed":
             return act(
-                "Guía sin imprimir",
-                f"La guía se compró pero no se imprimió: {row.print_error or 'error de la impresora'}. Revisa la "
-                "impresora y reimprímela.",
+                tr("Guía sin imprimir"),
+                tr("La guía se compró pero no se imprimió: {0}. Revisa la impresora y reimprímela.", row.print_error or tr('error de la impresora')),
                 "reprint",
             )
         if row.printed == "pending":
-            return keep("waiting", "Imprimiendo la guía…")
+            return keep("waiting", tr("Imprimiendo la guía…"))
         if row.printed == "yes":
-            return keep("done", "Guía comprada e impresa")
-        return keep("done", "Guía comprada en Shopify")
+            return keep("done", tr("Guía comprada e impresa"))
+        return keep("done", tr("Guía comprada en Shopify"))
     if shipped:
         if row.tracking:
-            return keep("done", "Enviado con seguimiento")
+            return keep("done", tr("Enviado con seguimiento"))
         if created >= since:
+            row.issue = "auto_fulfilled"
             return act(
-                "Preparado sin guía",
-                "Shopify lo marcó como preparado sin guía ni seguimiento (el cliente recibió el aviso de envío sin "
-                "número). Desactiva la preparación automática en Shopify → Configuración → Pago.",
+                tr("Preparado sin guía"),
+                tr("Shopify lo marcó como preparado sin guía ni seguimiento (el cliente recibió el aviso de envío sin "
+                   "número). Desactiva la preparación automática en Shopify → Configuración → Pago."),
                 "open",
             )
-        return keep("info", "Preparado sin seguimiento")
+        return keep("info", tr("Preparado sin seguimiento"))
     if getattr(s, "required_tag", "").strip() and s.required_tag.strip().lower() not in tags:
-        return keep("info", f"Sin el tag «{s.required_tag.strip()}»: LabelBridge no lo procesa")
+        return keep("info", tr("Sin el tag «{0}»: LabelBridge no lo procesa", s.required_tag.strip()))
     if financial not in PAID_STATUSES:
-        return keep("waiting", "Esperando el pago")
+        return keep("waiting", tr("Esperando el pago"))
     state = ledger.get("state")
     if (rule is not None and not rule.auto) or state == "manual":
-        carrier = row.carrier or "Esta paquetería"
-        why = f" por la regla de {rule_text(rule)}" if rule is not None and rule_text(rule) else ""
+        carrier = row.carrier or tr("Esta paquetería")
+        why = tr(" por la regla de {0}", rule_text(rule)) if rule is not None and rule_text(rule) else ""
         return act(
-            f"Comprar guía {carrier} a mano",
-            f"Sale por {carrier}{why} (piezas: {_money(row.subtotal)}). Shopify no deja comprar esta guía "
-            "automáticamente: cómprala a mano en el pedido en Shopify.",
+            tr("Comprar guía {0} a mano", carrier),
+            tr("Sale por {0}{1} (piezas: {2}). Shopify no deja comprar esta guía automáticamente: cómprala a mano en el pedido en Shopify.", carrier, why, _money(row.subtotal)),
             "open",
         )
     if state == "failed":
         return act(
-            "No se pudo comprar la guía",
-            f"No se pudo comprar la guía: {ledger.get('reason') or 'Shopify no dio el motivo'}. Corrígelo y "
-            "pulsa «Reintentar compra».",
+            tr("No se pudo comprar la guía"),
+            tr("No se pudo comprar la guía: {0}. Corrígelo y pulsa «Reintentar compra».", ledger.get('reason') or 'Shopify no dio el motivo'),
             "retry",
         )
     if state == "uncertain":
         return act(
-            "Compra sin confirmar",
-            "No se sabe si la guía se compró (se cortó la conexión). Revísalo en Shopify antes de comprarla a mano.",
+            tr("Compra sin confirmar"),
+            tr("No se sabe si la guía se compró (se cortó la conexión). Revísalo en Shopify antes de comprarla a mano."),
             "open",
         )
     if state == "limit":
         return act(
-            "Límite diario de guías",
-            f"Se alcanzó el máximo de {getattr(s, 'max_labels_per_day', 0)} guías por día. Súbelo en Shopify → "
-            "Máximo por día o pulsa «Reintentar compra» mañana.",
+            tr("Límite diario de guías"),
+            tr("Se alcanzó el máximo de {0} guías por día. Súbelo en Shopify → Máximo por día o pulsa «Reintentar compra» mañana.", getattr(s, 'max_labels_per_day', 0)),
             "retry",
         )
     if not getattr(s, "buy_shipping_label", False):
         return act(
-            "Falta la guía",
-            "La compra automática de guías está desactivada: cómprala a mano en Shopify o actívala en la pestaña "
-            "Shopify.",
+            tr("Falta la guía"),
+            tr("La compra automática de guías está desactivada: cómprala a mano en Shopify o actívala en la pestaña "
+               "Shopify."),
             "open",
         )
     if created < since:
         return act(
-            "Falta la guía",
-            "Es de antes de conectar LabelBridge, por eso no se compró sola. Pulsa «Reintentar compra» o cómprala a "
-            "mano en Shopify.",
+            tr("Falta la guía"),
+            tr("Es de antes de conectar LabelBridge, por eso no se compró sola. Pulsa «Reintentar compra» o cómprala a "
+               "mano en Shopify."),
             "retry",
         )
     if now - created < WAIT_SECONDS:
-        return keep("waiting", "Comprando la guía…")
+        return keep("waiting", tr("Comprando la guía…"))
     return act(
-        "Falta la guía",
-        "Sigue sin guía: revisa que LabelBridge esté conectado a Shopify y pulsa «Reintentar compra».",
+        tr("Falta la guía"),
+        tr("Sigue sin guía: revisa que LabelBridge esté conectado a Shopify y pulsa «Reintentar compra»."),
         "retry",
     )
 
@@ -431,7 +430,7 @@ def summarize(rows: list[OrderRow]) -> Summary:
         if row.needs_action:
             summary.action += 1
             summary.groups["action"] += 1
-        if row.status == "Preparado sin guía":
+        if row.issue == "auto_fulfilled":
             summary.auto_fulfill += 1
         summary.voided += row.voided
         if row.labels:
@@ -453,13 +452,13 @@ def in_group(row: OrderRow, group: str) -> bool:
 
 
 CSV_COLUMNS = (
-    "Pedido", "Fecha", "Cliente", "Destino", "Método de envío", "Paquetería", "Seguimiento", "Costo de la guía (USD)",
-    "Guías anuladas (USD)", "Impresa", "Estado", "Qué hacer",
+    N_("Pedido"), N_("Fecha"), N_("Cliente"), N_("Destino"), N_("Método de envío"), N_("Paquetería"), N_("Seguimiento"), N_("Costo de la guía (USD)"),
+    N_("Guías anuladas (USD)"), N_("Impresa"), N_("Estado"), N_("Qué hacer"),
 )
 
 
 def csv_rows(rows: list[OrderRow]) -> list[list[str]]:
-    printed = {"yes": "Sí", "failed": "Falló", "pending": "En cola", "": "—"}
+    printed = {"yes": tr("Sí"), "failed": tr("Falló"), "pending": tr("En cola"), "": "—"}
     out = []
     for row in rows:
         out.append([

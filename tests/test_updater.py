@@ -141,3 +141,31 @@ def test_failed_update_is_detected():
     assert updater.pending_whats_new({"update:installed": newer.to_json()}.get) is None
     assert updater.failed_update({"update:installed": current.to_json()}.get) is None
     assert updater.failed_update({"update:installed": ""}.get) is None
+
+
+def test_notes_follow_the_app_language(update_server):
+    from labelbridge import i18n
+
+    url, _ = update_server
+    info = updater.check_for_update(url)
+    assert info.localized_notes() == info.notes  # el manifiesto de prueba no trae notas en inglés
+    info.notes_en = "- Screenshots in the guide"
+    i18n.set_language("en")
+    try:
+        assert info.localized_notes() == "- Screenshots in the guide"
+        assert updater.UpdateInfo.from_json(info.to_json()).localized_notes() == "- Screenshots in the guide"
+    finally:
+        i18n.set_language("es")
+    assert info.localized_notes() == info.notes
+
+
+def test_every_release_has_notes_in_both_languages():
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "packaging"))
+    from publish_update import changelog_notes
+
+    spanish, english = changelog_notes(__version__), changelog_notes(__version__, "CHANGELOG.en.md")
+    assert spanish.startswith("- ") and english.startswith("- ")
+    assert spanish.count("\n- ") == english.count("\n- "), "las notas en inglés no tienen los mismos puntos"

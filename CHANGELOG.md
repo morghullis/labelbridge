@@ -2,6 +2,16 @@
 
 Cada versión publicada muestra estas notas en la ventana de actualización de la app y en la página de descargas.
 
+## 1.7.0
+
+- **LabelBridge en español o en inglés.** Toda la app está en los dos idiomas: pestañas, ventanas, avisos, la guía paso a paso con sus capturas, la etiqueta de prueba y las notas de cada actualización. El asistente responde en el idioma de la app.
+- **Instalador nuevo, con la marca**: el logo dorado en cada paso (nítido en pantallas de alta resolución) y, al empezar, **English / Español**. La app queda en el idioma que elijas.
+- **Tu tienda desde el instalador**: la primera vez, el instalador pregunta la dirección de tu tienda de Shopify y el Client ID para adelantar. Al terminar, LabelBridge se abre directo en «Conecta tu tienda» para pegar el Client secret en su ventana segura (la clave secreta nunca pasa por el instalador). Si ya tenías una tienda configurada, no se toca.
+- Nuevo ajuste **Ajustes → General → Idioma / Language**: Automático (el del instalador o el de Windows), Español o English. Al cambiarlo, LabelBridge ofrece reiniciarse para aplicarlo.
+- Si ya usabas LabelBridge, sigue en español después de actualizar, aunque Windows esté en inglés.
+- Las fechas y los números siguen el formato de cada idioma (día/mes en español, mes/día en inglés).
+- La página de descargas también está en inglés.
+
 ## 1.6.0
 
 - Nueva pestaña **Pedidos**: todos tus pedidos de Shopify, ordenados.

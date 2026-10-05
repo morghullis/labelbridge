@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from ..i18n import tr
 
 log = logging.getLogger(__name__)
 
@@ -33,7 +34,7 @@ def _powershell(script: str, timeout: float = 60) -> str:
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
     if result.returncode != 0:
-        raise RuntimeError(result.stderr.decode("utf-8", "replace").strip() or "PowerShell falló")
+        raise RuntimeError(result.stderr.decode("utf-8", "replace").strip() or tr("PowerShell falló"))
     return result.stdout.decode("utf-8", "replace")
 
 
@@ -62,9 +63,9 @@ def _ps_value(value: str) -> str:
 def install_network_printer(name: str, ip: str, driver: str, port: int = 9100) -> None:
     """Crea el puerto TCP/IP y la impresora con permisos de administrador (aparece el aviso UAC)."""
     if not supported():
-        raise RuntimeError("Solo disponible en Windows")
+        raise RuntimeError(tr("Solo disponible en Windows"))
     ip = str(ipaddress.ip_address(ip.strip()))  # solo IPs válidas
-    name = " ".join(name.split())[:100] or f"Impresora {ip}"
+    name = " ".join(name.split())[:100] or tr("Impresora {0}", ip)
     log_file = Path(tempfile.gettempdir()) / "labelbridge-install-printer.log"
     port_name = f"IP_{ip}" if port == 9100 else f"IP_{ip}_{int(port)}"
     script = f"""
@@ -94,7 +95,7 @@ try {{
     )
     message = log_file.read_text(encoding="utf-8-sig").strip() if log_file.exists() else ""
     if exit_code != 0 or message != "OK":
-        raise RuntimeError(message or f"La instalación terminó con código {exit_code}")
+        raise RuntimeError(message or tr("La instalación terminó con código {0}", exit_code))
     log.info("Impresora '%s' instalada en Windows (%s, driver %s)", name, ip, driver)
 
 
@@ -130,7 +131,7 @@ def _run_elevated(program: str, params: str, timeout_ms: int = 120_000) -> int:
     info.lpParameters = params
     info.nShow = 0  # SW_HIDE
     if not ctypes.windll.shell32.ShellExecuteExW(ctypes.byref(info)):
-        raise RuntimeError("Se canceló el permiso de administrador")
+        raise RuntimeError(tr("Se canceló el permiso de administrador"))
     kernel32 = ctypes.windll.kernel32
     kernel32.WaitForSingleObject(info.hProcess, timeout_ms)
     code = wintypes.DWORD()

@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..config import MEDIA_PRESETS, PRINTER_KINDS, PrinterProfile
+from ..i18n import tr
 from .context import AppContext
 from .widgets import button, error, info, label, run_async
 
@@ -28,19 +29,19 @@ class PrinterDialog(QDialog):
         self.ctx = ctx
         self.original = profile
         self.is_new = is_new
-        self.setWindowTitle("Nueva impresora" if is_new else f"Editar «{profile.alias}»")
+        self.setWindowTitle(tr("Nueva impresora") if is_new else tr("Editar «{0}»", profile.alias))
         self.setMinimumWidth(520)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(22, 20, 22, 20)
         layout.setSpacing(14)
-        layout.addWidget(label(f"Tipo: {PRINTER_KINDS.get(profile.kind, profile.kind)}", "SectionTitle"))
+        layout.addWidget(label(tr("Tipo: {0}", tr(PRINTER_KINDS.get(profile.kind, profile.kind))), "SectionTitle"))
 
         form = QFormLayout()
         form.setSpacing(10)
         self.alias = QLineEdit(profile.alias)
-        self.alias.setPlaceholderText("etiquetas")
-        form.addRow("Alias (nombre corto)", self.alias)
+        self.alias.setPlaceholderText(tr("etiquetas"))
+        form.addRow(tr("Alias (nombre corto)"), self.alias)
 
         self.system_name = QComboBox()
         self.host = QLineEdit(profile.host)
@@ -62,56 +63,56 @@ class PrinterDialog(QDialog):
                 names.insert(0, profile.system_name)
             self.system_name.addItems(names)
             self.system_name.setCurrentText(profile.system_name)
-            form.addRow("Impresora de Windows", self.system_name)
+            form.addRow(tr("Impresora de Windows"), self.system_name)
         elif profile.kind == "network":
             self.host.setPlaceholderText("192.168.1.50")
-            form.addRow("IP o nombre", self.host)
-            self.protocol.addItem("RAW / JetDirect (puerto 9100)", "raw")
-            self.protocol.addItem("IPP (puerto 631)", "ipp")
-            self.protocol.addItem("IPP seguro (IPPS)", "ipps")
+            form.addRow(tr("IP o nombre"), self.host)
+            self.protocol.addItem(tr("RAW / JetDirect (puerto 9100)"), "raw")
+            self.protocol.addItem(tr("IPP (puerto 631)"), "ipp")
+            self.protocol.addItem(tr("IPP seguro (IPPS)"), "ipps")
             self.protocol.setCurrentIndex(max(0, self.protocol.findData(profile.protocol)))
-            form.addRow("Conexión", self.protocol)
+            form.addRow(tr("Conexión"), self.protocol)
             self.port.setRange(1, 65535)
             self.port.setValue(profile.port)
-            form.addRow("Puerto", self.port)
-            form.addRow("Ruta IPP", self.ipp_path)
+            form.addRow(tr("Puerto"), self.port)
+            form.addRow(tr("Ruta IPP"), self.ipp_path)
             self.protocol.currentIndexChanged.connect(self._protocol_changed)
         else:
             row = QHBoxLayout()
             row.addWidget(self.output_dir, 1)
-            browse = button("Elegir…", "folder")
+            browse = button(tr("Elegir…"), "folder")
             browse.clicked.connect(self._browse)
             row.addWidget(browse)
             holder = QWidget()
             holder.setLayout(row)
             row.setContentsMargins(0, 0, 0, 0)
-            self.output_dir.setPlaceholderText("Carpeta «salida» de LabelBridge")
-            form.addRow("Carpeta", holder)
+            self.output_dir.setPlaceholderText(tr("Carpeta «salida» de LabelBridge"))
+            form.addRow(tr("Carpeta"), holder)
 
         self.language = QComboBox()
-        form.addRow("Lenguaje", self.language)
+        form.addRow(tr("Lenguaje"), self.language)
         self.media = QComboBox()
         for key, (name, _, _) in MEDIA_PRESETS.items():
-            self.media.addItem(name, key)
+            self.media.addItem(tr(name), key)
         self.media.setCurrentIndex(max(0, self.media.findData(profile.media)))
-        form.addRow("Tamaño de etiqueta", self.media)
+        form.addRow(tr("Tamaño de etiqueta"), self.media)
         self.dpi = QComboBox()
         for dpi in (203, 300, 600):
             self.dpi.addItem(f"{dpi} dpi", dpi)
         self.dpi.setCurrentIndex(max(0, self.dpi.findData(profile.dpi)))
-        form.addRow("Resolución", self.dpi)
+        form.addRow(tr("Resolución"), self.dpi)
         self.rotate = QComboBox()
-        for value, text in (("auto", "Automática"), ("0", "0°"), ("90", "90°"), ("180", "180°"), ("270", "270°")):
+        for value, text in (("auto", tr("Automática")), ("0", "0°"), ("90", "90°"), ("180", "180°"), ("270", "270°")):
             self.rotate.addItem(text, value)
         self.rotate.setCurrentIndex(max(0, self.rotate.findData(profile.rotate)))
-        form.addRow("Rotación", self.rotate)
-        self.crop = QCheckBox("Recortar márgenes blancos de PDFs tamaño carta/A4")
+        form.addRow(tr("Rotación"), self.rotate)
+        self.crop = QCheckBox(tr("Recortar márgenes blancos de PDFs tamaño carta/A4"))
         self.crop.setChecked(profile.crop == "auto")
         form.addRow("", self.crop)
-        self.enabled = QCheckBox("Activa")
+        self.enabled = QCheckBox(tr("Activa"))
         self.enabled.setChecked(profile.enabled)
         form.addRow("", self.enabled)
-        self.retrust = QCheckBox("Volver a confiar en el certificado de la impresora (si lo cambiaste)")
+        self.retrust = QCheckBox(tr("Volver a confiar en el certificado de la impresora (si lo cambiaste)"))
         self.retrust.setVisible(profile.kind == "network" and bool(profile.tls_fingerprint))
         form.addRow("", self.retrust)
         layout.addLayout(form)
@@ -123,13 +124,13 @@ class PrinterDialog(QDialog):
         self._update_hint()
 
         buttons = QHBoxLayout()
-        self.test_btn = button("Imprimir prueba", "printer")
+        self.test_btn = button(tr("Imprimir prueba"), "printer")
         self.test_btn.clicked.connect(self._test)
         buttons.addWidget(self.test_btn)
         buttons.addStretch(1)
-        cancel = button("Cancelar")
+        cancel = button(tr("Cancelar"))
         cancel.clicked.connect(self.reject)
-        save = button("Guardar", "check", "primary")
+        save = button(tr("Guardar"), "check", "primary")
         self.save_btn = save
         save.clicked.connect(self._save)
         buttons.addWidget(cancel)
@@ -143,16 +144,16 @@ class PrinterDialog(QDialog):
         self.language.blockSignals(True)
         self.language.clear()
         if kind == "system":
-            self.language.addItem("Driver de Windows (PDF, imágenes, etiquetas)", "driver")
-            self.language.addItem("ZPL directo (Zebra y compatibles, sin pasar por el driver)", "zpl")
+            self.language.addItem(tr("Driver de Windows (PDF, imágenes, etiquetas)"), "driver")
+            self.language.addItem(tr("ZPL directo (Zebra y compatibles, sin pasar por el driver)"), "zpl")
         elif kind == "network" and protocol in ("ipp", "ipps"):
-            self.language.addItem("PDF (IPP Everywhere / AirPrint)", "pdf")
+            self.language.addItem(tr("PDF (IPP Everywhere / AirPrint)"), "pdf")
         elif kind == "network":
-            self.language.addItem("ZPL (Zebra y compatibles)", "zpl")
-            self.language.addItem("PDF directo (impresoras que aceptan PDF en el 9100)", "pdf")
+            self.language.addItem(tr("ZPL (Zebra y compatibles)"), "zpl")
+            self.language.addItem(tr("PDF directo (impresoras que aceptan PDF en el 9100)"), "pdf")
         else:
-            self.language.addItem("PDF", "driver")
-            self.language.addItem("ZPL", "zpl")
+            self.language.addItem(tr("PDF"), "driver")
+            self.language.addItem(tr("ZPL"), "zpl")
         index = self.language.findData(self.original.language)
         self.language.setCurrentIndex(max(0, index))
         self.language.blockSignals(False)
@@ -171,21 +172,21 @@ class PrinterDialog(QDialog):
         lang = self.language.currentData()
         kind = self.original.kind
         if kind == "network" and lang == "zpl":
-            text = "Los PDF e imágenes se convierten a ZPL en este PC: no necesitas instalar driver."
+            text = tr("Los PDF e imágenes se convierten a ZPL en este PC: no necesitas instalar driver.")
         elif kind == "network":
-            text = "Se envía PDF directamente a la impresora (sin driver)."
+            text = tr("Se envía PDF directamente a la impresora (sin driver).")
         elif kind == "system" and lang == "zpl":
-            text = "Ideal para Zebra con driver ZDesigner: los PDF se convierten a ZPL y se envían en modo RAW."
+            text = tr("Ideal para Zebra con driver ZDesigner: los PDF se convierten a ZPL y se envían en modo RAW.")
         elif kind == "system":
-            text = "Imprime a través del driver de Windows. Ajusta el tamaño de etiqueta igual que en el driver."
+            text = tr("Imprime a través del driver de Windows. Ajusta el tamaño de etiqueta igual que en el driver.")
         else:
-            text = "Modo de pruebas: guarda cada etiqueta como archivo en lugar de imprimirla."
+            text = tr("Modo de pruebas: guarda cada etiqueta como archivo en lugar de imprimirla.")
         self.hint.setText(text)
         if kind == "network":
             self.ipp_path.setEnabled(self.protocol.currentData() != "raw")
 
     def _browse(self) -> None:
-        folder = QFileDialog.getExistingDirectory(self, "Carpeta de salida", self.output_dir.text())
+        folder = QFileDialog.getExistingDirectory(self, tr("Carpeta de salida"), self.output_dir.text())
         if folder:
             self.output_dir.setText(folder)
 
@@ -214,44 +215,44 @@ class PrinterDialog(QDialog):
 
     def _validate(self, p: PrinterProfile) -> str:
         if not p.alias:
-            return "Escribe un alias (por ejemplo «etiquetas»)."
+            return tr("Escribe un alias (por ejemplo «etiquetas»).")
         others = [x.alias.casefold() for x in self.ctx.cfg.data.printers if x.id != p.id]
         if p.alias.casefold() in others:
-            return f"Ya existe una impresora con el alias «{p.alias}»."
+            return tr("Ya existe una impresora con el alias «{0}».", p.alias)
         if p.kind == "system" and not p.system_name:
-            return "Elige la impresora de Windows."
+            return tr("Elige la impresora de Windows.")
         if p.kind == "network" and not p.host:
-            return "Escribe la IP de la impresora."
+            return tr("Escribe la IP de la impresora.")
         return ""
 
     def _test(self) -> None:
         p = self.profile()
         problem = self._validate(p) if p.alias else ""
         if problem and "alias" not in problem:
-            error(self, "Revisa los datos", problem)
+            error(self, tr("Revisa los datos"), problem)
             return
         self.test_btn.setEnabled(False)
-        self.test_btn.setText("Imprimiendo…")
+        self.test_btn.setText(tr("Imprimiendo…"))
 
         def done(detail: str) -> None:
             self._restore_test()
-            info(self, "Prueba enviada", f"Se envió la etiqueta de prueba ({detail}).")
+            info(self, tr("Prueba enviada"), tr("Se envió la etiqueta de prueba ({0}).", detail))
 
         def failed(message: str) -> None:
             self._restore_test()
-            error(self, "No se pudo imprimir", message)
+            error(self, tr("No se pudo imprimir"), message)
 
         run_async(lambda: self.ctx.engine.print_test(p), done, failed)
 
     def _restore_test(self) -> None:
         self.test_btn.setEnabled(True)
-        self.test_btn.setText("Imprimir prueba")
+        self.test_btn.setText(tr("Imprimir prueba"))
 
     def _save(self) -> None:
         p = self.profile()
         problem = self._validate(p)
         if problem:
-            error(self, "Revisa los datos", problem)
+            error(self, tr("Revisa los datos"), problem)
             return
         self.result_profile = p
         self.accept()

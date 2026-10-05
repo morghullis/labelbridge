@@ -12,6 +12,7 @@ from typing import Any, Callable
 from urllib.parse import urlparse
 
 from . import APP_NAME, __version__
+from .i18n import tr
 
 USER_AGENT = f"{APP_NAME}/{__version__}"
 DEFAULT_MAX_BYTES = 30 * 1024 * 1024
@@ -37,7 +38,7 @@ class HttpError(Exception):
         self.body = body
         self.url = url
         snippet = body[:300].decode("utf-8", "replace").strip()
-        super().__init__(f"HTTP {status}" + (f": {snippet}" if snippet else ""))
+        super().__init__(tr("HTTP {0}", status) + (f": {snippet}" if snippet else ""))
 
 
 @dataclass
@@ -57,7 +58,7 @@ class Response:
         try:
             return json.loads(self.body.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise NetworkError(f"La respuesta no es JSON válido ({self.url})") from exc
+            raise NetworkError(tr("La respuesta no es JSON válido ({0})", self.url)) from exc
 
 
 _SAFE_HEADERS = {"user-agent", "accept", "accept-encoding", "accept-language"}
@@ -145,7 +146,7 @@ def request(
         with _get_opener(url_guard).open(req, timeout=timeout) as resp:
             content = resp.read(max_bytes + 1)
             if len(content) > max_bytes:
-                raise NetworkError(f"La respuesta supera {max_bytes // (1024 * 1024)} MB")
+                raise NetworkError(tr("La respuesta supera {0} MB", max_bytes // (1024 * 1024)))
             resp_headers = {k.lower(): v for k, v in resp.headers.items()}
             return Response(resp.status, content, resp.geturl(), resp_headers)
     except urllib.error.HTTPError as exc:
@@ -156,6 +157,6 @@ def request(
         return Response(exc.code, content, url, resp_headers)
     except urllib.error.URLError as exc:
         before_send = isinstance(exc.reason, (socket.gaierror, ConnectionRefusedError, ssl.SSLCertVerificationError))
-        raise NetworkError(f"No se pudo conectar a {url}: {exc.reason}", maybe_sent=not before_send) from None
+        raise NetworkError(tr("No se pudo conectar a {0}: {1}", url, exc.reason), maybe_sent=not before_send) from None
     except (TimeoutError, OSError) as exc:
-        raise NetworkError(f"Error de red con {url}: {exc}") from None
+        raise NetworkError(tr("Error de red con {0}: {1}", url, exc)) from None

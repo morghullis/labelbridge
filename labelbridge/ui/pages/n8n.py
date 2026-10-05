@@ -9,6 +9,7 @@ from PySide6.QtWidgets import QCheckBox, QFormLayout, QHBoxLayout, QLineEdit, QS
 from ...config import slugify
 from ...connectors.mqtt import topics
 from ...events import CONFIG_EXTERNAL
+from ...i18n import tr
 from ...paths import resource_path
 from ...secret_store import MQTT_PASSWORD
 from ..context import AppContext
@@ -18,55 +19,55 @@ from ..widgets import Card, Page, Pill, SecretField, SwitchRow, button, error, l
 class N8nPage(Page):
     def __init__(self, ctx: AppContext) -> None:
         super().__init__(
-            "n8n · tiempo real",
-            "n8n se ejecuta solo cuando pasa algo en Shopify y envía la etiqueta a este equipo al instante.",
+            tr("n8n · tiempo real"),
+            tr("n8n se ejecuta solo cuando pasa algo en Shopify y envía la etiqueta a este equipo al instante."),
         )
         self.ctx = ctx
         s = ctx.cfg.data.mqtt
-        self.status = Pill("off", "Desactivado")
+        self.status = Pill("off", tr("Desactivado"))
         self.header_actions.addWidget(self.status)
 
-        how = Card("Cómo funciona")
+        how = Card(tr("Cómo funciona"))
         how.add(
             label(
-                "1. Shopify avisa a n8n (por ejemplo, <b>pedido pagado</b>): el flujo se ejecuta <b>una vez por pedido</b>, "
-                "sin consultas periódicas.<br>"
-                "2. n8n publica la etiqueta en el <b>canal de este equipo</b> (MQTT cifrado).<br>"
-                "3. LabelBridge la recibe en el acto y la imprime. Si el PC está apagado, la etiqueta "
-                "<b>espera en el canal</b> y sale al encenderlo.",
+                tr("1. Shopify avisa a n8n (por ejemplo, <b>pedido pagado</b>): el flujo se ejecuta <b>una vez por pedido</b>, "
+                   "sin consultas periódicas.<br>"
+                   "2. n8n publica la etiqueta en el <b>canal de este equipo</b> (MQTT cifrado).<br>"
+                   "3. LabelBridge la recibe en el acto y la imprime. Si el PC está apagado, la etiqueta "
+                   "<b>espera en el canal</b> y sale al encenderlo."),
                 wrap=True,
             )
         )
         self.add(how)
 
         conn = Card(
-            "Canal en tiempo real (MQTT)",
-            "Usa un broker MQTT con TLS, por ejemplo EMQX Serverless (cuota gratuita mensual). La guía explica cómo crearlo.",
+            tr("Canal en tiempo real (MQTT)"),
+            tr("Usa un broker MQTT con TLS, por ejemplo EMQX Serverless (cuota gratuita mensual). La guía explica cómo crearlo."),
         )
-        self.enabled = SwitchRow("Recibir trabajos de n8n en tiempo real", "Conexión saliente: no hay que abrir puertos.", s.enabled)
+        self.enabled = SwitchRow(tr("Recibir trabajos de n8n en tiempo real"), tr("Conexión saliente: no hay que abrir puertos."), s.enabled)
         conn.add(self.enabled)
         form = QFormLayout()
         form.setSpacing(10)
         self.host = QLineEdit(s.host)
         self.host.setPlaceholderText("xxxxxxxx.ala.us-east-1.emqxsl.com")
-        form.addRow("Servidor (broker)", self.host)
+        form.addRow(tr("Servidor (broker)"), self.host)
         self.port = QSpinBox()
         self.port.setRange(1, 65535)
         self.port.setValue(s.port)
-        form.addRow("Puerto", self.port)
-        self.tls = QCheckBox("Conexión cifrada (TLS) — recomendado")
+        form.addRow(tr("Puerto"), self.port)
+        self.tls = QCheckBox(tr("Conexión cifrada (TLS) — recomendado"))
         self.tls.setChecked(s.tls)
         form.addRow("", self.tls)
         self.username = QLineEdit(s.username)
         self.username.setPlaceholderText("labelbridge-pc")
-        form.addRow("Usuario", self.username)
-        self.password = SecretField("Contraseña del broker", copyable=False)
+        form.addRow(tr("Usuario"), self.username)
+        self.password = SecretField(tr("Contraseña del broker"), copyable=False)
         self.password.setText(ctx.secrets.get(MQTT_PASSWORD))
-        form.addRow("Contraseña", self.password)
+        form.addRow(tr("Contraseña"), self.password)
         self.channel = QLineEdit(s.channel)
-        self.channel.setPlaceholderText("pc-bodega")
+        self.channel.setPlaceholderText(tr("pc-bodega"))
         self.channel.textChanged.connect(self._update_topic)
-        form.addRow("Canal de este equipo", self.channel)
+        form.addRow(tr("Canal de este equipo"), self.channel)
         conn.add(layout=form)
         self.topic = label("", "Hint", wrap=True, selectable=True)
         conn.add(self.topic)
@@ -74,9 +75,9 @@ class N8nPage(Page):
         self.result.setVisible(False)
         conn.add(self.result)
         row = QHBoxLayout()
-        self.test_btn = button("Guardar y probar", "zap", "primary")
+        self.test_btn = button(tr("Guardar y probar"), "zap", "primary")
         self.test_btn.clicked.connect(self._test)
-        save = button("Guardar", "check")
+        save = button(tr("Guardar"), "check")
         save.clicked.connect(self._save)
         row.addWidget(self.test_btn)
         row.addWidget(save)
@@ -85,20 +86,20 @@ class N8nPage(Page):
         self.add(conn)
 
         templates = Card(
-            "Plantillas de n8n",
-            "Importa estos archivos en n8n (Workflows → Import from file). Todos se activan por eventos.",
+            tr("Plantillas de n8n"),
+            tr("Importa estos archivos en n8n (Workflows → Import from file). Todos se activan por eventos."),
         )
         for name, desc in (
-            ("01-pedido-a-labelbridge.json", "Pedido pagado → etiqueta de pedido al instante en este PC."),
-            ("02-comprar-etiqueta-shopify-shipping.json", "Compra la guía con Shopify Shipping y la envía a imprimir."),
-            ("03-etiqueta-a-metafield.json", "Guía de cualquier paquetería → metafield del pedido (sin broker)."),
-            ("04-avisar-errores.json", "Opcional: te avisa solo cuando una etiqueta falla."),
+            ("01-pedido-a-labelbridge.json", tr("Pedido pagado → etiqueta de pedido al instante en este PC.")),
+            ("02-comprar-etiqueta-shopify-shipping.json", tr("Compra la guía con Shopify Shipping y la envía a imprimir.")),
+            ("03-etiqueta-a-metafield.json", tr("Guía de cualquier paquetería → metafield del pedido (sin broker).")),
+            ("04-avisar-errores.json", tr("Opcional: te avisa solo cuando una etiqueta falla.")),
         ):
             templates.add(label(f"<b>{name}</b> — {desc}", wrap=True))
         row = QHBoxLayout()
-        folder = button("Abrir carpeta de plantillas", "folder")
+        folder = button(tr("Abrir carpeta de plantillas"), "folder")
         folder.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(resource_path("n8n")))))
-        guide = button("Ver guía paso a paso", "file", "ghost")
+        guide = button(tr("Ver guía paso a paso"), "file", "ghost")
         guide.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(resource_path("n8n", "README.md")))))
         row.addWidget(folder)
         row.addWidget(guide)
@@ -106,12 +107,12 @@ class N8nPage(Page):
         templates.add(layout=row)
         self.add(templates)
 
-        others = Card("Sin broker MQTT")
+        others = Card(tr("Sin broker MQTT"))
         others.add(
             label(
-                "• <b>Metafield</b>: n8n guarda la URL de la guía en el pedido y LabelBridge la lee desde Shopify "
-                "(pantalla Shopify → «Etiqueta desde un metafield»).<br>"
-                "• <b>n8n en tu misma red</b>: envía directo a la API local de este equipo (pantalla «API local»).",
+                tr("• <b>Metafield</b>: n8n guarda la URL de la guía en el pedido y LabelBridge la lee desde Shopify "
+                   "(pantalla Shopify → «Etiqueta desde un metafield»).<br>"
+                   "• <b>n8n en tu misma red</b>: envía directo a la API local de este equipo (pantalla «API local»)."),
                 wrap=True,
             )
         )
@@ -125,8 +126,7 @@ class N8nPage(Page):
     def _update_topic(self) -> None:
         channel = slugify(self.channel.text() or "pc")
         self.topic.setText(
-            f"En el nodo MQTT de n8n publica en <b>{topics(channel)['jobs']}/&lt;id del trabajo&gt;</b> "
-            "con QoS 1 y Retain activado (así espera si el PC está apagado)."
+            tr("En el nodo MQTT de n8n publica en <b>{0}/&lt;id del trabajo&gt;</b> con QoS 1 y Retain activado (así espera si el PC está apagado).", topics(channel)['jobs'])
         )
 
     def _on_event(self, kind: str, data) -> None:
@@ -149,7 +149,7 @@ class N8nPage(Page):
 
     def refresh(self) -> None:
         svc = self.ctx.services.mqtt
-        texts = {"ok": "Conectado", "connecting": "Conectando…", "error": "Error", "off": "Desactivado", "warn": "Aviso"}
+        texts = {"ok": tr("Conectado"), "connecting": tr("Conectando…"), "error": tr("Error"), "off": tr("Desactivado"), "warn": tr("Aviso")}
         self.status.set_state(svc.state, texts.get(svc.state, svc.state))
         self.status.setToolTip(svc.message)
 
@@ -157,7 +157,7 @@ class N8nPage(Page):
         s = self.ctx.cfg.data.mqtt
         host = self.host.text().strip().removeprefix("mqtts://").removeprefix("mqtt://").split("/")[0]
         if self.enabled.isChecked() and not host:
-            error(self, "n8n", "Escribe el servidor (broker) MQTT.")
+            error(self, "n8n", tr("Escribe el servidor (broker) MQTT."))
             return False
         s.enabled = self.enabled.isChecked()
         s.host = host

@@ -13,33 +13,34 @@ import uuid
 from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from pathlib import Path
 from typing import Any, Callable
+from .i18n import N_, tr
 
 log = logging.getLogger(__name__)
 
 # id -> (nombre visible, ancho mm, alto mm). "auto" = tamaño del documento / papel de la impresora.
 MEDIA_PRESETS: dict[str, tuple[str, float, float]] = {
-    "4x6": ("4 × 6 in (101.6 × 152.4 mm) · envío estándar", 101.6, 152.4),
-    "4x4": ("4 × 4 in (101.6 × 101.6 mm)", 101.6, 101.6),
-    "4x3": ("4 × 3 in (101.6 × 76.2 mm)", 101.6, 76.2),
-    "4x2": ("4 × 2 in (101.6 × 50.8 mm)", 101.6, 50.8),
-    "100x150": ("100 × 150 mm", 100.0, 150.0),
-    "100x100": ("100 × 100 mm", 100.0, 100.0),
-    "2.25x1.25": ("2.25 × 1.25 in (57 × 32 mm)", 57.15, 31.75),
-    "letter": ("Carta (8.5 × 11 in)", 215.9, 279.4),
-    "a4": ("A4 (210 × 297 mm)", 210.0, 297.0),
-    "auto": ("Automático (tamaño del documento / papel de la impresora)", 0.0, 0.0),
+    "4x6": (N_("4 × 6 in (101.6 × 152.4 mm) · envío estándar"), 101.6, 152.4),
+    "4x4": (N_("4 × 4 in (101.6 × 101.6 mm)"), 101.6, 101.6),
+    "4x3": (N_("4 × 3 in (101.6 × 76.2 mm)"), 101.6, 76.2),
+    "4x2": (N_("4 × 2 in (101.6 × 50.8 mm)"), 101.6, 50.8),
+    "100x150": (N_("100 × 150 mm"), 100.0, 150.0),
+    "100x100": (N_("100 × 100 mm"), 100.0, 100.0),
+    "2.25x1.25": (N_("2.25 × 1.25 in (57 × 32 mm)"), 57.15, 31.75),
+    "letter": (N_("Carta (8.5 × 11 in)"), 215.9, 279.4),
+    "a4": (N_("A4 (210 × 297 mm)"), 210.0, 297.0),
+    "auto": (N_("Automático (tamaño del documento / papel de la impresora)"), 0.0, 0.0),
 }
 
 LABEL_MEDIA = {"4x6", "4x4", "4x3", "4x2", "100x150", "100x100", "2.25x1.25"}
 # Tamaño de la guía de envío: se imprime a ese tamaño real en cualquier papel (rollo, carta o A4).
 LABEL_SIZES = {
-    "4x6": "4 × 6 in (tamaño real)",
-    "100x150": "100 × 150 mm (tamaño real)",
-    "fit": "Ajustar a la hoja",
+    "4x6": N_("4 × 6 in (tamaño real)"),
+    "100x150": N_("100 × 150 mm (tamaño real)"),
+    "fit": N_("Ajustar a la hoja"),
 }
 
-PRINTER_KINDS = {"system": "Windows (driver)", "network": "Red (IP directa)", "file": "Archivo (pruebas)"}
-LANGUAGES = {"driver": "Driver del sistema", "zpl": "ZPL (Zebra y compatibles)", "pdf": "PDF directo"}
+PRINTER_KINDS = {"system": N_("Windows (driver)"), "network": N_("Red (IP directa)"), "file": N_("Archivo (pruebas)")}
+LANGUAGES = {"driver": N_("Driver del sistema"), "zpl": N_("ZPL (Zebra y compatibles)"), "pdf": N_("PDF directo")}
 
 
 def new_id() -> str:
@@ -76,7 +77,7 @@ class PrinterProfile:
             scheme = {"raw": "tcp", "ipp": "ipp", "ipps": "ipps"}.get(self.protocol, "tcp")
             path = self.ipp_path if self.protocol in ("ipp", "ipps") else ""
             return f"{scheme}://{self.host}:{self.port}{path}"
-        return self.output_dir or "(carpeta de salida)"
+        return self.output_dir or tr("(carpeta de salida)")
 
     def display_name(self) -> str:
         return self.alias or self.target_text()
@@ -202,7 +203,7 @@ class SecuritySettings:
     max_message_mb: int = 30  # tamaño máximo de un mensaje de n8n (MQTT)
 
 
-ASSISTANT_EFFORTS = {"low": "Rápido (menos tokens)", "medium": "Equilibrado", "high": "Profundo (más tokens)"}
+ASSISTANT_EFFORTS = {"low": N_("Rápido (menos tokens)"), "medium": N_("Equilibrado"), "high": N_("Profundo (más tokens)")}
 
 
 @dataclass
@@ -306,7 +307,8 @@ class ConfigManager:
         if not source.exists():
             return Settings()
         try:
-            data = _from_dict(Settings, self._read(source))
+            raw = self._read(source)
+            data = _from_dict(Settings, raw)
         except Exception:
             backup = source.with_name(f"{source.stem}.corrupt-{int(time.time())}{source.suffix}")
             log.exception("%s dañado o ilegible; se guarda copia en %s y se usan valores por defecto", source.name, backup)
@@ -315,6 +317,11 @@ class ConfigManager:
             except OSError:
                 pass
             return Settings()
+        general = raw.get("general") if isinstance(raw, dict) else None
+        if isinstance(general, dict) and "language" not in general:
+            # Configuración de antes de la 1.7, cuando la app solo estaba en español: sigue en español aunque Windows
+            # (o el instalador de la actualización automática) esté en inglés. Se cambia en Ajustes.
+            data.general.language = "es"
         if source != self.store_path:  # config.json en texto de una versión anterior: se cifra y se borra
             self.data = data
             self._write()

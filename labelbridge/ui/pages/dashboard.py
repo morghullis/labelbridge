@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ...i18n import tr
 from ...models import SOURCE_LABELS, status_text
 from .. import icons
 from ..actions import enqueue_test_label
@@ -27,11 +28,11 @@ from ..widgets import Card, Page, Pill, ToggleSwitch, button, label
 
 class DashboardPage(Page):
     def __init__(self, ctx: AppContext, navigate: Callable[[str], None]) -> None:
-        super().__init__("Inicio", "Todo lo que llega de Shopify, n8n o la API se imprime solo en este equipo.")
+        super().__init__(tr("Inicio"), tr("Todo lo que llega de Shopify, n8n o la API se imprime solo en este equipo."))
         self.ctx = ctx
         self.navigate = navigate
 
-        test = button("Imprimir prueba", "printer", tooltip="Etiqueta de ejemplo en la impresora predeterminada")
+        test = button(tr("Imprimir prueba"), "printer", tooltip=tr("Etiqueta de ejemplo en la impresora predeterminada"))
         test.clicked.connect(self._print_test)
         self.test_btn = test
         self.header_actions.addWidget(test)
@@ -61,9 +62,9 @@ class DashboardPage(Page):
         # Contadores
         stats = QHBoxLayout()
         stats.setSpacing(16)
-        self.stat_done = self._stat(stats, "IMPRESAS HOY", "check")
-        self.stat_queue = self._stat(stats, "EN COLA", "clock")
-        self.stat_failed = self._stat(stats, "CON ERROR HOY", "alert")
+        self.stat_done = self._stat(stats, tr("IMPRESAS HOY"), "check")
+        self.stat_queue = self._stat(stats, tr("EN COLA"), "clock")
+        self.stat_failed = self._stat(stats, tr("CON ERROR HOY"), "alert")
         self.add(layout=stats)
 
         # Conexiones
@@ -82,14 +83,14 @@ class DashboardPage(Page):
             ico = label()
             ico.setPixmap(icons.pixmap(icon_name, "#4F46E5", 20))
             head.addWidget(ico)
-            head.addWidget(label(title, "CardTitle"))
+            head.addWidget(label(tr(title), "CardTitle"))
             head.addStretch(1)
             pill = Pill("off", "—")
             head.addWidget(pill)
             card.add(layout=head)
             message = label("", "Muted", wrap=True)
             card.add(message)
-            go = button("Configurar", None, "ghost")
+            go = button(tr("Configurar"), None, "ghost")
             go.setStyleSheet("color: #4F46E5; font-weight: 600; text-align: left;")
             go.clicked.connect(lambda _=False, p=page: self.navigate(p))
             card.add(go)
@@ -98,13 +99,13 @@ class DashboardPage(Page):
         self.add(layout=grid)
 
         # Últimos trabajos
-        recent = Card("Últimos trabajos")
-        see_all = button("Ver historial", None, "ghost")
+        recent = Card(tr("Últimos trabajos"))
+        see_all = button(tr("Ver historial"), None, "ghost")
         see_all.setStyleSheet("color: #4F46E5; font-weight: 600;")
         see_all.clicked.connect(lambda: self.navigate("history"))
         recent.header.addWidget(see_all)
         self.table = QTableWidget(0, 5)
-        self.table.setHorizontalHeaderLabels(["Hora", "Trabajo", "Origen", "Impresora", "Estado"])
+        self.table.setHorizontalHeaderLabels([tr("Hora"), tr("Trabajo"), tr("Origen"), tr("Impresora"), tr("Estado")])
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
@@ -117,7 +118,7 @@ class DashboardPage(Page):
         header.resizeSection(4, 130)
         self.table.setMinimumHeight(260)
         recent.add(self.table)
-        self.empty = label("Todavía no hay trabajos. Prueba con «Imprimir prueba».", "Muted")
+        self.empty = label(tr("Todavía no hay trabajos. Prueba con «Imprimir prueba»."), "Muted")
         recent.add(self.empty)
         self.add(recent)
         self.finish()
@@ -154,13 +155,13 @@ class DashboardPage(Page):
         self.auto_switch.blockSignals(False)
         if paused:
             self.banner_icon.setPixmap(icons.pixmap("pause", "#B45309", 28))
-            self.banner_title.setText("Impresión automática en pausa")
-            self.banner_desc.setText("Los trabajos se siguen recibiendo y quedan en cola hasta que la reanudes.")
+            self.banner_title.setText(tr("Impresión automática en pausa"))
+            self.banner_desc.setText(tr("Los trabajos se siguen recibiendo y quedan en cola hasta que la reanudes."))
         else:
             self.banner_icon.setPixmap(icons.pixmap("zap", "#4F46E5", 28))
-            self.banner_title.setText("Impresión automática activa")
+            self.banner_title.setText(tr("Impresión automática activa"))
             self.banner_desc.setText(
-                f"Equipo «{ctx.cfg.data.general.agent_name}». Las etiquetas se imprimen apenas llegan."
+                tr("Equipo «{0}». Las etiquetas se imprimen apenas llegan.", ctx.cfg.data.general.agent_name)
             )
 
         counts = ctx.store.counts()
@@ -172,16 +173,16 @@ class DashboardPage(Page):
         default = ctx.cfg.default_printer()
         pill, message = self.conn["printers"]
         if printers:
-            pill.set_state("ok", f"{len(printers)} lista(s)")
-            message.setText(f"Predeterminada: {default.display_name() if default else '—'}")
+            pill.set_state("ok", tr("{0} lista(s)", len(printers)))
+            message.setText(tr("Predeterminada: {0}", default.display_name() if default else '—'))
         else:
-            pill.set_state("warn", "Sin configurar")
-            message.setText("Agrega tu impresora de etiquetas para empezar.")
+            pill.set_state("warn", tr("Sin configurar"))
+            message.setText(tr("Agrega tu impresora de etiquetas para empezar."))
         for key, service in (("shopify", ctx.services.shopify), ("mqtt", ctx.services.mqtt), ("local_api", ctx.services.local_api)):
             pill, message = self.conn[key]
-            texts = {"ok": "Conectado", "connecting": "Conectando", "error": "Error", "warn": "Aviso", "off": "Desactivado"}
+            texts = {"ok": tr("Conectado"), "connecting": tr("Conectando"), "error": tr("Error"), "warn": tr("Aviso"), "off": tr("Desactivado")}
             if key == "local_api" and service.state == "ok":
-                texts["ok"] = "Activa"
+                texts["ok"] = tr("Activa")
             pill.set_state(service.state, texts.get(service.state, service.state))
             message.setText(service.message)
 
@@ -192,8 +193,8 @@ class DashboardPage(Page):
             values = [
                 when,
                 job["title"],
-                SOURCE_LABELS.get(job["source"], job["source"]),
-                job["printer_used"] or job["printer"] or "Predeterminada",
+                tr(SOURCE_LABELS.get(job["source"], job["source"])),
+                job["printer_used"] or job["printer"] or tr("Predeterminada"),
             ]
             for col, value in enumerate(values):
                 self.table.setItem(row, col, QTableWidgetItem(value))

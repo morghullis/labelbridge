@@ -13,6 +13,7 @@ from PySide6.QtCore import QEasingCurve, QEvent, QObject, QPointF, QRectF, Qt, Q
 from PySide6.QtGui import QColor, QCursor, QFocusEvent, QFont, QKeySequence, QPainter, QPainterPath, QPen, QRadialGradient, QShortcut
 from PySide6.QtWidgets import QFrame, QGraphicsOpacityEffect, QHBoxLayout, QPushButton, QVBoxLayout, QWidget
 
+from ..i18n import tr
 from . import icons
 from .mascot import Mascot, MascotView, paint_mascot
 from .widgets import label
@@ -256,8 +257,8 @@ class AssistantLauncher(QWidget):
         self.setFixedSize(DISC + 2 * PAD, DISC + 2 * PAD)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFocusPolicy(Qt.FocusPolicy.TabFocus)
-        self.setAccessibleName("Asistente")
-        self.setAccessibleDescription("Abre el chat del asistente")
+        self.setAccessibleName(tr("Asistente"))
+        self.setAccessibleDescription(tr("Abre el chat del asistente"))
         self._tooltip()
         self._anim = QVariantAnimation(self)
         self._anim.setDuration(170)
@@ -268,8 +269,8 @@ class AssistantLauncher(QWidget):
         mascot.changed.connect(self.update)
 
     def _tooltip(self) -> None:
-        extra = f" · {self.unread} respuesta(s) nueva(s)" if self.unread else ""
-        self.setToolTip(f"Asistente (F1){extra}")
+        extra = tr(" · {0} respuesta(s) nueva(s)", self.unread) if self.unread else ""
+        self.setToolTip(tr("Asistente (F1){0}", extra))
 
     def set_unread(self, count: int) -> None:
         self.unread = count
@@ -425,23 +426,23 @@ class AssistantPanel(QWidget):
         row.setContentsMargins(14, 10, 8, 10)
         row.setSpacing(10)
         self.face = MascotView(mascot, 44, badge=True)
-        self.face.setAccessibleName("Máscara del asistente")
+        self.face.setAccessibleName(tr("Máscara del asistente"))
         row.addWidget(self.face)
         titles = QVBoxLayout()
         titles.setSpacing(1)
         titles.addStretch(1)
-        titles.addWidget(label("Asistente", "AssistantTitle"))
+        titles.addWidget(label(tr("Asistente"), "AssistantTitle"))
         self.status = label("", "AssistantStatus")
         titles.addWidget(self.status)
         titles.addStretch(1)
         row.addLayout(titles, 1)
-        self.key_btn = self._icon_button("key", "Conectar IA: elegir el proveedor de IA y su clave")
+        self.key_btn = self._icon_button("key", tr("Conectar IA: elegir el proveedor de IA y su clave"))
         self.key_btn.clicked.connect(page.toggle_connect)
         row.addWidget(self.key_btn)
-        self.new_btn = self._icon_button("refresh", "Nueva conversación")
+        self.new_btn = self._icon_button("refresh", tr("Nueva conversación"))
         self.new_btn.clicked.connect(page.new_conversation)
         row.addWidget(self.new_btn)
-        self.min_btn = self._icon_button("chevron-down", "Minimizar (Esc)")
+        self.min_btn = self._icon_button("chevron-down", tr("Minimizar (Esc)"))
         self.min_btn.clicked.connect(self.minimize.emit)
         row.addWidget(self.min_btn)
         column.addWidget(header)

@@ -14,6 +14,7 @@ import socket
 from typing import Callable
 from urllib.parse import urlparse
 
+from ..i18n import tr
 from ..models import JobRequest
 from .audit import AuditLog
 from .ratelimit import FailureTracker, RateLimiter
@@ -64,13 +65,13 @@ class SecurityPolicy:
         if source in PUSH_SOURCES:
             allowed, wait = self._jobs.allow(f"{source}:{client}")
             if not allowed:
-                self.audit.record(source, "trabajo", "deny", client=client, detail="límite de trabajos por minuto")
+                self.audit.record(source, "trabajo", "deny", client=client, detail=tr("límite de trabajos por minuto"))
                 raise PolicyDenied(
-                    f"Demasiados trabajos: máximo {s.jobs_per_minute} por minuto. Espera unos segundos.", 429, wait
+                    tr("Demasiados trabajos: máximo {0} por minuto. Espera unos segundos.", s.jobs_per_minute), 429, wait
                 )
         if req.copies > max(1, s.max_copies):
             self.audit.record(source, "trabajo", "deny", client=client, detail=f"{req.copies} copias")
-            raise PolicyDenied(f"Máximo {s.max_copies} copias por trabajo (ajustable en Ajustes → Seguridad).", 400)
+            raise PolicyDenied(tr("Máximo {0} copias por trabajo (ajustable en Ajustes → Seguridad).", s.max_copies), 400)
         if req.url:
             self.check_url(req.url, source, resolve=False)
 
@@ -89,25 +90,25 @@ class SecurityPolicy:
         s = self.settings
         parsed = urlparse(url)
         if parsed.scheme not in ("http", "https"):
-            return "Solo se permiten descargas http(s)"
+            return tr("Solo se permiten descargas http(s)")
         if parsed.username or parsed.password:
-            return "La URL no puede llevar usuario y contraseña"
+            return tr("La URL no puede llevar usuario y contraseña")
         host = (parsed.hostname or "").rstrip(".").lower()
         if not host:
-            return "URL sin servidor"
+            return tr("URL sin servidor")
         internal = host == "localhost" or host.endswith(INTERNAL_SUFFIXES)
         for address in self._addresses(host, resolve):
             if address.is_link_local or address.is_multicast or address.is_unspecified:
-                return "Dirección reservada no permitida"
+                return tr("Dirección reservada no permitida")
             if address.is_loopback or address.is_private or address.is_reserved or address in CARRIER_NAT:
                 internal = True
         if internal:
             mode = s.private_urls if s.private_urls in PRIVATE_URL_MODES else "local_api"
             if mode == "always" or (mode == "local_api" and source in LOCAL_SOURCES):
                 return ""
-            return "Descargas desde la red interna no permitidas para este origen (Ajustes → Seguridad)"
+            return tr("Descargas desde la red interna no permitidas para este origen (Ajustes → Seguridad)")
         if parsed.scheme != "https" and s.require_https:
-            return "Las descargas desde internet deben usar https"
+            return tr("Las descargas desde internet deben usar https")
         return ""
 
     def _addresses(self, host: str, resolve: bool) -> list:

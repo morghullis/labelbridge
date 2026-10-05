@@ -11,6 +11,7 @@ import re
 from dataclasses import dataclass, field
 
 from ...config import ASSISTANT_EFFORTS, AssistantSettings
+from ...i18n import N_, tr
 
 EFFORTS = dict(ASSISTANT_EFFORTS)
 DEFAULT_PROVIDER = AssistantSettings().provider
@@ -45,14 +46,14 @@ class Provider:
     @property
     def short(self) -> str:
         """Nombre corto para los mensajes: «OpenAI», «Google», «Ollama»…"""
-        return self.name.split(" (")[0]
+        return tr(self.name).split(" (")[0]
 
     @property
     def default_model(self) -> str:
         return self.models[0][0] if self.models else ""
 
     def model_label(self, model: str) -> str:
-        return next((text.split(" · ")[0] for key, text in self.models if key == model), model)
+        return next((tr(text).split(" · ")[0] for key, text in self.models if key == model), model)
 
 
 PROVIDERS: dict[str, Provider] = {}
@@ -65,15 +66,15 @@ def _add(provider: Provider) -> None:
 _add(
     Provider(
         "anthropic",
-        "Anthropic (Claude)",
+        N_("Anthropic (Claude)"),
         "anthropic",
         "https://api.anthropic.com",
         keys_url="https://platform.claude.com/settings/keys",
         key_hint="sk-ant-…",
-        signup="Entra a platform.claude.com, agrega saldo en Billing y crea la clave en API Keys.",
+        signup=N_("Entra a platform.claude.com, agrega saldo en Billing y crea la clave en API Keys."),
         models=(
-            ("claude-opus-5-5", "Claude Opus 5.5 · el más preciso"),
-            ("claude-sonnet-5-5", "Claude Sonnet 5.5 · más económico"),
+            ("claude-opus-5-5", N_("Claude Opus 5.5 · el más preciso")),
+            ("claude-sonnet-5-5", N_("Claude Sonnet 5.5 · más económico")),
         ),
         prices={
             "claude-opus-5-5": (4.0, 20.0, 5.0, 0.20),
@@ -85,16 +86,16 @@ _add(
 _add(
     Provider(
         "openai",
-        "OpenAI (ChatGPT)",
+        N_("OpenAI (ChatGPT)"),
         "openai-responses",
         "https://api.openai.com/v1",
         keys_url="https://platform.openai.com/api-keys",
         key_hint="sk-…",
-        signup="Entra a platform.openai.com, agrega saldo en Billing y crea la clave en API keys.",
+        signup=N_("Entra a platform.openai.com, agrega saldo en Billing y crea la clave en API keys."),
         models=(
-            ("gpt-6.1-sol", "GPT-6.1 Sol · equilibrado"),
-            ("gpt-6-astra", "GPT-6 Astra · el más capaz"),
-            ("gpt-6-luna", "GPT-6 Luna · el más económico"),
+            ("gpt-6.1-sol", N_("GPT-6.1 Sol · equilibrado")),
+            ("gpt-6-astra", N_("GPT-6 Astra · el más capaz")),
+            ("gpt-6-luna", N_("GPT-6 Luna · el más económico")),
         ),
         # Precios públicos (estándar, prompts de hasta 272 K tokens) a octubre de 2026.
         prices={
@@ -120,18 +121,18 @@ _add(
 _add(
     Provider(
         "gemini",
-        "Google (Gemini)",
+        N_("Google (Gemini)"),
         "gemini",
         "https://generativelanguage.googleapis.com/v1beta",
         keys_url="https://aistudio.google.com/apikey",
         key_hint="AIza…",
-        signup="Entra a aistudio.google.com con tu cuenta de Google y pulsa Get API key → Create API key. Hay un "
-        "nivel gratuito con límites (en ese nivel Google puede usar las conversaciones para mejorar sus productos); "
-        "para más uso, activa la facturación.",
+        signup=N_("Entra a aistudio.google.com con tu cuenta de Google y pulsa Get API key → Create API key. Hay un "
+           "nivel gratuito con límites (en ese nivel Google puede usar las conversaciones para mejorar sus productos); "
+           "para más uso, activa la facturación."),
         models=(
-            ("gemini-3.8-flash", "Gemini 3.8 Flash · equilibrado"),
-            ("gemini-3.1-pro-preview", "Gemini 3.1 Pro (preview) · el más capaz"),
-            ("gemini-3.5-flash-lite", "Gemini 3.5 Flash-Lite · el más económico"),
+            ("gemini-3.8-flash", N_("Gemini 3.8 Flash · equilibrado")),
+            ("gemini-3.1-pro-preview", N_("Gemini 3.1 Pro (preview) · el más capaz")),
+            ("gemini-3.5-flash-lite", N_("Gemini 3.5 Flash-Lite · el más económico")),
         ),
         # Nivel de pago estándar, prompts de hasta 200 K tokens, a octubre de 2026. La caché implícita no cobra
         # escritura. Gemini 3.6–3.8 Flash suben a 1.50 / 7.50 USD desde el 1 de enero de 2027.
@@ -155,17 +156,17 @@ _add(
 _add(
     Provider(
         "openrouter",
-        "OpenRouter (cientos de modelos)",
+        N_("OpenRouter (cientos de modelos)"),
         "openai-chat",
         "https://openrouter.ai/api/v1",
         keys_url="https://openrouter.ai/settings/keys",
         key_hint="sk-or-…",
-        signup="Entra a openrouter.ai, agrega créditos y crea la clave en Settings → Keys. Con una sola clave usas "
-        "modelos de Anthropic, OpenAI, Google, DeepSeek y más.",
+        signup=N_("Entra a openrouter.ai, agrega créditos y crea la clave en Settings → Keys. Con una sola clave usas "
+           "modelos de Anthropic, OpenAI, Google, DeepSeek y más."),
         models=(
-            ("anthropic/claude-sonnet-5.5", "Claude Sonnet 5.5 (vía OpenRouter)"),
-            ("openai/gpt-6.1-sol", "GPT-6.1 Sol (vía OpenRouter)"),
-            ("deepseek/deepseek-v4.1-flash", "DeepSeek V4.1 Flash (vía OpenRouter) · económico"),
+            ("anthropic/claude-sonnet-5.5", N_("Claude Sonnet 5.5 (vía OpenRouter)")),
+            ("openai/gpt-6.1-sol", N_("GPT-6.1 Sol (vía OpenRouter)")),
+            ("deepseek/deepseek-v4.1-flash", N_("DeepSeek V4.1 Flash (vía OpenRouter) · económico")),
         ),
         any_model=True,
         effort_param="reasoning",
@@ -177,15 +178,15 @@ _add(
 _add(
     Provider(
         "deepseek",
-        "DeepSeek",
+        N_("DeepSeek"),
         "openai-chat",
         "https://api.deepseek.com",
         keys_url="https://platform.deepseek.com/api_keys",
         key_hint="sk-…",
-        signup="Entra a platform.deepseek.com, recarga saldo (Top up) y crea la clave en API keys.",
+        signup=N_("Entra a platform.deepseek.com, recarga saldo (Top up) y crea la clave en API keys."),
         models=(
-            ("deepseek-flash", "DeepSeek V4.1 Flash · económico"),
-            ("deepseek-v4-pro", "DeepSeek V4 Pro · el más capaz"),
+            ("deepseek-flash", N_("DeepSeek V4.1 Flash · económico")),
+            ("deepseek-v4-pro", N_("DeepSeek V4 Pro · el más capaz")),
         ),
         effort_param="reasoning_effort",
         reasoning_field="reasoning_content",  # con herramientas, DeepSeek exige que se devuelva
@@ -196,13 +197,13 @@ _add(
 _add(
     Provider(
         "groq",
-        "Groq",
+        N_("Groq"),
         "openai-chat",
         "https://api.groq.com/openai/v1",
         keys_url="https://console.groq.com/keys",
         key_hint="gsk_…",
-        signup="Entra a console.groq.com y crea la clave en API Keys.",
-        models=(("openai/gpt-oss-120b", "GPT-OSS 120B (en Groq) · muy rápido"),),
+        signup=N_("Entra a console.groq.com y crea la clave en API Keys."),
+        models=(("openai/gpt-oss-120b", N_("GPT-OSS 120B (en Groq) · muy rápido")),),
         any_model=True,
         effort_param="reasoning_effort",
         max_param="max_completion_tokens",
@@ -212,13 +213,13 @@ _add(
 _add(
     Provider(
         "xai",
-        "xAI (Grok)",
+        N_("xAI (Grok)"),
         "openai-chat",
         "https://api.x.ai/v1",
         keys_url="https://console.x.ai",
         key_hint="xai-…",
-        signup="Entra a console.x.ai, agrega créditos y crea la clave en API Keys.",
-        models=(("grok-4.3", "Grok 4.3 · equilibrado"), ("grok-4.7", "Grok 4.7 · el más capaz")),
+        signup=N_("Entra a console.x.ai, agrega créditos y crea la clave en API Keys."),
+        models=(("grok-4.3", N_("Grok 4.3 · equilibrado")), ("grok-4.7", N_("Grok 4.7 · el más capaz"))),
         effort_param="reasoning_effort",
         max_param="max_completion_tokens",
         cache_key=True,
@@ -229,14 +230,14 @@ _add(
 _add(
     Provider(
         "mistral",
-        "Mistral AI",
+        N_("Mistral AI"),
         "openai-chat",
         "https://api.mistral.ai/v1",
         keys_url="https://console.mistral.ai/api-keys",
-        signup="Entra a console.mistral.ai, activa un plan de pago o de prueba y crea la clave en API Keys.",
+        signup=N_("Entra a console.mistral.ai, activa un plan de pago o de prueba y crea la clave en API Keys."),
         models=(
-            ("mistral-medium-latest", "Mistral Medium · equilibrado"),
-            ("mistral-small-latest", "Mistral Small · económico"),
+            ("mistral-medium-latest", N_("Mistral Medium · equilibrado")),
+            ("mistral-small-latest", N_("Mistral Small · económico")),
         ),
         prices={"mistral-medium-latest": (1.5, 7.5, 1.5, 0.15), "mistral-small-latest": (0.15, 0.60, 0.15, 0.015)},
     )
@@ -244,12 +245,12 @@ _add(
 _add(
     Provider(
         "together",
-        "Together AI",
+        N_("Together AI"),
         "openai-chat",
         "https://api.together.ai/v1",
         keys_url="https://api.together.ai/settings/api-keys",
-        signup="Entra a together.ai, agrega créditos y crea la clave en Settings → API Keys.",
-        models=(("zai-org/GLM-5.3-Flash", "GLM-5.3 Flash (en Together) · económico"),),
+        signup=N_("Entra a together.ai, agrega créditos y crea la clave en Settings → API Keys."),
+        models=(("zai-org/GLM-5.3-Flash", N_("GLM-5.3 Flash (en Together) · económico")),),
         any_model=True,
         effort_param="reasoning_effort",
         reasoning_field="*",
@@ -259,44 +260,44 @@ _add(
 _add(
     Provider(
         "ollama",
-        "Ollama (en tu equipo)",
+        N_("Ollama (en tu equipo)"),
         "openai-chat",
         "http://localhost:11434/v1",
         keys_url="https://ollama.com/download",
-        signup="Instala Ollama (ollama.com) y descarga un modelo que use herramientas, por ejemplo "
-        "<code>ollama pull qwen3.6:27b</code>.",
-        models=(("qwen3.6:27b", "Qwen 3.6 27B · con herramientas"),),
+        signup=N_("Instala Ollama (ollama.com) y descarga un modelo que use herramientas, por ejemplo "
+           "<code>ollama pull qwen3.6:27b</code>."),
+        models=(("qwen3.6:27b", N_("Qwen 3.6 27B · con herramientas")),),
         needs_key=False,
         local=True,
         any_model=True,
         effort_param="reasoning_effort",
         reasoning_field="reasoning",
-        note="Sube el contexto a 64000 o más (en la app de Ollama, o con OLLAMA_CONTEXT_LENGTH=64000): con el de "
-        "fábrica el modelo no ve todas las instrucciones.",
+        note=N_("Sube el contexto a 64000 o más (en la app de Ollama, o con OLLAMA_CONTEXT_LENGTH=64000): con el de "
+           "fábrica el modelo no ve todas las instrucciones."),
     )
 )
 _add(
     Provider(
         "lmstudio",
-        "LM Studio (en tu equipo)",
+        N_("LM Studio (en tu equipo)"),
         "openai-chat",
         "http://localhost:1234/v1",
         keys_url="https://lmstudio.ai/download",
-        signup="Instala LM Studio, descarga un modelo que use herramientas y en Developer pulsa «Start Server».",
+        signup=N_("Instala LM Studio, descarga un modelo que use herramientas y en Developer pulsa «Start Server»."),
         needs_key=False,
         local=True,
         any_model=True,
-        note="Carga el modelo con un contexto de 32000 o más.",
+        note=N_("Carga el modelo con un contexto de 32000 o más."),
     )
 )
 _add(
     Provider(
         "custom",
-        "Otra API compatible con OpenAI",
+        N_("Otra API compatible con OpenAI"),
         "openai-chat",
         "",
-        signup="Escribe la dirección de tu servidor (por ejemplo https://mi-servidor.com/v1), el modelo y, si lo pide, "
-        "la clave.",
+        signup=N_("Escribe la dirección de tu servidor (por ejemplo https://mi-servidor.com/v1), el modelo y, si lo pide, "
+           "la clave."),
         needs_key=False,
         any_model=True,
         effort_param="reasoning_effort",

@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from .. import APP_NAME, __version__
+from ..i18n import N_, tr
 from . import icons
 from .context import AppContext
 from .pages.dashboard import DashboardPage
@@ -36,17 +37,17 @@ from .widgets import label
 log = logging.getLogger(__name__)
 
 NAV = (
-    ("guide", "Guía paso a paso", "book"),
-    ("assistant", "Asistente", "chat"),  # no es una pantalla: abre y cierra el chat flotante
-    ("home", "Inicio", "home"),
-    ("orders", "Pedidos", "package"),
-    ("printers", "Impresoras", "printer"),
-    ("shopify", "Shopify", "shop"),
-    ("n8n", "n8n", "flow"),
-    ("api", "API local", "server"),
-    ("history", "Historial", "clock"),
-    ("settings", "Ajustes", "sliders"),
-    ("logs", "Registro", "activity"),
+    ("guide", N_("Guía paso a paso"), "book"),
+    ("assistant", N_("Asistente"), "chat"),  # no es una pantalla: abre y cierra el chat flotante
+    ("home", N_("Inicio"), "home"),
+    ("orders", N_("Pedidos"), "package"),
+    ("printers", N_("Impresoras"), "printer"),
+    ("shopify", N_("Shopify"), "shop"),
+    ("n8n", N_("n8n"), "flow"),
+    ("api", N_("API local"), "server"),
+    ("history", N_("Historial"), "clock"),
+    ("settings", N_("Ajustes"), "sliders"),
+    ("logs", N_("Registro"), "activity"),
 )
 
 
@@ -125,7 +126,7 @@ class MainWindow(QMainWindow):
         names = QVBoxLayout()
         names.setSpacing(0)
         names.addWidget(label(APP_NAME, "Brand"))
-        names.addWidget(label("Etiquetas automáticas", "BrandSub"))
+        names.addWidget(label(tr("Etiquetas automáticas"), "BrandSub"))
         brand.addLayout(names, 1)
         col.addLayout(brand)
         col.addSpacing(18)
@@ -134,7 +135,7 @@ class MainWindow(QMainWindow):
         self.nav_group.setExclusive(True)
         self.nav_buttons: dict[str, QPushButton] = {}
         for key, text, icon_name in NAV:
-            btn = QPushButton(f"  {text}")
+            btn = QPushButton(f"  {tr(text)}")
             btn.setObjectName("NavButton")
             btn.setCheckable(True)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -203,13 +204,13 @@ class MainWindow(QMainWindow):
         self._mark_assistant_tab(False)
         from PySide6.QtWidgets import QMessageBox
 
-        QMessageBox.information(self, "Asistente", "No se pudo cargar el asistente en este equipo. "
-                                "El resto de LabelBridge funciona con normalidad.")
+        QMessageBox.information(self, tr("Asistente"), tr("No se pudo cargar el asistente en este equipo. "
+                                   "El resto de LabelBridge funciona con normalidad."))
 
     def _set_orders_badge(self, count: int) -> None:
         self.orders_badge.setText(str(count))
         self.orders_badge.setVisible(count > 0)
-        self.orders_badge.setToolTip(f"{count} pedido(s) necesitan acción")
+        self.orders_badge.setToolTip(tr("{0} pedido(s) necesitan acción", count))
 
     def _mark_assistant_tab(self, is_open: bool) -> None:
         btn = self.nav_buttons["assistant"]
@@ -242,7 +243,7 @@ class MainWindow(QMainWindow):
     # --- actualizaciones -------------------------------------------------------------------
     def announce_update(self, info, prompt: bool = True) -> None:
         self.pending_update = info
-        self.update_pill.setText(f"  Actualizar a la {info.version}")
+        self.update_pill.setText(tr("  Actualizar a la {0}", info.version))
         self.update_pill.setVisible(True)
         if not prompt or info.version in self._prompted_versions:
             return
@@ -251,7 +252,7 @@ class MainWindow(QMainWindow):
             self.open_update_dialog(info)
         else:
             self.ctx.events.notify(
-                "Nueva versión de LabelBridge", f"La versión {info.version} está lista. Haz clic aquí para actualizar."
+                tr("Nueva versión de LabelBridge"), tr("La versión {0} está lista. Haz clic aquí para actualizar.", info.version)
             )
 
     def check_updates_now(self) -> None:
@@ -262,7 +263,7 @@ class MainWindow(QMainWindow):
         def done(found) -> None:
             if found is None:
                 self.show_and_raise()
-                show_info(self, "Actualizaciones", f"Ya tienes la última versión de LabelBridge ({current}).")
+                show_info(self, tr("Actualizaciones"), tr("Ya tienes la última versión de LabelBridge ({0}).", current))
             else:
                 self.announce_update(found, prompt=False)
                 self.open_update_dialog(found)
@@ -270,7 +271,7 @@ class MainWindow(QMainWindow):
         run_async(
             self.ctx.services.updates.check_now,
             done,
-            lambda message: error(self, "Actualizaciones", f"No se pudo comprobar si hay versiones nuevas: {message}"),
+            lambda message: error(self, tr("Actualizaciones"), tr("No se pudo comprobar si hay versiones nuevas: {0}", message)),
         )
 
     def update_failed(self, info) -> None:
@@ -284,16 +285,16 @@ class MainWindow(QMainWindow):
 
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Icon.Warning)
-        box.setWindowTitle("La actualización no se completó")
-        box.setText(f"No se pudo instalar la versión {info.version}; sigues con la {__version__}.")
+        box.setWindowTitle(tr("La actualización no se completó"))
+        box.setText(tr("No se pudo instalar la versión {0}; sigues con la {1}.", info.version, __version__))
         box.setInformativeText(
-            "Puedes reintentarlo ahora o descargar el instalador desde la página de descargas. El detalle quedó en "
-            "los registros (actualizacion.log e instalador.log)."
+            tr("Puedes reintentarlo ahora o descargar el instalador desde la página de descargas. El detalle quedó en "
+               "los registros (actualizacion.log e instalador.log).")
         )
-        retry = box.addButton("Reintentar", QMessageBox.ButtonRole.AcceptRole)
-        page = box.addButton("Página de descargas", QMessageBox.ButtonRole.ActionRole)
-        logs = box.addButton("Ver registros", QMessageBox.ButtonRole.ActionRole)
-        box.addButton("Cerrar", QMessageBox.ButtonRole.RejectRole)
+        retry = box.addButton(tr("Reintentar"), QMessageBox.ButtonRole.AcceptRole)
+        page = box.addButton(tr("Página de descargas"), QMessageBox.ButtonRole.ActionRole)
+        logs = box.addButton(tr("Ver registros"), QMessageBox.ButtonRole.ActionRole)
+        box.addButton(tr("Cerrar"), QMessageBox.ButtonRole.RejectRole)
         box.exec()
         clicked = box.clickedButton()
         if clicked is retry:
@@ -317,8 +318,22 @@ class MainWindow(QMainWindow):
         paused = self.ctx.cfg.data.general.paused
         queued = self.ctx.store.counts()["queued"]
         dot = "🟡" if paused else "🟢"
-        self.status_title.setText(f"{dot}  {'En pausa' if paused else 'Imprimiendo'}")
-        self.status_detail.setText(f"{self.ctx.cfg.data.general.agent_name} · {queued} en cola")
+        self.status_title.setText(f"{dot}  {tr('En pausa') if paused else tr('Imprimiendo')}")
+        self.status_detail.setText(tr("{0} · {1} en cola", self.ctx.cfg.data.general.agent_name, queued))
+
+    def restart_app(self) -> None:
+        """Cierra y vuelve a abrir la app (la nueva espera a que esta termine de cerrarse)."""
+        import sys
+        from pathlib import Path
+
+        from PySide6.QtCore import QProcess
+
+        args = ["--show", "--restart"]
+        if getattr(sys, "frozen", False):
+            QProcess.startDetached(sys.executable, args)
+        else:
+            QProcess.startDetached(sys.executable, ["-m", "labelbridge", *args], str(Path(__file__).resolve().parents[2]))
+        self.quit_app()
 
     def connect_store(self) -> None:
         """Pantalla Shopify con la tienda del instalador ya escrita: falta pegar la clave secreta y probar."""
@@ -343,4 +358,4 @@ class MainWindow(QMainWindow):
         self.hide()
         if not self._hint_shown:
             self._hint_shown = True
-            self.ctx.events.notify(APP_NAME, "Sigo imprimiendo en segundo plano. Abre la app desde la bandeja del sistema.")
+            self.ctx.events.notify(APP_NAME, tr("Sigo imprimiendo en segundo plano. Abre la app desde la bandeja del sistema."))

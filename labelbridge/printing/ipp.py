@@ -11,6 +11,7 @@ import itertools
 import ssl
 import struct
 from typing import Any
+from ..i18n import tr
 
 # Etiquetas de grupo
 OPERATION_ATTRS = 0x01
@@ -82,7 +83,7 @@ def encode_request(
 def decode_response(data: bytes) -> tuple[int, dict[str, list[Any]]]:
     """Devuelve (status-code, atributos) aplanando todos los grupos."""
     if len(data) < 8:
-        raise IppError("Respuesta IPP demasiado corta")
+        raise IppError(tr("Respuesta IPP demasiado corta"))
     _major, _minor, status, _rid = struct.unpack(">BBHI", data[:8])
     attrs: dict[str, list[Any]] = {}
     pos, last_name = 8, ""
@@ -142,14 +143,13 @@ def _post(
             fingerprint = hashlib.sha256(der).hexdigest()
             if pin and fingerprint != pin.lower():
                 raise CertificateMismatch(
-                    f"El certificado de {host} cambió desde que se configuró la impresora. "
-                    "Si es correcto, edita la impresora y marca «Volver a confiar en el certificado»."
+                    tr("El certificado de {0} cambió desde que se configuró la impresora. Si es correcto, edita la impresora y marca «Volver a confiar en el certificado».", host)
                 )
         conn.request("POST", path or "/", body=body, headers={"Content-Type": "application/ipp"})
         resp = conn.getresponse()
         payload = resp.read()
         if resp.status != 200:
-            raise IppError(f"HTTP {resp.status} desde {host}:{port}{path}")
+            raise IppError(tr("HTTP {0} desde {1}:{2}{3}", resp.status, host, port, path))
         return payload, fingerprint
     finally:
         conn.close()
@@ -183,7 +183,7 @@ def get_printer_attributes(
     payload, _ = _post(host, port, path, body, tls, timeout)
     status, attrs = decode_response(payload)
     if status >= 0x0100:
-        raise IppError(f"La impresora respondió con error IPP 0x{status:04x}")
+        raise IppError(tr("La impresora respondió con error IPP 0x{0:04x}", status))
     return attrs
 
 
@@ -220,5 +220,5 @@ def print_job(
     status, attrs = decode_response(payload)
     if status >= 0x0100:
         message = (attrs.get("status-message") or [""])[0]
-        raise IppError(f"La impresora rechazó el trabajo (IPP 0x{status:04x}) {message}".strip())
+        raise IppError(tr("La impresora rechazó el trabajo (IPP 0x{0:04x}) {1}", status, message).strip())
     return int((attrs.get("job-id") or [0])[0]), fingerprint

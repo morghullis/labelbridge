@@ -31,11 +31,12 @@ from ...assistant.providers import (
 )
 from ...config import ASSISTANT_EFFORTS
 from ...events import CONFIG_EXTERNAL
+from ...i18n import LANGUAGES, tr
 from ...paths import data_dir, logs_dir, output_dir
 from ...system import autostart
 from ...updater import UPDATES_PAGE
 from ..context import AppContext
-from ..widgets import Card, Page, button, label, run_async
+from ..widgets import Card, Page, button, confirm, label, run_async
 
 
 def _combo(options: dict[str, str]) -> QComboBox:
@@ -62,72 +63,78 @@ def _price_spin() -> QDoubleSpinBox:
     spin.setRange(-1, 1000)
     spin.setDecimals(3)
     spin.setSingleStep(0.25)
-    spin.setSuffix(" USD")
-    spin.setSpecialValueText("Automático")
+    spin.setSuffix(tr(" USD"))
+    spin.setSpecialValueText(tr("Automático"))
     return spin
 
 
 class SettingsPage(Page):
     def __init__(self, ctx: AppContext) -> None:
-        super().__init__("Ajustes", "Comportamiento del agente en este equipo.")
+        super().__init__(tr("Ajustes"), tr("Comportamiento del agente en este equipo."))
         self.ctx = ctx
         g = ctx.cfg.data.general
         lb = ctx.cfg.data.labels
 
-        general = Card("General")
+        general = Card(tr("General"))
         form = QFormLayout()
         form.setSpacing(10)
         self.agent = QLineEdit(g.agent_name)
-        form.addRow("Nombre de este equipo", self.agent)
-        self.autostart = QCheckBox("Iniciar LabelBridge al encender Windows")
+        form.addRow(tr("Nombre de este equipo"), self.agent)
+        self.autostart = QCheckBox(tr("Iniciar LabelBridge al encender Windows"))
         self.autostart.setChecked(g.start_with_windows)
         if not autostart.supported():
-            self.autostart.setToolTip("Se aplica en la versión instalada para Windows")
+            self.autostart.setToolTip(tr("Se aplica en la versión instalada para Windows"))
         form.addRow("", self.autostart)
-        self.minimized = QCheckBox("Iniciar minimizado en la bandeja del sistema")
+        self.minimized = QCheckBox(tr("Iniciar minimizado en la bandeja del sistema"))
         self.minimized.setChecked(g.start_minimized)
         form.addRow("", self.minimized)
-        self.auto_discover = QCheckBox("Buscar impresoras automáticamente al conectarse a una red (Wi‑Fi / LAN)")
+        self.auto_discover = QCheckBox(tr("Buscar impresoras automáticamente al conectarse a una red (Wi‑Fi / LAN)"))
         self.auto_discover.setChecked(g.auto_discover)
         form.addRow("", self.auto_discover)
-        self.notify_errors = QCheckBox("Avisar cuando una etiqueta no se pueda imprimir")
+        self.notify_errors = QCheckBox(tr("Avisar cuando una etiqueta no se pueda imprimir"))
         self.notify_errors.setChecked(g.notify_errors)
         form.addRow("", self.notify_errors)
-        self.notify_printed = QCheckBox("Avisar cada vez que se imprime una etiqueta")
+        self.notify_printed = QCheckBox(tr("Avisar cada vez que se imprime una etiqueta"))
         self.notify_printed.setChecked(g.notify_printed)
         form.addRow("", self.notify_printed)
         self.retries = QSpinBox()
         self.retries.setRange(0, 20)
         self.retries.setValue(g.max_retries)
-        form.addRow("Reintentos si la impresora falla", self.retries)
+        form.addRow(tr("Reintentos si la impresora falla"), self.retries)
         self.retention = QSpinBox()
         self.retention.setRange(1, 365)
-        self.retention.setSuffix(" días")
+        self.retention.setSuffix(tr(" días"))
         self.retention.setValue(g.retention_days)
-        form.addRow("Guardar historial", self.retention)
+        form.addRow(tr("Guardar historial"), self.retention)
+        self.language = QComboBox()
+        self.language.addItem(tr("Automático (el del instalador o el de Windows)"), "")
+        for code, name in LANGUAGES.items():
+            self.language.addItem(name, code)  # cada idioma con su propio nombre
+        self.language.setCurrentIndex(max(0, self.language.findData(g.language)))
+        form.addRow(tr("Idioma / Language"), self.language)
         general.add(layout=form)
         self.add(general)
 
         label_card = Card(
-            "Etiqueta de pedido generada",
-            "Datos del remitente y contenido de la etiqueta que LabelBridge genera a partir del pedido.",
+            tr("Etiqueta de pedido generada"),
+            tr("Datos del remitente y contenido de la etiqueta que LabelBridge genera a partir del pedido."),
         )
         form = QFormLayout()
         form.setSpacing(10)
         self.store_name = QLineEdit(lb.store_name)
-        self.store_name.setPlaceholderText("Nombre de tu tienda")
-        form.addRow("Remitente", self.store_name)
+        self.store_name.setPlaceholderText(tr("Nombre de tu tienda"))
+        form.addRow(tr("Remitente"), self.store_name)
         self.sender = QPlainTextEdit(lb.sender_address)
-        self.sender.setPlaceholderText("Calle y número\nCiudad, Estado CP\nTeléfono")
+        self.sender.setPlaceholderText(tr("Calle y número\nCiudad, Estado CP\nTeléfono"))
         self.sender.setFixedHeight(84)
-        form.addRow("Dirección", self.sender)
-        self.show_items = QCheckBox("Incluir la lista de productos")
+        form.addRow(tr("Dirección"), self.sender)
+        self.show_items = QCheckBox(tr("Incluir la lista de productos"))
         self.show_items.setChecked(lb.show_items)
         form.addRow("", self.show_items)
-        self.show_qr = QCheckBox("Incluir QR al pedido en Shopify (para escanear en bodega)")
+        self.show_qr = QCheckBox(tr("Incluir QR al pedido en Shopify (para escanear en bodega)"))
         self.show_qr.setChecked(lb.show_qr)
         form.addRow("", self.show_qr)
-        self.show_price = QCheckBox("Incluir el total del pedido")
+        self.show_price = QCheckBox(tr("Incluir el total del pedido"))
         self.show_price.setChecked(lb.show_price)
         form.addRow("", self.show_price)
         label_card.add(layout=form)
@@ -135,107 +142,107 @@ class SettingsPage(Page):
 
         row = QHBoxLayout()
         row.addStretch(1)
-        save = button("Guardar ajustes", "check", "primary")
+        save = button(tr("Guardar ajustes"), "check", "primary")
         self.save_btn = save
         save.clicked.connect(self._save)
         row.addWidget(save)
         self.add(layout=row)
 
         assistant = Card(
-            "Asistente",
-            "Funciona con Claude, OpenAI (ChatGPT), Gemini o cualquier API compatible con OpenAI, con tu propia clave "
-            "(pagas por uso a tu proveedor). Los permisos y límites valen igual para cualquier modelo. Proveedor, modelo "
-            "y nivel se aplican a las conversaciones nuevas.",
+            tr("Asistente"),
+            tr("Funciona con Claude, OpenAI (ChatGPT), Gemini o cualquier API compatible con OpenAI, con tu propia clave "
+               "(pagas por uso a tu proveedor). Los permisos y límites valen igual para cualquier modelo. Proveedor, modelo "
+               "y nivel se aplican a las conversaciones nuevas."),
         )
         form = QFormLayout()
         form.setSpacing(10)
         self.assistant_form = form
-        self.assistant_on = QCheckBox("Asistente activado")
+        self.assistant_on = QCheckBox(tr("Asistente activado"))
         form.addRow("", self.assistant_on)
-        self.assistant_provider = _combo({p.id: p.name for p in PROVIDERS.values()})
+        self.assistant_provider = _combo({p.id: tr(p.name) for p in PROVIDERS.values()})
         self.assistant_provider.currentIndexChanged.connect(lambda _i: self._provider_changed(user=True))
-        form.addRow("Proveedor de IA", self.assistant_provider)
+        form.addRow(tr("Proveedor de IA"), self.assistant_provider)
         model_row = QHBoxLayout()
         self.assistant_model = QComboBox()
         self.assistant_model.setEditable(True)
         self.assistant_model.currentTextChanged.connect(lambda _t: self._show_price())
         model_row.addWidget(self.assistant_model, 1)
-        self.load_models = button("Cargar modelos de mi cuenta", "refresh", "ghost")
+        self.load_models = button(tr("Cargar modelos de mi cuenta"), "refresh", "ghost")
         self.load_models.clicked.connect(self._load_models)
         model_row.addWidget(self.load_models)
-        form.addRow("Modelo", model_row)
+        form.addRow(tr("Modelo"), model_row)
         self.assistant_url = QLineEdit()
         self.assistant_url.textChanged.connect(lambda _t: self._check_url())
-        form.addRow("Dirección del servidor", self.assistant_url)
+        form.addRow(tr("Dirección del servidor"), self.assistant_url)
         self.url_hint = label("", "Small", wrap=True)
         form.addRow("", self.url_hint)
-        self.assistant_effort = _combo(ASSISTANT_EFFORTS)
-        form.addRow("Nivel de razonamiento", self.assistant_effort)
+        self.assistant_effort = _combo({key: tr(text) for key, text in ASSISTANT_EFFORTS.items()})
+        form.addRow(tr("Nivel de razonamiento"), self.assistant_effort)
         prices = QHBoxLayout()
         self.price_in = _price_spin()
         self.price_in.valueChanged.connect(lambda _v: self._show_price())
         self.price_out = _price_spin()
         self.price_out.valueChanged.connect(lambda _v: self._show_price())
-        prices.addWidget(label("entrada"))
+        prices.addWidget(label(tr("entrada")))
         prices.addWidget(self.price_in, 1)
-        prices.addWidget(label("salida"))
+        prices.addWidget(label(tr("salida")))
         prices.addWidget(self.price_out, 1)
-        form.addRow("Precio por millón de tokens", prices)
+        form.addRow(tr("Precio por millón de tokens"), prices)
         self.price_hint = label("", "Small", wrap=True)
         form.addRow("", self.price_hint)
         self.key_status = label("", "Small", wrap=True)
         key_row = QHBoxLayout()
         key_row.addWidget(self.key_status, 1)
-        connect_btn = button("Conectar IA", "key", "ghost")
+        connect_btn = button(tr("Conectar IA"), "key", "ghost")
         connect_btn.clicked.connect(self._open_connect)
         key_row.addWidget(connect_btn)
-        form.addRow("Clave de API", key_row)
+        form.addRow(tr("Clave de API"), key_row)
         self.assistant_approval = _combo(
-            {"changes": "Pedir permiso para cada cambio (recomendado)", "critical": "Solo para compras y borrados"}
+            {"changes": tr("Pedir permiso para cada cambio (recomendado)"), "critical": tr("Solo para compras y borrados")}
         )
-        form.addRow("Permisos", self.assistant_approval)
+        form.addRow(tr("Permisos"), self.assistant_approval)
         self.assistant_budget = QDoubleSpinBox()
         self.assistant_budget.setRange(0, 500)
         self.assistant_budget.setDecimals(2)
         self.assistant_budget.setSingleStep(0.5)
-        self.assistant_budget.setSuffix(" USD")
-        self.assistant_budget.setSpecialValueText("Sin límite")
-        form.addRow("Límite de gasto por día", self.assistant_budget)
+        self.assistant_budget.setSuffix(tr(" USD"))
+        self.assistant_budget.setSpecialValueText(tr("Sin límite"))
+        form.addRow(tr("Límite de gasto por día"), self.assistant_budget)
         self.assistant_rate = _spin(1, 1000, " mensajes")
-        form.addRow("Máximo por hora", self.assistant_rate)
+        form.addRow(tr("Máximo por hora"), self.assistant_rate)
         assistant.add(layout=form)
         self.add(assistant)
 
         security = Card(
-            "Seguridad",
-            "Los pedidos, etiquetas y la configuración se guardan cifrados (AES-256) y las claves en el "
-            "Administrador de credenciales de Windows. Estos límites protegen la API local, n8n y las descargas.",
+            tr("Seguridad"),
+            tr("Los pedidos, etiquetas y la configuración se guardan cifrados (AES-256) y las claves en el "
+               "Administrador de credenciales de Windows. Estos límites protegen la API local, n8n y las descargas."),
         )
         form = QFormLayout()
         form.setSpacing(10)
         self.api_rate = _spin(10, 10000, " por minuto")
-        form.addRow("Peticiones a la API local (por equipo)", self.api_rate)
+        form.addRow(tr("Peticiones a la API local (por equipo)"), self.api_rate)
         self.api_failures = _spin(3, 100, " intentos")
-        form.addRow("Claves incorrectas antes de bloquear", self.api_failures)
+        form.addRow(tr("Claves incorrectas antes de bloquear"), self.api_failures)
         self.api_block = _spin(1, 1440, " min")
-        form.addRow("Duración del bloqueo", self.api_block)
+        form.addRow(tr("Duración del bloqueo"), self.api_block)
         self.jobs_rate = _spin(1, 10000, " por minuto")
-        form.addRow("Trabajos nuevos (API local y n8n)", self.jobs_rate)
+        form.addRow(tr("Trabajos nuevos (API local y n8n)"), self.jobs_rate)
         self.max_copies = _spin(1, 50, " copias")
-        form.addRow("Copias máximas por trabajo", self.max_copies)
+        form.addRow(tr("Copias máximas por trabajo"), self.max_copies)
         self.private_urls = _combo(
             {
-                "local_api": "Solo trabajos de la API local de este equipo (recomendado)",
-                "never": "Nunca",
-                "always": "Siempre (también n8n y Shopify)",
+                "local_api": tr("Solo trabajos de la API local de este equipo (recomendado)"),
+                "never": tr("Nunca"),
+                "always": tr("Siempre (también n8n y Shopify)"),
             }
         )
-        form.addRow("Descargas desde la red interna", self.private_urls)
-        self.require_https = QCheckBox("Descargas desde internet solo por https (recomendado)")
+        form.addRow(tr("Descargas desde la red interna"), self.private_urls)
+        self.require_https = QCheckBox(tr("Descargas desde internet solo por https (recomendado)"))
         form.addRow("", self.require_https)
         security.add(layout=form)
         row = QHBoxLayout()
-        audit_btn = button("Ver registro de seguridad", "file")
+        audit_btn = button(tr("Ver registro de seguridad"), "file")
         audit_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(logs_dir() / "seguridad.log"))))
         row.addWidget(audit_btn)
         row.addStretch(1)
@@ -244,39 +251,38 @@ class SettingsPage(Page):
 
         row = QHBoxLayout()
         row.addStretch(1)
-        save_all = button("Guardar ajustes", "check", "primary")
+        save_all = button(tr("Guardar ajustes"), "check", "primary")
         save_all.clicked.connect(self._save)
         row.addWidget(save_all)
         self.add(layout=row)
 
-        updates = Card("Actualizaciones", "LabelBridge avisa cuando hay una versión nueva y se actualiza con un clic.")
-        self.auto_update = QCheckBox("Avisarme cuando haya una nueva versión (recomendado)")
+        updates = Card(tr("Actualizaciones"), tr("LabelBridge avisa cuando hay una versión nueva y se actualiza con un clic."))
+        self.auto_update = QCheckBox(tr("Avisarme cuando haya una nueva versión (recomendado)"))
         self.auto_update.setChecked(g.auto_update_check)
         updates.add(self.auto_update)
         row = QHBoxLayout()
-        row.addWidget(label(f"Versión instalada: <b>{__version__}</b>"))
+        row.addWidget(label(tr("Versión instalada: <b>{0}</b>", __version__)))
         row.addStretch(1)
-        check = button("Buscar actualizaciones ahora", "download", "primary")
+        check = button(tr("Buscar actualizaciones ahora"), "download", "primary")
         check.clicked.connect(lambda: self.window().check_updates_now())
-        page_btn = button("Página de descargas", "link")
+        page_btn = button(tr("Página de descargas"), "link")
         page_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(UPDATES_PAGE)))
         row.addWidget(page_btn)
         row.addWidget(check)
         updates.add(layout=row)
         self.add(updates)
 
-        data = Card("Datos y soporte")
+        data = Card(tr("Datos y soporte"))
         data.add(
             label(
-                f"{APP_NAME} {__version__} · Datos en: {data_dir()}\n"
-                f"Secretos guardados en: {ctx.secrets.backend_name}",
+                tr("{0} {1} · Datos en: {2}\nSecretos guardados en: {3}", APP_NAME, __version__, data_dir(), ctx.secrets.backend_name),
                 "Muted",
                 wrap=True,
                 selectable=True,
             )
         )
         row = QHBoxLayout()
-        for text, path in (("Carpeta de datos", data_dir()), ("Registros", logs_dir()), ("Salida de pruebas", output_dir())):
+        for text, path in ((tr("Carpeta de datos"), data_dir()), (tr("Registros"), logs_dir()), (tr("Salida de pruebas"), output_dir())):
             btn = button(text, "folder")
             btn.clicked.connect(lambda _=False, p=path: QDesktopServices.openUrl(QUrl.fromLocalFile(str(p))))
             row.addWidget(btn)
@@ -312,7 +318,7 @@ class SettingsPage(Page):
         self.assistant_model.clear()
         known = {key for key, _ in provider.models}
         for key, text in provider.models:
-            self.assistant_model.addItem(text, key)
+            self.assistant_model.addItem(tr(text), key)
         for name in extra:
             if name not in known:
                 self.assistant_model.addItem(name, name)
@@ -333,7 +339,7 @@ class SettingsPage(Page):
             self.assistant_url.setText(settings.base_url if same else "")
             self._set_models(provider, resolve(settings).model if same else provider.default_model)
         self.assistant_url.setPlaceholderText(provider.base_url or "https://mi-servidor.com/v1 (obligatoria)")
-        self.assistant_url.setToolTip("Déjala vacía para usar la dirección oficial del proveedor.")
+        self.assistant_url.setToolTip(tr("Déjala vacía para usar la dirección oficial del proveedor."))
         self._check_url()
         self._show_price()
 
@@ -343,14 +349,14 @@ class SettingsPage(Page):
         if not url:
             provider = PROVIDERS.get(self.assistant_provider.currentData())
             missing = provider is not None and not provider.base_url
-            self._url_hint("✗ Escribe la dirección de tu servidor." if missing else "")
+            self._url_hint(tr("✗ Escribe la dirección de tu servidor.") if missing else "")
             return not missing
         try:
             check_base_url(url)
         except ProviderError as exc:
             self._url_hint(f"✗ {exc.detail}")
             return False
-        self._url_hint("⚠ Conexión sin cifrar (http): úsala solo en tu red local." if is_plain_http(url) else "")
+        self._url_hint(tr("⚠ Conexión sin cifrar (http): úsala solo en tu red local.") if is_plain_http(url) else "")
         return True
 
     def _url_hint(self, text: str) -> None:
@@ -364,13 +370,13 @@ class SettingsPage(Page):
         prices = SimpleNamespace(price_input=self.price_in.value(), price_output=self.price_out.value())
         self.price_hint.setText(price_for(endpoint, prices).text())
         if not endpoint.base_url:
-            self.key_status.setText("Falta la dirección del servidor.")
+            self.key_status.setText(tr("Falta la dirección del servidor."))
         elif not endpoint.needs_key:
-            self.key_status.setText("No hace falta clave para este proveedor.")
+            self.key_status.setText(tr("No hace falta clave para este proveedor."))
         elif self.ctx.secrets.get(endpoint.key_name):
-            self.key_status.setText(f"✓ Guardada para {endpoint.provider.short} (en el almacén seguro de Windows).")
+            self.key_status.setText(tr("✓ Guardada para {0} (en el almacén seguro de Windows).", endpoint.provider.short))
         else:
-            self.key_status.setText(f"Falta la clave de {endpoint.provider.short}: pégala en Asistente → Conectar IA.")
+            self.key_status.setText(tr("Falta la clave de {0}: pégala en Asistente → Conectar IA.", endpoint.provider.short))
 
     def _open_connect(self) -> None:
         """Abre «Conecta tu IA» con el proveedor elegido aquí (sin guardar nada de esta pantalla)."""
@@ -382,10 +388,10 @@ class SettingsPage(Page):
         endpoint = self._form_endpoint()
         key = self.ctx.secrets.get(endpoint.key_name) if endpoint.base_url else ""
         if endpoint.needs_key and not key:
-            self.price_hint.setText("Primero guarda la clave en Asistente → Conectar IA.")
+            self.price_hint.setText(tr("Primero guarda la clave en Asistente → Conectar IA."))
             return
         self.load_models.setEnabled(False)
-        self.load_models.setText("Cargando…")
+        self.load_models.setText(tr("Cargando…"))
 
         def fetch() -> list[str]:
             try:
@@ -396,14 +402,14 @@ class SettingsPage(Page):
 
         def done(names: list[str]) -> None:
             self.load_models.setEnabled(True)
-            self.load_models.setText("Cargar modelos de mi cuenta")
+            self.load_models.setText(tr("Cargar modelos de mi cuenta"))
             self._set_models(endpoint.provider, self._model_text(), names)
-            self.price_hint.setText(f"{len(names)} modelos disponibles en tu cuenta. Elige uno y pulsa «Guardar ajustes».")
+            self.price_hint.setText(tr("{0} modelos disponibles en tu cuenta. Elige uno y pulsa «Guardar ajustes».", len(names)))
 
         def failed(message: str) -> None:
             self.load_models.setEnabled(True)
-            self.load_models.setText("Cargar modelos de mi cuenta")
-            self.price_hint.setText(f"No se pudo cargar la lista: {message}")
+            self.load_models.setText(tr("Cargar modelos de mi cuenta"))
+            self.price_hint.setText(tr("No se pudo cargar la lista: {0}", message))
 
         run_async(fetch, done, failed)
 
@@ -497,6 +503,8 @@ class SettingsPage(Page):
         g.notify_printed = self.notify_printed.isChecked()
         g.max_retries = self.retries.value()
         g.retention_days = self.retention.value()
+        language_changed = (self.language.currentData() or "") != g.language
+        g.language = self.language.currentData() or ""
         lb.store_name = self.store_name.text().strip()
         lb.sender_address = self.sender.toPlainText().strip()
         lb.show_items = self.show_items.isChecked()
@@ -507,3 +515,9 @@ class SettingsPage(Page):
             autostart.apply(g.start_with_windows)
         except OSError:
             pass
+        if language_changed:
+            window = self.window()
+            if confirm(self, tr("Idioma"), tr("El idioma cambia al reiniciar LabelBridge. ¿Reiniciar ahora?")) and hasattr(
+                window, "restart_app"
+            ):
+                window.restart_app()

@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 
 from .. import APP_NAME, __version__
 from .. import updater
+from ..i18n import date_text, decimal, tr
 from ..updater import UpdateInfo
 from . import icons
 from .context import AppContext
@@ -30,12 +31,12 @@ from .widgets import button, label
 
 
 def _size_text(size: int) -> str:
-    return f"{size / 1024 / 1024:.1f} MB".replace(".", ",") if size else ""
+    return f"{decimal(size / 1024 / 1024)} MB" if size else ""
 
 
 def _date_text(value: str) -> str:
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone().strftime("%d/%m/%Y")
+        return date_text(datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(), clock="")
     except ValueError:
         return ""
 
@@ -100,21 +101,21 @@ class UpdateDialog(QDialog):
         self.quit_app = quit_app
         self._cancel = threading.Event()
         self._started = 0.0
-        self.setWindowTitle(f"Actualizar {APP_NAME}")
+        self.setWindowTitle(tr("Actualizar {0}", APP_NAME))
         self.setMinimumWidth(560)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        layout.addWidget(_Banner("Nueva versión disponible", f"{APP_NAME} {info.version} · tienes la {__version__}"))
+        layout.addWidget(_Banner(tr("Nueva versión disponible"), tr("{0} {1} · tienes la {2}", APP_NAME, info.version, __version__)))
 
         body = QVBoxLayout()
         body.setContentsMargins(26, 20, 26, 22)
         body.setSpacing(12)
         meta = [part for part in (_date_text(info.published_at), _size_text(info.size)) if part]
         if meta:
-            body.addWidget(label("Publicada el " + " · ".join(meta), "Muted"))
-        body.addWidget(label("Novedades", "SectionTitle"))
-        body.addWidget(_notes_box(info.notes), 1)
+            body.addWidget(label(tr("Publicada el ") + " · ".join(meta), "Muted"))
+        body.addWidget(label(tr("Novedades"), "SectionTitle"))
+        body.addWidget(_notes_box(info.localized_notes()), 1)
 
         self.progress = QProgressBar()
         self.progress.setVisible(False)
@@ -126,22 +127,22 @@ class UpdateDialog(QDialog):
         body.addWidget(self.status)
 
         hint = (
-            "LabelBridge se cerrará un momento, se instalará la nueva versión y se abrirá sola. "
-            "Tu configuración y tu historial se conservan."
+            tr("LabelBridge se cerrará un momento, se instalará la nueva versión y se abrirá sola. "
+               "Tu configuración y tu historial se conservan.")
             if updater.can_install()
-            else "En este equipo se descargará el instalador para que lo ejecutes tú."
+            else tr("En este equipo se descargará el instalador para que lo ejecutes tú.")
         )
         self.hint = label(hint, "Hint", wrap=True)
         body.addWidget(self.hint)
 
         buttons = QHBoxLayout()
-        self.skip_btn = button("Omitir esta versión", None, "ghost")
+        self.skip_btn = button(tr("Omitir esta versión"), None, "ghost")
         self.skip_btn.clicked.connect(self._skip)
         buttons.addWidget(self.skip_btn)
         buttons.addStretch(1)
-        self.later_btn = button("Más tarde")
+        self.later_btn = button(tr("Más tarde"))
         self.later_btn.clicked.connect(self._later)
-        self.update_btn = button("Actualizar ahora", "download", "primary")
+        self.update_btn = button(tr("Actualizar ahora"), "download", "primary")
         self.update_btn.clicked.connect(self._start)
         buttons.addWidget(self.later_btn)
         buttons.addWidget(self.update_btn)
@@ -161,11 +162,11 @@ class UpdateDialog(QDialog):
     def _start(self) -> None:
         self.update_btn.setEnabled(False)
         self.skip_btn.setVisible(False)
-        self.later_btn.setText("Cancelar")
+        self.later_btn.setText(tr("Cancelar"))
         self.progress.setVisible(True)
         self.progress.setRange(0, 0)
         self.status.setVisible(True)
-        self.status.setText("Conectando…")
+        self.status.setText(tr("Conectando…"))
         self._started = time.time()
         signals = _DownloadSignals(self)
         signals.progress.connect(self._on_progress)
@@ -189,25 +190,23 @@ class UpdateDialog(QDialog):
         if total:
             self.progress.setRange(0, 1000)
             self.progress.setValue(int(done * 1000 / total))
-            self.status.setText(
-                f"Descargando {_size_text(done)} de {_size_text(total)} · {speed:.1f} MB/s".replace(".", ",")
-            )
+            self.status.setText(tr("Descargando {0} de {1} · {2} MB/s", _size_text(done), _size_text(total), decimal(speed)))
         else:
-            self.status.setText(f"Descargando {_size_text(done)}…")
+            self.status.setText(tr("Descargando {0}…", _size_text(done)))
 
     def _on_downloaded(self, path: str) -> None:
         self.progress.setRange(0, 1000)
         self.progress.setValue(1000)
         installer = Path(path)
         if not updater.can_install():
-            self.status.setText(f"✓ Descarga verificada: {installer.name}")
-            self.later_btn.setText("Cerrar")
-            self.update_btn.setText("Abrir carpeta")
+            self.status.setText(tr("✓ Descarga verificada: {0}", installer.name))
+            self.later_btn.setText(tr("Cerrar"))
+            self.update_btn.setText(tr("Abrir carpeta"))
             self.update_btn.setEnabled(True)
             self.update_btn.clicked.disconnect()
             self.update_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(installer.parent))))
             return
-        self.status.setText("✓ Descarga verificada. Instalando la nueva versión…")
+        self.status.setText(tr("✓ Descarga verificada. Instalando la nueva versión…"))
         self.later_btn.setEnabled(False)
         self.ctx.store.kv_set("update:installed", self.info.to_json())
         try:
@@ -224,9 +223,9 @@ class UpdateDialog(QDialog):
         self.status.setObjectName("Warning")
         self.status.style().unpolish(self.status)
         self.status.style().polish(self.status)
-        self.update_btn.setText("Reintentar")
+        self.update_btn.setText(tr("Reintentar"))
         self.update_btn.setEnabled(True)
-        self.later_btn.setText("Cerrar")
+        self.later_btn.setText(tr("Cerrar"))
         self._cancel = threading.Event()
 
     def reject(self) -> None:
@@ -237,19 +236,19 @@ class UpdateDialog(QDialog):
 class WhatsNewDialog(QDialog):
     def __init__(self, parent: QWidget | None, info: UpdateInfo) -> None:
         super().__init__(parent)
-        self.setWindowTitle(f"{APP_NAME} actualizado")
+        self.setWindowTitle(tr("{0} actualizado", APP_NAME))
         self.setMinimumWidth(520)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(_Banner("¡Actualización instalada!", f"Ahora tienes {APP_NAME} {info.version}"))
+        layout.addWidget(_Banner(tr("¡Actualización instalada!"), tr("Ahora tienes {0} {1}", APP_NAME, info.version)))
         body = QVBoxLayout()
         body.setContentsMargins(26, 20, 26, 22)
         body.setSpacing(12)
-        body.addWidget(label("Novedades de esta versión", "SectionTitle"))
-        body.addWidget(_notes_box(info.notes), 1)
+        body.addWidget(label(tr("Novedades de esta versión"), "SectionTitle"))
+        body.addWidget(_notes_box(info.localized_notes()), 1)
         row = QHBoxLayout()
         row.addStretch(1)
-        ok = button("Entendido", "check", "primary")
+        ok = button(tr("Entendido"), "check", "primary")
         ok.clicked.connect(self.accept)
         row.addWidget(ok)
         body.addLayout(row)

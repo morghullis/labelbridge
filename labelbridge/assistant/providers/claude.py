@@ -9,6 +9,7 @@ from typing import Any, Callable
 import anthropic
 from anthropic.types.beta import BetaTextBlock
 
+from ...i18n import tr
 from .base import MAX_TOKENS, Entry, ProviderError, Reply, ToolCall, ToolResult, Usage, UserText, groups, rejects
 
 log = logging.getLogger(__name__)
@@ -55,7 +56,7 @@ def provider_error(exc: Exception) -> ProviderError:
     if isinstance(exc, anthropic.APIStatusError):
         status = exc.status_code
         if 300 <= status < 400:
-            return ProviderError("redirect", f"El servidor redirige a otra dirección (HTTP {status})", status)
+            return ProviderError("redirect", tr("El servidor redirige a otra dirección (HTTP {0})", status), status)
         if status == 402 or "credit balance" in message.lower():
             return ProviderError("quota", message, status)
         if status == 413:
@@ -135,7 +136,7 @@ class ClaudeModel:
                 self.unsupported.add(dropped)
             except anthropic.APIError as exc:
                 raise provider_error(exc) from None
-        raise ProviderError("bad_request", "La API rechazó la petición")
+        raise ProviderError("bad_request", tr("La API rechazó la petición"))
 
     def _reply(self, response) -> Reply:
         usage = getattr(response, "usage", None)
@@ -148,7 +149,7 @@ class ClaudeModel:
         if response.stop_reason == "refusal":
             return Reply(stop="refusal", usage=counted)
         # Una respuesta vacía no se puede reenviar: se guarda un texto mínimo para que el historial siga válido.
-        content = _kept_after_fallback(response.content) or [BetaTextBlock(type="text", text="Listo.")]
+        content = _kept_after_fallback(response.content) or [BetaTextBlock(type="text", text=tr("Listo."))]
         calls = [ToolCall(block.id, block.name, block.input) for block in content if block.type == "tool_use"]
         text = "\n\n".join(block.text.strip() for block in content if block.type == "text" and block.text.strip())
         stop = {"max_tokens": "max_tokens", "pause_turn": "pause"}.get(response.stop_reason, "end")

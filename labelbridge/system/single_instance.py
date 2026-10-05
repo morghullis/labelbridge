@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import getpass
 import sys
+import time
 
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
@@ -47,9 +48,29 @@ class SingleInstance(QObject):
             self._mutex = ctypes.windll.kernel32.CreateMutexW(None, False, WINDOWS_MUTEX)
         return True
 
+    def wait_until_free(self, seconds: float) -> None:
+        """Al reiniciar: espera a que la instancia anterior termine de cerrarse (sin pedirle que se muestre)."""
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            socket = QLocalSocket()
+            socket.connectToServer(self.key)
+            if not socket.waitForConnected(300):
+                return
+            socket.disconnectFromServer()
+            time.sleep(0.4)
+
     def _on_connection(self) -> None:
         assert self._server is not None
         connection = self._server.nextPendingConnection()
-        if connection is not None:
-            connection.disconnected.connect(connection.deleteLater)
-        self.activated.emit()
+        if connection is None:
+            return
+        connection.disconnected.connect(connection.deleteLater)
+
+        def read() -> None:
+            # Solo «show» trae la ventana: el reinicio solo comprueba si seguimos abiertos.
+            if b"show" in bytes(connection.readAll()):
+                self.activated.emit()
+
+        connection.readyRead.connect(read)
+        if connection.bytesAvailable():
+            read()

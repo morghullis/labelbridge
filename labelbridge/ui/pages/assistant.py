@@ -33,6 +33,7 @@ from ...assistant.providers import PROVIDERS, Endpoint, ProviderError, check_bas
 from ...assistant.secrets_guard import SecretsGuard
 from ...assistant.tools import SECRET_KINDS, Toolbox
 from ...events import CONFIG_EXTERNAL
+from ...i18n import N_, tr
 from ...secret_store import MQTT_PASSWORD, SHOPIFY_ACCESS_TOKEN, SHOPIFY_CLIENT_SECRET
 from .. import icons
 from ..context import AppContext
@@ -41,7 +42,7 @@ from ..widgets import Card, SecretField, button, copy_to_clipboard, label, repol
 
 BUBBLE_MAX = 292  # ancho máximo de una burbuja dentro del panel
 AVATAR = 28
-WELCOME = (
+WELCOME = N_(
     "¡Hola! Soy el asistente de LabelBridge. Escríbeme con tus palabras qué quieres configurar y lo hago por ti: la "
     "impresora de etiquetas, la conexión con tu tienda de Shopify y la compra e impresión automática de las **guías de "
     "envío de Shopify Shipping**. También reviso que todo funcione y te ayudo si algo no se imprimió.\n\n"
@@ -50,10 +51,10 @@ WELCOME = (
     "abro una ventana segura: no hace falta escribirlo en el chat."
 )
 SUGGESTIONS = (  # (lo que dice el botón, lo que se envía)
-    ("Configúralo todo conmigo", "Configúralo todo conmigo paso a paso"),
-    ("Imprimir solas las guías de Shopify", "Quiero que se impriman solas las guías de Shopify Shipping"),
-    ("Conectar mi impresora", "Conecta mi impresora de etiquetas"),
-    ("¿Por qué no se imprimió un pedido?", "¿Por qué no se imprimió un pedido?"),
+    (N_("Configúralo todo conmigo"), N_("Configúralo todo conmigo paso a paso")),
+    (N_("Imprimir solas las guías de Shopify"), N_("Quiero que se impriman solas las guías de Shopify Shipping")),
+    (N_("Conectar mi impresora"), N_("Conecta mi impresora de etiquetas")),
+    (N_("¿Por qué no se imprimió un pedido?"), N_("¿Por qué no se imprimió un pedido?")),
 )
 # Datos secretos que se pueden guardar con el botón del candado (la clave de la IA va en «Conectar IA»).
 LOCK_KINDS = dict(SECRET_KINDS)
@@ -102,7 +103,7 @@ def confirm_action(parent: QWidget, title: str, text: str, accept: str) -> bool:
     box.setWindowTitle(title)
     box.setText(text)
     yes = box.addButton(accept, QMessageBox.ButtonRole.AcceptRole)
-    no = box.addButton("Cancelar", QMessageBox.ButtonRole.RejectRole)
+    no = box.addButton(tr("Cancelar"), QMessageBox.ButtonRole.RejectRole)
     box.setDefaultButton(no)  # lo seguro es lo predeterminado
     box.exec()
     return box.clickedButton() is yes
@@ -123,21 +124,21 @@ class ApprovalDialog(QDialog):
         icon = QLabel()
         icon.setPixmap(mascot_pixmap("curious", 40))
         head.addWidget(icon, 0, Qt.AlignmentFlag.AlignTop)
-        head.addWidget(label("El asistente quiere hacer este cambio:", "CardTitle", wrap=True), 1)
+        head.addWidget(label(tr("El asistente quiere hacer este cambio:"), "CardTitle", wrap=True), 1)
         layout.addLayout(head)
         detail = label(text, wrap=True, selectable=True)
         detail.setStyleSheet(
             "QLabel { background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 8px; padding: 10px 12px; }"
         )
         layout.addWidget(detail)
-        layout.addWidget(label("¿Le das permiso? Puedes permitir solo esto o todos los cambios de esta conversación.",
+        layout.addWidget(label(tr("¿Le das permiso? Puedes permitir solo esto o todos los cambios de esta conversación."),
                                "Muted", wrap=True))
         row = QHBoxLayout()
-        deny = button("No permitir")
+        deny = button(tr("No permitir"))
         deny.clicked.connect(self.reject)
-        session = button("Permitir todo en esta conversación", None, "ghost")
+        session = button(tr("Permitir todo en esta conversación"), None, "ghost")
         session.clicked.connect(lambda: self._done("session"))
-        once = button("Permitir", "check", "primary")
+        once = button(tr("Permitir"), "check", "primary")
         once.clicked.connect(lambda: self._done("once"))
         row.addWidget(deny)
         row.addStretch(1)
@@ -163,7 +164,7 @@ class SecretDialog(QDialog):
 
     def __init__(self, parent: QWidget | None, title: str, hint: str, kinds: dict | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Dato secreto")
+        self.setWindowTitle(tr("Dato secreto"))
         self.setMinimumWidth(480)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(22, 20, 22, 18)
@@ -184,16 +185,16 @@ class SecretDialog(QDialog):
             layout.addWidget(self.kind)
         self.hint = label(hint, "Muted", wrap=True)
         layout.addWidget(self.hint)
-        self.field = SecretField("Pega aquí el dato", copyable=False)
+        self.field = SecretField(tr("Pega aquí el dato"), copyable=False)
         layout.addWidget(self.field)
         layout.addWidget(
-            label("Se guarda en el almacén seguro de Windows de este PC. El asistente no lo ve.", "Small", wrap=True)
+            label(tr("Se guarda en el almacén seguro de Windows de este PC. El asistente no lo ve."), "Small", wrap=True)
         )
         row = QHBoxLayout()
         row.addStretch(1)
-        cancel = button("Cancelar")
+        cancel = button(tr("Cancelar"))
         cancel.clicked.connect(self.reject)
-        self.save_btn = button("Guardar", "lock", "primary")
+        self.save_btn = button(tr("Guardar"), "lock", "primary")
         self.save_btn.clicked.connect(self.accept)
         row.addWidget(cancel)
         row.addWidget(self.save_btn)
@@ -479,19 +480,19 @@ class AssistantPage(QWidget):
         row.setContentsMargins(10, 8, 10, 6)
         row.setSpacing(8)
         self.input = Composer()
-        self.input.setPlaceholderText("Escribe aquí… (Enter envía)")
-        self.input.setToolTip("Enter envía · Mayús+Enter hace un salto de línea")
+        self.input.setPlaceholderText(tr("Escribe aquí… (Enter envía)"))
+        self.input.setToolTip(tr("Enter envía · Mayús+Enter hace un salto de línea"))
         self.input.setFixedHeight(54)
         self.input.submitted.connect(self.send_current)
         self.input.textChanged.connect(lambda: self.mood.emit("typing", bool(self.input.toPlainText().strip())))
         row.addWidget(self.input, 1)
-        self.secret_btn = button("", "lock", None, "Dato secreto: guardar una clave o contraseña sin escribirla en el chat")
+        self.secret_btn = button("", "lock", None, tr("Dato secreto: guardar una clave o contraseña sin escribirla en el chat"))
         self.secret_btn.setObjectName("IconButton")
-        self.secret_btn.setAccessibleName("Dato secreto")
+        self.secret_btn.setAccessibleName(tr("Dato secreto"))
         self.secret_btn.setFixedSize(40, 40)
         self.secret_btn.clicked.connect(self._secret_from_button)
         row.addWidget(self.secret_btn, 0, Qt.AlignmentFlag.AlignBottom)
-        self.send_btn = button("Enviar", "send", "primary")
+        self.send_btn = button(tr("Enviar"), "send", "primary")
         self.send_btn.setFixedHeight(40)
         self.send_btn.clicked.connect(self._send_or_stop)
         row.addWidget(self.send_btn, 0, Qt.AlignmentFlag.AlignBottom)
@@ -557,23 +558,23 @@ class AssistantPage(QWidget):
     # --- conexión con la IA ------------------------------------------------------------------------
     def _key_card(self) -> Card:
         card = Card(
-            "Conecta tu IA",
-            "Elige tu IA y usa tu propia clave: pagas por uso a tu proveedor. Los permisos y límites son los mismos "
-            "con cualquiera.",
+            tr("Conecta tu IA"),
+            tr("Elige tu IA y usa tu propia clave: pagas por uso a tu proveedor. Los permisos y límites son los mismos "
+               "con cualquiera."),
         )
         self.key_form = QFormLayout()
         self.key_form.setSpacing(10)
         self.provider_combo = _narrow(QComboBox())
         for provider in PROVIDERS.values():
-            self.provider_combo.addItem(provider.name, provider.id)
+            self.provider_combo.addItem(tr(provider.name), provider.id)
         self.provider_combo.setCurrentIndex(max(0, self.provider_combo.findData(resolve(self.ctx.cfg.data.assistant).provider.id)))
         self.provider_combo.currentIndexChanged.connect(lambda _i: self._provider_changed(user=True))
-        self.key_form.addRow("Proveedor", self.provider_combo)
+        self.key_form.addRow(tr("Proveedor"), self.provider_combo)
         self.url_field = QLineEdit()
-        self.key_form.addRow("Dirección", self.url_field)
+        self.key_form.addRow(tr("Dirección"), self.url_field)
         self.model_field = _narrow(QComboBox())
         self.model_field.setEditable(True)
-        self.key_form.addRow("Modelo", self.model_field)
+        self.key_form.addRow(tr("Modelo"), self.model_field)
         card.add(layout=self.key_form)
         self.key_steps = label("", wrap=True)
         self.key_steps.setStyleSheet("font-size: 12px; color: #334155;")
@@ -582,10 +583,10 @@ class AssistantPage(QWidget):
         card.add(self.key_field)
         row = QHBoxLayout()
         row.setSpacing(8)
-        self.key_save = button("Guardar y probar", "check", "primary")
+        self.key_save = button(tr("Guardar y probar"), "check", "primary")
         self.key_save.clicked.connect(self._save_key)
         row.addWidget(self.key_save)
-        self.open_keys = button("Obtener clave", "link")
+        self.open_keys = button(tr("Obtener clave"), "link")
         self.open_keys.clicked.connect(self._open_keys_page)
         row.addWidget(self.open_keys)
         row.addStretch(1)
@@ -617,7 +618,7 @@ class AssistantPage(QWidget):
         self.key_form.setRowVisible(self.url_field, provider.local or not provider.base_url or bool(custom_url))
         self.model_field.clear()
         for key, text in provider.models:
-            self.model_field.addItem(text, key)
+            self.model_field.addItem(tr(text), key)
         model = current.model if same else provider.default_model
         index = self.model_field.findData(model)
         if index >= 0:
@@ -625,34 +626,37 @@ class AssistantPage(QWidget):
         else:
             self.model_field.setEditText(model)
         self.key_field.edit.setPlaceholderText(
-            provider.key_hint or ("Clave de API (opcional)" if not provider.needs_key else "Clave de API")
+            provider.key_hint or (tr("Clave de API (opcional)") if not provider.needs_key else tr("Clave de API"))
         )
         endpoint = Endpoint(provider, (custom_url or provider.base_url).rstrip("/"), model, current.effort)
         stored = bool(self.ctx.secrets.get(endpoint.key_name)) if endpoint.base_url else False
         if provider.local:
-            steps = (
-                f"1. {provider.signup}<br>"
-                "2. Pulsa <b>Guardar y probar</b>: no hace falta clave y el modelo funciona en tu equipo (gratis)."
+            steps = tr(
+                "1. {0}<br>2. Pulsa <b>Guardar y probar</b>: no hace falta clave y el modelo funciona en tu equipo "
+                "(gratis).",
+                tr(provider.signup),
             )
         elif not provider.needs_key:
-            steps = (
-                f"1. {provider.signup}<br>"
-                "2. Pulsa <b>Guardar y probar</b>. Si pones una clave, queda en el almacén seguro de Windows de este PC."
+            steps = tr(
+                "1. {0}<br>2. Pulsa <b>Guardar y probar</b>. Si pones una clave, queda en el almacén seguro de Windows "
+                "de este PC.",
+                tr(provider.signup),
             )
         else:
-            starts = f" (empieza por <code>{provider.key_hint.rstrip('…')}</code>)" if provider.key_hint else ""
-            steps = (
-                f"1. {provider.signup}<br>"
-                f"2. Copia la clave{starts}.<br>"
-                "3. Pégala aquí y pulsa <b>Guardar y probar</b>. Queda en el almacén seguro de Windows de este PC."
+            starts = tr(" (empieza por <code>{0}</code>)", provider.key_hint.rstrip("…")) if provider.key_hint else ""
+            steps = tr(
+                "1. {0}<br>2. Copia la clave{1}.<br>3. Pégala aquí y pulsa <b>Guardar y probar</b>. Queda en el "
+                "almacén seguro de Windows de este PC.",
+                tr(provider.signup),
+                starts,
             )
         if provider.note:
-            steps += f"<br><i>{provider.note}</i>"
+            steps += f"<br><i>{tr(provider.note)}</i>"
         if stored:
-            steps += "<br>✓ Ya hay una clave guardada para este proveedor: deja el campo vacío para volver a probarla."
+            steps += tr("<br>✓ Ya hay una clave guardada para este proveedor: deja el campo vacío para volver a probarla.")
         self.key_steps.setText(steps)
         self.open_keys.setVisible(bool(provider.keys_url))
-        self.open_keys.setText("Obtener clave" if provider.needs_key else f"Descargar {provider.short}")
+        self.open_keys.setText(tr("Obtener clave") if provider.needs_key else tr("Descargar {0}", provider.short))
         self.open_keys.setToolTip(provider.keys_url)
         if user:
             self.key_result.setVisible(False)
@@ -674,7 +678,7 @@ class AssistantPage(QWidget):
         settings = self.ctx.cfg.data.assistant
         raw_url = self.url_field.text().strip() or provider.base_url
         if not raw_url:
-            self._key_message(False, "Escribe la dirección del servidor (por ejemplo https://mi-servidor.com/v1).")
+            self._key_message(False, tr("Escribe la dirección del servidor (por ejemplo https://mi-servidor.com/v1)."))
             return
         try:
             base_url = check_base_url(raw_url)
@@ -683,16 +687,16 @@ class AssistantPage(QWidget):
             return
         model = self._wanted_model()
         if model and not valid_model(model):
-            self._key_message(False, "El nombre del modelo no es válido.")
+            self._key_message(False, tr("El nombre del modelo no es válido."))
             return
         endpoint = Endpoint(provider, base_url, model, resolve(settings).effort)
         typed = self.key_field.text()
         key = typed or self.ctx.secrets.get(endpoint.key_name)
         if provider.needs_key and not key:
-            self._key_message(False, "Pega la clave de API.")
+            self._key_message(False, tr("Pega la clave de API."))
             return
         self.key_save.setEnabled(False)
-        self.key_save.setText("Probando…")
+        self.key_save.setText(tr("Probando…"))
         connector = self.connector
 
         def check() -> tuple[str, str, list[str]]:
@@ -704,7 +708,7 @@ class AssistantPage(QWidget):
                 available = []  # el servidor no publica su lista de modelos
             chosen = pick_model(provider, endpoint.model, available)
             if not chosen:
-                raise RuntimeError("Escribe el nombre del modelo que quieres usar.")
+                raise RuntimeError(tr("Escribe el nombre del modelo que quieres usar."))
             checked = Endpoint(provider, base_url, chosen, endpoint.effort)
             try:
                 name = connector(checked, key).check()
@@ -724,11 +728,11 @@ class AssistantPage(QWidget):
             self.key_field.setText("")
             note = ""
             if available and chosen not in available:
-                note = " Ojo: ese modelo no aparece en la lista de tu cuenta."
+                note = tr(" Ojo: ese modelo no aparece en la lista de tu cuenta.")
             if self.conversation.started:
-                note += " Se usará desde la próxima conversación («Nueva conversación»)."
+                note += tr(" Se usará desde la próxima conversación («Nueva conversación»).")
             label_name = provider.model_label(chosen) if provider.model_label(chosen) != chosen else (name or chosen)
-            self._key_message(True, f"✓ Conectado a {provider.short} · {label_name}. Ya puedes escribirle al asistente.{note}")
+            self._key_message(True, tr("✓ Conectado a {0} · {1}. Ya puedes escribirle al asistente.{2}", provider.short, label_name, note))
             self._provider_changed()
             self.refresh()
             self.mood.emit("connected", None)
@@ -742,7 +746,7 @@ class AssistantPage(QWidget):
 
     def _key_message(self, ok: bool, text: str) -> None:
         self.key_save.setEnabled(True)
-        self.key_save.setText("Guardar y probar")
+        self.key_save.setText(tr("Guardar y probar"))
         self.key_result.setObjectName("Hint" if ok else "Warning")
         self.key_result.setText(text)
         self.key_result.setVisible(True)
@@ -752,16 +756,18 @@ class AssistantPage(QWidget):
     def status_text(self) -> str:
         """Lo que dice la cabecera bajo «Asistente»."""
         if self.busy:
-            return f"{self.activity}…" if self.activity else "Pensando…"
+            return f"{self.activity}…" if self.activity else tr("Pensando…")
         if not self.conversation.has_key():
-            return "Falta conectar la IA"
-        return f"Lista · {self.conversation.endpoint.label}"
+            return tr("Falta conectar la IA")
+        return tr("Lista · {0}", self.conversation.endpoint.label)
 
     def usage_text(self) -> str:
         settings = self.ctx.cfg.data.assistant
         today = self.conversation.meter.today()
         budget = float(settings.daily_budget_usd or 0)
-        return f"Hoy ≈ {today['cost']:.2f} USD" + (f" de {budget:.2f}" if budget > 0 else "")
+        if budget > 0:
+            return tr("Hoy ≈ {0:.2f} USD de {1:.2f}", today["cost"], budget)
+        return tr("Hoy ≈ {0:.2f} USD", today["cost"])
 
     def refresh(self) -> None:
         has_key = self.conversation.has_key()
@@ -775,12 +781,10 @@ class AssistantPage(QWidget):
         endpoint = self.conversation.endpoint
         today = self.conversation.meter.today()
         self.footnote.setText(
-            f"🔒 Tus claves se quedan en este PC y cada cambio pide permiso · {self.usage_text()}"
+            tr("🔒 Tus claves se quedan en este PC y cada cambio pide permiso · {0}", self.usage_text())
         )
         self.footnote.setToolTip(
-            f"Funciona con {endpoint.label}. Tokens hoy: {int(today['input']):,} de entrada · "
-            f"{int(today['cache_read']):,} leídos de caché · {int(today['output']):,} de salida. Es una estimación; "
-            "la factura real está en tu cuenta del proveedor."
+            tr("Funciona con {0}. Tokens hoy: {1:,} de entrada · {2:,} leídos de caché · {3:,} de salida. Es una estimación; la factura real está en tu cuenta del proveedor.", endpoint.label, int(today['input']), int(today['cache_read']), int(today['output']))
         )
         self.changed.emit()
 
@@ -789,16 +793,16 @@ class AssistantPage(QWidget):
         return widget
 
     def _welcome(self) -> None:
-        shop = self.ctx.cfg.data.shopify.shop or "mi-tienda.myshopify.com"
-        self._add(bubble(WELCOME.format(shop=shop), "assistant"))
+        shop = self.ctx.cfg.data.shopify.shop or tr("mi-tienda.myshopify.com")
+        self._add(bubble(tr(WELCOME).format(shop=shop), "assistant"))
         chips = QWidget()
         grid = QVBoxLayout(chips)
         grid.setContentsMargins(AVATAR + 10, 0, 0, 0)
         grid.setSpacing(6)
         for text, message in SUGGESTIONS:
-            chip = button(text, None, "chip")
+            chip = button(tr(text), None, "chip")
             chip.setObjectName("Suggestion")
-            chip.clicked.connect(lambda _=False, m=message: self.send_text(m))
+            chip.clicked.connect(lambda _=False, m=tr(message): self.send_text(m))
             grid.addWidget(chip, 0, Qt.AlignmentFlag.AlignLeft)
         self._add(chips)
 
@@ -840,15 +844,15 @@ class AssistantPage(QWidget):
         self._add(bubble(cleaned.display_text, "user"))
         sections = set()
         for description in cleaned.saved:
-            self._add(ActivityRow(f"🔒 Guardé en este PC: {description} (no se envió al asistente)", False)).finish(True)
+            self._add(ActivityRow(tr("🔒 Guardé en este PC: {0} (no se envió al asistente)", description), False)).finish(True)
         if any("Shopify" in d for d in cleaned.saved):
             sections.add("shopify")
         if cleaned.ai_keys:
-            self._add(ActivityRow("🔒 Quité una clave de IA del mensaje (no se envió). Configúrala en «Conectar IA»",
+            self._add(ActivityRow(tr("🔒 Quité una clave de IA del mensaje (no se envió). Configúrala en «Conectar IA»"),
                                   False)).finish(True)
         if cleaned.refs:
             count = len(cleaned.refs)
-            self._add(ActivityRow(f"🔒 Aparté {count} dato(s) secreto(s): no se envían al asistente", False)).finish(True)
+            self._add(ActivityRow(tr("🔒 Aparté {0} dato(s) secreto(s): no se envían al asistente", count), False)).finish(True)
         for section in sections:
             self.ctx.cfg.save(section)
             self.ctx.events.emit(CONFIG_EXTERNAL, section)
@@ -866,7 +870,7 @@ class AssistantPage(QWidget):
         self.mood.emit("sent", None)
         self.cancel = threading.Event()
         turn = self.cancel  # identifica el turno: los avisos de un turno ya detenido se ignoran
-        self.send_btn.setText("Detener")
+        self.send_btn.setText(tr("Detener"))
         self.send_btn.setIcon(icons.icon("stop", "#FFFFFF", 16))
         self._show_thinking()
         self.refresh()
@@ -890,7 +894,7 @@ class AssistantPage(QWidget):
     def stop(self) -> None:
         self.cancel.set()
         self._finish_turn()
-        self._add(ActivityRow("Detenido", False)).finish(False, "puedes seguir escribiendo")
+        self._add(ActivityRow(tr("Detenido"), False)).finish(False, "puedes seguir escribiendo")
         self.mood.emit("stopped", None)
 
     def _finish_turn(self) -> None:
@@ -899,16 +903,16 @@ class AssistantPage(QWidget):
         self.mood.emit("finished", None)
         self._hide_thinking()
         for row in self._activities.values():
-            row.finish(False, "sin terminar")
+            row.finish(False, tr("sin terminar"))
         self._activities.clear()
-        self.send_btn.setText("Enviar")
+        self.send_btn.setText(tr("Enviar"))
         self.send_btn.setIcon(icons.icon("send", "#FFFFFF", 16))
         self.refresh()
         self.input.setFocus()
 
     def _show_thinking(self) -> None:
         self._hide_thinking()
-        self._thinking = self._add(ActivityRow("Pensando", True))  # type: ignore[assignment]
+        self._thinking = self._add(ActivityRow(tr("Pensando"), True))  # type: ignore[assignment]
 
     def _hide_thinking(self) -> None:
         if self._thinking is not None:
@@ -959,7 +963,7 @@ class AssistantPage(QWidget):
         if section:
             self.ctx.cfg.save(section)
             self.ctx.events.emit(CONFIG_EXTERNAL, section)
-        self._add(ActivityRow(f"🔒 Guardado en este PC: {title}", False)).finish(True)
+        self._add(ActivityRow(tr("🔒 Guardado en este PC: {0}", title), False)).finish(True)
         self.pending_notes.append(f"[Nota de la app: el usuario guardó «{title}» con la ventana segura.]")
         self.mood.emit("secret", None)
         self.refresh()

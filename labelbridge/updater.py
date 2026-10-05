@@ -29,6 +29,7 @@ from . import events as ev
 from . import net
 from .config import ConfigManager
 from .connectors.base import BackgroundService
+from .i18n import language, tr
 from .paths import is_frozen
 
 log = logging.getLogger(__name__)
@@ -53,6 +54,11 @@ class UpdateInfo:
     notes: str = ""
     published_at: str = ""
     page_url: str = UPDATES_PAGE
+    notes_en: str = ""
+
+    def localized_notes(self) -> str:
+        """Las novedades en el idioma de la app (en español si la versión no trae las de ese idioma)."""
+        return self.notes_en if language() == "en" and self.notes_en else self.notes
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), ensure_ascii=False)
@@ -78,17 +84,18 @@ def fetch_manifest(url: str = MANIFEST_URL) -> UpdateInfo:
     separator = "&" if "?" in url else "?"
     data = net.request("GET", f"{url}{separator}t={int(time.time())}", timeout=20, max_bytes=256 * 1024).json()
     if not isinstance(data, dict) or not data.get("version"):
-        raise UpdateError("La información de versión no es válida")
+        raise UpdateError(tr("La información de versión no es válida"))
     installer = data.get("installer") or {}
     allowed = ("https://", "http://127.0.0.1") if url.startswith("http://127.0.0.1") else ("https://",)  # pruebas locales
     if not str(installer.get("url", "")).startswith(allowed):
-        raise UpdateError("El instalador publicado no tiene una URL segura")
+        raise UpdateError(tr("El instalador publicado no tiene una URL segura"))
     return UpdateInfo(
         version=str(data["version"]),
         url=str(installer["url"]),
         size=int(installer.get("size") or 0),
         sha256=str(installer.get("sha256") or "").lower(),
         notes=str(data.get("notes") or ""),
+        notes_en=str(data.get("notes_en") or ""),
         published_at=str(data.get("published_at") or ""),
         page_url=str(data.get("page_url") or UPDATES_PAGE),
     )
@@ -120,13 +127,13 @@ def download(
             total = int(response.headers.get("Content-Length") or info.size or 0)
             while True:
                 if cancel is not None and cancel.is_set():
-                    raise UpdateError("Descarga cancelada")
+                    raise UpdateError(tr("Descarga cancelada"))
                 chunk = response.read(256 * 1024)
                 if not chunk:
                     break
                 received += len(chunk)
                 if received > MAX_INSTALLER_BYTES:
-                    raise UpdateError("El instalador es demasiado grande")
+                    raise UpdateError(tr("El instalador es demasiado grande"))
                 digest.update(chunk)
                 out.write(chunk)
                 if progress:
@@ -135,16 +142,16 @@ def download(
         partial.unlink(missing_ok=True)
         if isinstance(exc, UpdateError):
             raise
-        raise UpdateError(f"No se pudo descargar la actualización: {exc}") from None
+        raise UpdateError(tr("No se pudo descargar la actualización: {0}", exc)) from None
     except UpdateError:
         partial.unlink(missing_ok=True)
         raise
     if info.size and received != info.size:
         partial.unlink(missing_ok=True)
-        raise UpdateError("La descarga quedó incompleta; vuelve a intentarlo")
+        raise UpdateError(tr("La descarga quedó incompleta; vuelve a intentarlo"))
     if info.sha256 and digest.hexdigest() != info.sha256:
         partial.unlink(missing_ok=True)
-        raise UpdateError("El archivo descargado no coincide con el publicado (SHA-256); no se instalará")
+        raise UpdateError(tr("El archivo descargado no coincide con el publicado (SHA-256); no se instalará"))
     os.replace(partial, target)
     return target
 
@@ -210,7 +217,7 @@ def install_and_restart(installer: Path, app: Path | None = None) -> None:
     app se vuelve a abrir igualmente (con la versión anterior) y avisa (ver failed_update).
     """
     if not can_install():
-        raise UpdateError("La instalación automática solo funciona en la app instalada de Windows")
+        raise UpdateError(tr("La instalación automática solo funciona en la app instalada de Windows"))
     from .paths import logs_dir
 
     script = installer.with_name("aplicar-actualizacion.ps1")
@@ -268,22 +275,33 @@ class UpdateService(BackgroundService):
 
 
 def notes_to_html(notes: str) -> str:
-    """Notas en formato «- punto» → lista HTML simple para la interfaz."""
+    """Notas en formato «- punto» (con **negritas**; los «  - » sangrados van dentro del punto anterior) → HTML."""
     from html import escape
 
-    items, paragraphs = [], []
+    def inline(text: str) -> str:
+        return re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", escape(text))
+
+    items: list[tuple[str, list[str]]] = []
+    paragraphs = []
     for line in notes.splitlines():
         text = line.strip()
         if not text:
             continue
         if text[:2] in ("- ", "* ", "• "):
-            items.append(f"<li>{escape(text[2:])}</li>")
+            if line[:1] in (" ", "\t") and items:
+                items[-1][1].append(inline(text[2:]))
+            else:
+                items.append((inline(text[2:]), []))
         else:
-            paragraphs.append(f"<p>{escape(text)}</p>")
+            paragraphs.append(f"<p>{inline(text)}</p>")
     html = "".join(paragraphs)
     if items:
-        html += "<ul style='margin-left: -18px'>" + "".join(items) + "</ul>"
-    return html or "<p>Mejoras y correcciones.</p>"
+        html += "<ul style='margin-left: -18px'>"
+        for text, children in items:
+            sub = "<ul>" + "".join(f"<li>{child}</li>" for child in children) + "</ul>" if children else ""
+            html += f"<li>{text}{sub}</li>"
+        html += "</ul>"
+    return html or f"<p>{escape(tr('Mejoras y correcciones.'))}</p>"
 
 
 def _stored_update(store_get: Callable[[str], Any]) -> UpdateInfo | None:

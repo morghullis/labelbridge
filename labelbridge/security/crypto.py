@@ -19,6 +19,7 @@ import time
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
+from ..i18n import tr
 from ..secret_store import DATA_KEY, SecretStoreError
 
 log = logging.getLogger(__name__)
@@ -35,7 +36,7 @@ class CryptoError(Exception):
 class DataProtector:
     def __init__(self, key: bytes) -> None:
         if len(key) != 32:
-            raise ValueError("La clave de datos debe tener 256 bits")
+            raise ValueError(tr("La clave de datos debe tener 256 bits"))
         self._aead = AESGCM(key)
 
     @classmethod
@@ -47,18 +48,18 @@ class DataProtector:
                 break
             except SecretStoreError:
                 if attempt == attempts - 1:
-                    raise CryptoError("No se pudo leer la clave de cifrado del almacén seguro del sistema") from None
+                    raise CryptoError(tr("No se pudo leer la clave de cifrado del almacén seguro del sistema")) from None
                 time.sleep(0.5)
         if encoded:
             try:
                 key = base64.urlsafe_b64decode(encoded.encode("ascii"))
             except (binascii.Error, UnicodeEncodeError):
-                raise CryptoError("La clave de cifrado guardada no es válida") from None
+                raise CryptoError(tr("La clave de cifrado guardada no es válida")) from None
             return cls(key)
         key = AESGCM.generate_key(bit_length=256)
         secrets.set(DATA_KEY, base64.urlsafe_b64encode(key).decode("ascii"))
         if secrets.get(DATA_KEY, strict=True) != base64.urlsafe_b64encode(key).decode("ascii"):
-            raise CryptoError("No se pudo guardar la clave de cifrado en el almacén seguro")
+            raise CryptoError(tr("No se pudo guardar la clave de cifrado en el almacén seguro"))
         log.info("Clave de cifrado de datos creada en el almacén seguro")
         return cls(key)
 
@@ -79,7 +80,7 @@ class DataProtector:
         try:
             return self._aead.decrypt(body[:NONCE_BYTES], body[NONCE_BYTES:], context.encode("utf-8"))
         except (InvalidTag, ValueError):
-            raise CryptoError("Dato cifrado dañado o de otra instalación") from None
+            raise CryptoError(tr("Dato cifrado dañado o de otra instalación")) from None
 
     # --- texto -----------------------------------------------------------------------------
     def encrypt_text(self, text: str, context: str) -> str:
@@ -96,4 +97,4 @@ class DataProtector:
             sealed = base64.urlsafe_b64decode(value[len(TEXT_PREFIX):].encode("ascii"))
             return self._aead.decrypt(sealed[:NONCE_BYTES], sealed[NONCE_BYTES:], context.encode("utf-8")).decode("utf-8")
         except (InvalidTag, ValueError, binascii.Error, UnicodeDecodeError):
-            raise CryptoError("Dato cifrado dañado o de otra instalación") from None
+            raise CryptoError(tr("Dato cifrado dañado o de otra instalación")) from None

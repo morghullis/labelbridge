@@ -27,6 +27,7 @@ from .. import __version__
 from .. import events as ev
 from .. import net
 from ..config import ConfigManager, MqttSettings, slugify
+from ..i18n import tr
 from ..jobstore import JobStore
 from ..models import JobError, parse_jobs_payload
 from ..printing.engine import PrintEngine
@@ -129,7 +130,7 @@ class MqttService(BackgroundService):
         with self._inflight_lock:
             self._inflight.clear()  # cliente nuevo: lo no confirmado se reenvía
         self._client = client
-        self.set_status("connecting", f"Conectando con {settings.host}…")
+        self.set_status("connecting", tr("Conectando con {0}…", settings.host))
         try:
             client.connect_async(settings.host.strip(), int(settings.port), keepalive=60)
             client.loop_start()
@@ -156,24 +157,24 @@ class MqttService(BackgroundService):
             hint = ""
             text = str(reason_code).lower()
             if "password" in text or "not authorized" in text:
-                hint = " (revisa usuario y contraseña del broker)"
-            self.set_status("error", f"El broker rechazó la conexión: {reason_code}{hint}")
+                hint = tr(" (revisa usuario y contraseña del broker)")
+            self.set_status("error", tr("El broker rechazó la conexión: {0}{1}", reason_code, hint))
             log.error("MQTT: conexión rechazada: %s", reason_code)
             return
         t = topics(self._channel)
         client.subscribe([(t["jobs"], 1), (f"{t['jobs']}/+", 1)])
         client.publish(t["status"], self._presence(True), qos=1, retain=True)
-        self.set_status("ok", f"Conectado · escuchando el canal «{self._channel}»")
+        self.set_status("ok", tr("Conectado · escuchando el canal «{0}»", self._channel))
         log.info("MQTT: conectado, canal %s", self._channel)
         self.wake()
 
     def _on_connect_fail(self, client: mqtt.Client, userdata) -> None:
         settings = self.cfg.data.mqtt
-        self.set_status("error", f"No se pudo conectar con {settings.host}:{settings.port}; reintentando…")
+        self.set_status("error", tr("No se pudo conectar con {0}:{1}; reintentando…", settings.host, settings.port))
 
     def _on_disconnect(self, client: mqtt.Client, userdata, flags, reason_code, properties) -> None:
         if self.running:
-            self.set_status("connecting", "Conexión perdida; reconectando…")
+            self.set_status("connecting", tr("Conexión perdida; reconectando…"))
             log.warning("MQTT: desconectado (%s); reconectando", reason_code)
 
     def _on_publish(self, client: mqtt.Client, userdata, mid: int, reason_code, properties) -> None:
@@ -206,13 +207,13 @@ class MqttService(BackgroundService):
         problem = ""
         requests = []
         if len(payload) > limit_mb * 1024 * 1024:
-            problem = f"Mensaje demasiado grande (máximo {limit_mb} MB)"
-            self.engine.policy.audit.record("mqtt", "mensaje", "deny", detail=f"{len(payload)} bytes en {topic}")
+            problem = tr("Mensaje demasiado grande (máximo {0} MB)", limit_mb)
+            self.engine.policy.audit.record("mqtt", "mensaje", "deny", detail=tr("{0} bytes en {1}", len(payload), topic))
         else:
             try:
                 requests = parse_jobs_payload(json.loads(payload.decode("utf-8")), require_id=True)
             except (UnicodeDecodeError, json.JSONDecodeError, JobError) as exc:
-                problem = f"Trabajo inválido: {exc}"
+                problem = tr("Trabajo inválido: {0}", exc)
         if problem:
             log.warning("MQTT: %s en %s", problem, topic)
             self._report_error(publish, topic_id, problem)
@@ -282,7 +283,7 @@ class MqttService(BackgroundService):
         settings = self.cfg.data.mqtt
         host = settings.host.strip()
         if not host:
-            raise RuntimeError("Escribe el servidor (broker) MQTT")
+            raise RuntimeError(tr("Escribe el servidor (broker) MQTT"))
         client = self._new_client(settings, f"labelbridge-prueba-{uuid.uuid4().hex[:8]}", persistent=False)
         result: dict[str, Any] = {}
         done = threading.Event()
@@ -295,16 +296,16 @@ class MqttService(BackgroundService):
         try:
             client.connect(host, int(settings.port), keepalive=30)
         except ssl.SSLError as exc:
-            raise RuntimeError(f"Error TLS con {host}:{settings.port} ({exc.reason or exc}). ¿Puerto 8883 con TLS?") from None
+            raise RuntimeError(tr("Error TLS con {0}:{1} ({2}). ¿Puerto 8883 con TLS?", host, settings.port, exc.reason or exc)) from None
         except OSError as exc:
-            raise RuntimeError(f"No se pudo conectar con {host}:{settings.port} ({exc.strerror or exc})") from None
+            raise RuntimeError(tr("No se pudo conectar con {0}:{1} ({2})", host, settings.port, exc.strerror or exc)) from None
         client.loop_start()
         try:
             if not done.wait(timeout):
-                raise RuntimeError("El broker no respondió a tiempo")
+                raise RuntimeError(tr("El broker no respondió a tiempo"))
         finally:
             client.disconnect()
             client.loop_stop()
         if result["rc"].is_failure:
-            raise RuntimeError(f"El broker rechazó la conexión: {result['rc']}")
-        return f"Conexión correcta. En n8n publica en «{topics(self.channel())['jobs']}/<id>» con QoS 1 y retain."
+            raise RuntimeError(tr("El broker rechazó la conexión: {0}", result['rc']))
+        return tr("Conexión correcta. En n8n publica en «{0}/<id>» con QoS 1 y retain.", topics(self.channel())['jobs'])

@@ -5,6 +5,7 @@ from __future__ import annotations
 from ..printing.barcode import code128_widths
 from ..printing.zpl import zpl_text
 from .order import OrderLabelData
+from ..i18n import tr
 
 # Fuente 0 (CG Triumvirate condensada): ancho medio aprox. 0.55 × altura.
 _CHAR_WIDTH = 0.55
@@ -99,15 +100,15 @@ def order_to_zpl(
     y = z.M
     if d.sender_name or d.sender_lines:
         z.text(y, d.created, 2.6, x=z.M + z.IW // 2, width=z.IW // 2, align="R")
-        y = z.text(y, d.sender_name or "Remitente", 3.2, width=int(z.IW * 0.58))
+        y = z.text(y, d.sender_name or tr("Remitente"), 3.2, width=int(z.IW * 0.58))
         for line in d.sender_lines[:3]:
             y = z.text(y, line, 2.6)
     else:
         y = z.text(y, d.created, 2.6, align="R")
     y = z.rule(y + z.dots(1)) + z.dots(1.5)
 
-    y = z.text(y, "ENVIAR A:", 2.6)
-    y = z.text(y, d.ship_name or "(sin nombre)", 6.2, lines=2)
+    y = z.text(y, tr("ENVIAR A:"), 2.6)
+    y = z.text(y, d.ship_name or tr("(sin nombre)"), 6.2, lines=2)
     if d.company:
         y = z.text(y, d.company, 3.8)
     for line in d.address_lines:
@@ -119,7 +120,7 @@ def order_to_zpl(
     qr_size = z.dots(21) if d.qr_url else 0
     left_w = z.IW - (qr_size + z.dots(3) if qr_size else 0)
     block_top = y
-    z.text(y, "PEDIDO", 2.6, width=left_w)
+    z.text(y, tr("PEDIDO"), 2.6, width=left_w)
     if d.shipping_method:
         z.text(y, d.shipping_method, 2.8, x=z.M + int(left_w * 0.4), width=int(left_w * 0.6), align="R")
     y = z.text(y + z.dots(2.6), d.order_name, 8.0, width=left_w)
@@ -143,9 +144,9 @@ def order_to_zpl(
             y = z.text(y, f"{qty} x {text}", 3.3)
         hidden = len(d.items) - len(rows)
         if hidden > 0:
-            y = z.text(y, f"+ {hidden} producto(s) más", 3.0)
+            y = z.text(y, tr("+ {0} producto(s) más", hidden), 3.0)
     if d.note:
-        z.text(max(y + z.dots(1), bottom - note_h - footer_h), f"Nota: {d.note}", 2.9, lines=2)
+        z.text(max(y + z.dots(1), bottom - note_h - footer_h), tr("Nota: {0}", d.note), 2.9, lines=2)
     if d.total:
-        z.text(bottom - footer_h, f"Total: {d.total}", 3.0, align="R")
+        z.text(bottom - footer_h, tr("Total: {0}", d.total), 3.0, align="R")
     return z.finish(copies)

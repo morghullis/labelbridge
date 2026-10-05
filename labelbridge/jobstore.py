@@ -16,6 +16,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from .i18n import tr
 from .models import JobRequest
 
 log = logging.getLogger(__name__)
@@ -120,7 +121,7 @@ class JobStore:
         """Contenido guardado del trabajo (descifrado). Lanza PayloadUnavailable si ya no está."""
         path = Path(job.get("payload_path") or "")
         if not job.get("payload_path") or not path.exists():
-            raise PayloadUnavailable("El contenido de este trabajo ya no está disponible")
+            raise PayloadUnavailable(tr("El contenido de este trabajo ya no está disponible"))
         data = path.read_bytes()
         if self.protector is not None:
             from .security.crypto import CryptoError
@@ -128,7 +129,7 @@ class JobStore:
             try:
                 data = self.protector.decrypt(data, f"spool:{job['id']}")
             except CryptoError:
-                raise PayloadUnavailable("El contenido de este trabajo está dañado o es de otra instalación") from None
+                raise PayloadUnavailable(tr("El contenido de este trabajo está dañado o es de otra instalación")) from None
         return data
 
     def read_order(self, job: dict[str, Any]) -> dict[str, Any]:
@@ -360,7 +361,7 @@ class JobStore:
         return self._update(
             job_id,
             status="canceled",
-            error="Cancelado por el usuario",
+            error=tr("Cancelado por el usuario"),
             ack_pending=1 if job["source"] in ACK_SOURCES else 0,
         )
 
@@ -371,7 +372,7 @@ class JobStore:
             return None
         req = JobRequest(
             external_id=f"reimpresion-{uuid.uuid4().hex[:12]}",
-            title=f"{job['title']} (reimpresión)",
+            title=tr("{0} (reimpresión)", job['title']),
             printer=job["printer"] if printer is None else printer,
             copies=job["copies"],
             format=job["format"],

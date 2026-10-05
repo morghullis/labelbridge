@@ -17,6 +17,7 @@ flowchart LR
 
 ## Qué hace
 
+- **En español o en inglés**: el instalador, con la marca, deja elegir **English / Español** y la app entera queda en ese idioma (pantallas, guía con sus capturas, etiqueta de prueba, notas de actualización y el asistente). Se cambia en **Ajustes → General → Idioma / Language**. La primera vez, el instalador también pregunta la tienda de Shopify (dirección y Client ID) para adelantar; la clave secreta se pide después en la app, en su ventana segura.
 - **Pedidos, ordenados**: pestaña con todos los pedidos de Shopify. Primero los que necesitan acción, con el porqué y el botón para resolverlo (comprar a mano la guía de FedEx, reimprimir, reintentar una compra rechazada…). Después, por paquetería, con seguimiento, valor de las piezas, costo de cada guía (también las compradas a mano y las anuladas), resumen de gasto y exportación a CSV. Las **reglas de paquetería** deciden por cuál sale cada pedido (por defecto, piezas de más de US$1000 → FedEx a mano; el resto → USPS automática).
 - **Asistente flotante con la máscara viva**: un botón dorado con la máscara del logo, abajo a la derecha de todas las pantallas (o la pestaña **Asistente**, o **F1**), abre el chat sin salir de lo que estás haciendo. Es el logo original tal cual (`assets/mascot/`, generado desde `assets/brand-logo.png` con `packaging/make_mascot_assets.py`) y se anima encima: parpadea, te sigue con la mirada y cambia de expresión según la conversación: escucha mientras escribes, piensa (la corona carga en índigo), trabaja, responde, se alegra cuando algo queda listo, pregunta, se preocupa ante un error y se duerme si no se usa. Respeta la opción de Windows de reducir las animaciones. Diseño: «Asistente LabelBridge: máscara animada» en Claude Design.
 - **Asistente con IA (la que prefieras)**: escribes tus datos con tus palabras («tengo una Zebra por USB y mi tienda es mi-tienda.myshopify.com») y el asistente configura la app con las mismas acciones de las pantallas: agrega la impresora, conecta la tienda, prueba la conexión y activa la impresión de las guías. Funciona con **Claude (Anthropic), OpenAI (ChatGPT), Google Gemini, OpenRouter, DeepSeek, Groq, xAI, Mistral, Together, modelos en tu equipo con Ollama o LM Studio, o cualquier API compatible con OpenAI**, cada uno con tu propia clave. Los permisos, límites y filtros son los mismos con cualquier modelo. Los secretos se piden en una ventana segura y nunca se envían al modelo; comprar guías siempre pide confirmación.
@@ -85,6 +86,8 @@ Genera `dist\LabelBridge\LabelBridge.exe` y, si tienes [Inno Setup 6](https://jr
 
 El instalador no pide administrador (instalación por usuario), crea accesos directos, cierra la app si está abierta al actualizar y, opcionalmente, agrega la regla de firewall para la API local. El inicio automático con Windows se controla desde *Ajustes* (activado por defecto).
 
+Al empezar pregunta el idioma (**English / Español**) y lo guarda en `HKCU\Software\LabelBridge\Language`; las actualizaciones automáticas repiten el de la primera instalación. En una instalación nueva pregunta además la tienda de Shopify y el Client ID: los deja en `HKCU\Software\LabelBridge\Setup`, la app los recoge al abrirse, borra esa clave y pide el Client secret en su ventana segura. Las imágenes del asistente de instalación salen de `packaging/make_installer_images.py`.
+
 > Para distribuir a otras personas sin el aviso de SmartScreen, firma el `.exe` y el instalador con un certificado de firma de código.
 
 ## Asistente: proveedores de IA
@@ -128,7 +131,7 @@ El instalador no pide administrador (instalación por usuario), crea accesos dir
 ### Publicar una versión nueva
 
 1. Sube `__version__` en `labelbridge/__init__.py` (p. ej. `1.2.0`).
-2. Agrega en `CHANGELOG.md` una sección `## 1.2.0` con las novedades (líneas que empiezan por `- `).
+2. Agrega en `CHANGELOG.md` una sección `## 1.2.0` con las novedades (líneas que empiezan por `- `) y la misma sección, en inglés, en `CHANGELOG.en.md` (las pruebas fallan si falta alguna).
 3. Crea y sube el tag:
 
 ```bash
@@ -136,6 +139,13 @@ git tag -a v1.2.0 -m "LabelBridge 1.2.0" && git push origin main v1.2.0
 ```
 
 GitHub Actions prueba todo, genera las capturas de la guía, compila y verifica el `.exe`, lo publica en Releases (privado) y en la página de descargas (público). Todas las apps instaladas lo detectan solas.
+
+## Idiomas (español e inglés)
+
+- El texto del código está en español y pasa por `tr()` (`labelbridge/i18n.py`): `tr("Se guardaron {0} pedidos", n)`. Las constantes de módulo se marcan con `N_()` y se traducen con `tr()` donde se muestran. Lo que lee el modelo del asistente se queda en español.
+- La traducción al inglés está en `assets/locale/en.json` (el texto en español es la clave). `devtools/i18n_extract.py` lista lo que falta traducir y `devtools/i18n_audit.py` abre todas las pantallas y diálogos y avisa de cualquier texto visible que no pase por `tr()`. Las pruebas exigen las dos cosas.
+- El idioma se elige al arrancar: el de Ajustes, si no el del instalador y si no el de Windows. Cambiarlo pide reiniciar.
+- Las capturas de la guía se generan por idioma: `python packaging/make_guide_images.py` (español) y `--lang en` (`assets/guide/en/`).
 
 ## ¿Cómo llegan los pedidos?
 
@@ -155,6 +165,7 @@ Detalles en [n8n/README.md](n8n/README.md) y [docs/PROTOCOLO.md](docs/PROTOCOLO.
 ```
 labelbridge/
   app.py               arranque (bandeja, ventana, servicios)
+  i18n.py              idioma de la interfaz (tr) y formatos de fecha y número
   config.py            configuración (JSON) y tamaños de etiqueta
   secret_store.py      secretos en el almacén seguro del sistema
   jobstore.py          cola e historial (SQLite)
@@ -166,9 +177,10 @@ labelbridge/
   assistant/           asistente: herramientas, permisos, consumo, conversación y filtro de secretos
     providers/         Claude, OpenAI, Gemini y API compatibles (formato de cada API, sin reglas propias)
   security/            cifrado, política de seguridad, límites, auditoría y registros sin secretos
-devtools/              pruebas reales del asistente (gastan tokens)
-  system/              inicio con Windows, instancia única, instalar impresoras
+  system/              inicio con Windows, instancia única, instalar impresoras, datos del instalador
   ui/                  interfaz (PySide6); mascot.py = la máscara animada, assistant_dock.py = bubble y chat flotante
+assets/locale/         traducciones (en.json)
+devtools/              pruebas reales del asistente (gastan tokens) y herramientas de traducción
 n8n/                   plantillas de flujos + guía
 docs/                  Shopify y protocolo
 packaging/             PyInstaller, Inno Setup, script de compilación

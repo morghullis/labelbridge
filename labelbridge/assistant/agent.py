@@ -14,9 +14,10 @@ import uuid
 from typing import Any, Callable
 
 from ..config import AssistantSettings
+from ..i18n import tr
 from .permissions import ToolPermissions
 from .pricing import cost_of, price_for
-from .prompt import SYSTEM_PROMPT
+from .prompt import system_prompt
 from .providers import Endpoint, Entry, ProviderError, Reply, ToolResult, UserText, connect, resolve
 from .tools import Toolbox
 from .usage import UsageMeter
@@ -39,36 +40,53 @@ def friendly_error(exc: BaseException, endpoint: Endpoint | None = None) -> str:
     if isinstance(exc, AssistantError):
         return str(exc)
     if not isinstance(exc, ProviderError):
-        return f"Error inesperado: {exc}"
-    name = endpoint.provider.short if endpoint else "el proveedor de IA"
-    model = endpoint.provider.model_label(endpoint.model) if endpoint else "el modelo"
-    where = "Asistente → Conectar IA"
+        return tr("Error inesperado: {0}", exc)
+    name = endpoint.provider.short if endpoint else tr("el proveedor de IA")
+    model = endpoint.provider.model_label(endpoint.model) if endpoint else tr("el modelo")
+    where = tr("Asistente → Conectar IA")
     detail = " ".join(exc.detail.split())[:240]
     local = bool(endpoint and endpoint.provider.local)
-    messages = {
-        "auth": f"La clave de API de {name} no es válida o fue revocada. Cámbiala en {where}.",
-        "permission": f"Tu clave de {name} no tiene permiso para usar {model}. Revisa tu cuenta o elige otro modelo.",
-        "not_found": f"{model} no existe o no está disponible en tu cuenta de {name}. Elige otro modelo en Ajustes → "
-        "Asistente (o revisa la dirección del servidor).",
-        "quota": f"Tu cuenta de {name} no tiene saldo o agotó su cuota. Revisa la facturación de tu cuenta.",
-        "rate_limit": f"Tu cuenta de {name} llegó a su límite de uso por ahora. Espera un minuto y vuelve a intentarlo.",
-        "overloaded": f"El servicio de {name} no responde ahora mismo (está saturado). Inténtalo de nuevo en un minuto.",
-        "too_large": "La conversación es demasiado larga para este modelo. Pulsa «Nueva conversación».",
-        "no_tools": f"{model} no puede usar herramientas (function calling) y el asistente las necesita. Elige otro "
-        "modelo en Ajustes → Asistente.",
-        "network": (
-            f"No se pudo conectar con {name} en este PC. ¿Está abierto y con el servidor activo?"
-            if local
-            else f"No hay conexión con {name}. Revisa internet o el firewall."
-        ),
-        "timeout": f"{name} tardó demasiado en responder. Inténtalo de nuevo.",
-        "redirect": f"La dirección de {name} redirige a otro servidor. Revisa la dirección en Ajustes → Asistente.",
-        "policy": f"La dirección del servidor no está permitida: {detail}",
-        "invalid_response": f"{name} respondió algo que no se entiende ({detail or 'sin detalles'}).",
-    }
+    no_detail = detail or tr("sin detalles")
     if exc.kind == "bad_request":
-        return f"{name} no aceptó la solicitud ({detail or 'sin detalles'}). Empieza una conversación nueva."
-    return messages.get(exc.kind, f"Error de {name}: {detail or exc.kind}")
+        return tr("{0} no aceptó la solicitud ({1}). Empieza una conversación nueva.", name, no_detail)
+    if exc.kind == "auth":
+        return tr("La clave de API de {0} no es válida o fue revocada. Cámbiala en {1}.", name, where)
+    if exc.kind == "permission":
+        return tr("Tu clave de {0} no tiene permiso para usar {1}. Revisa tu cuenta o elige otro modelo.", name, model)
+    if exc.kind == "not_found":
+        return tr(
+            "{0} no existe o no está disponible en tu cuenta de {1}. Elige otro modelo en Ajustes → Asistente (o "
+            "revisa la dirección del servidor).",
+            model,
+            name,
+        )
+    if exc.kind == "quota":
+        return tr("Tu cuenta de {0} no tiene saldo o agotó su cuota. Revisa la facturación de tu cuenta.", name)
+    if exc.kind == "rate_limit":
+        return tr("Tu cuenta de {0} llegó a su límite de uso por ahora. Espera un minuto y vuelve a intentarlo.", name)
+    if exc.kind == "overloaded":
+        return tr("El servicio de {0} no responde ahora mismo (está saturado). Inténtalo de nuevo en un minuto.", name)
+    if exc.kind == "too_large":
+        return tr("La conversación es demasiado larga para este modelo. Pulsa «Nueva conversación».")
+    if exc.kind == "no_tools":
+        return tr(
+            "{0} no puede usar herramientas (function calling) y el asistente las necesita. Elige otro modelo en "
+            "Ajustes → Asistente.",
+            model,
+        )
+    if exc.kind == "network":
+        if local:
+            return tr("No se pudo conectar con {0} en este PC. ¿Está abierto y con el servidor activo?", name)
+        return tr("No hay conexión con {0}. Revisa internet o el firewall.", name)
+    if exc.kind == "timeout":
+        return tr("{0} tardó demasiado en responder. Inténtalo de nuevo.", name)
+    if exc.kind == "redirect":
+        return tr("La dirección de {0} redirige a otro servidor. Revisa la dirección en Ajustes → Asistente.", name)
+    if exc.kind == "policy":
+        return tr("La dirección del servidor no está permitida: {0}", detail)
+    if exc.kind == "invalid_response":
+        return tr("{0} respondió algo que no se entiende ({1}).", name, no_detail)
+    return tr("Error de {0}: {1}", name, detail or exc.kind)
 
 
 class Conversation:
@@ -114,11 +132,11 @@ class Conversation:
         """Middleware de entrada: "" si el mensaje puede enviarse; si no, el motivo (no se gasta nada)."""
         s = self.settings
         if not s.enabled:
-            return "El asistente está desactivado en Ajustes → Asistente."
+            return tr("El asistente está desactivado en Ajustes → Asistente.")
         if len(text) > max(200, s.max_message_chars):
-            return f"El mensaje es muy largo (máximo {s.max_message_chars} caracteres). Resúmelo un poco."
+            return tr("El mensaje es muy largo (máximo {0} caracteres). Resúmelo un poco.", s.max_message_chars)
         if self.turns >= max(1, s.max_turns):
-            return "Esta conversación ya es larga. Pulsa «Nueva conversación» para seguir (gasta menos tokens)."
+            return tr("Esta conversación ya es larga. Pulsa «Nueva conversación» para seguir (gasta menos tokens).")
         return self.meter.admit_message(s)
 
     # --- estado ------------------------------------------------------------------------------
@@ -132,13 +150,13 @@ class Conversation:
     def client(self):
         endpoint = self._endpoint or self.endpoint
         if not endpoint.model:
-            raise AssistantError("Falta elegir el modelo de IA en Ajustes → Asistente.")
+            raise AssistantError(tr("Falta elegir el modelo de IA en Ajustes → Asistente."))
         key = self.secrets.get(endpoint.key_name)
         if endpoint.needs_key and not key:
-            raise AssistantError(f"Falta la clave de API de {endpoint.provider.short}. Agrégala en Asistente → Conectar IA.")
+            raise AssistantError(tr("Falta la clave de API de {0}. Agrégala en Asistente → Conectar IA.", endpoint.provider.short))
         identity = (endpoint, key)
         if self._client is None or identity != self._client_id:
-            self._client = self.connector(endpoint, key, system=SYSTEM_PROMPT, tools=self.tools, session=self.session)
+            self._client = self.connector(endpoint, key, system=system_prompt(), tools=self.tools, session=self.session)
             self._client_id = identity
         return self._client
 
@@ -182,11 +200,11 @@ class Conversation:
             if reply.stop == "refusal":
                 emit(
                     "refusal",
-                    {"message": "No puedo ayudar con eso. Reformula la petición o configura esa parte desde las pantallas."},
+                    {"message": tr("No puedo ayudar con eso. Reformula la petición o configura esa parte desde las pantallas.")},
                 )
                 return "refused"
             if reply.stop == "max_tokens" and reply.tool_calls:
-                raise AssistantError("La respuesta quedó incompleta. Vuelve a intentarlo con una petición más corta.")
+                raise AssistantError(tr("La respuesta quedó incompleta. Vuelve a intentarlo con una petición más corta."))
             self.history.append(reply)
             text = reply.text.strip()
             if not reply.tool_calls:
@@ -212,8 +230,8 @@ class Conversation:
                 return "stopped"
             budget = float(self.settings.daily_budget_usd or 0)
             if budget > 0 and self.meter.today()["cost"] >= budget:
-                raise AssistantError("Se alcanzó el límite diario de gasto del asistente (Ajustes → Asistente).")
-        raise AssistantError("El asistente dio demasiados pasos seguidos. Dime cómo quieres seguir.")
+                raise AssistantError(tr("Se alcanzó el límite diario de gasto del asistente (Ajustes → Asistente)."))
+        raise AssistantError(tr("El asistente dio demasiados pasos seguidos. Dime cómo quieres seguir."))
 
     def _settle(self, outcome: str) -> None:
         """Deja el historial listo para el siguiente mensaje.

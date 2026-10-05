@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 
 from ...config import LANGUAGES, MEDIA_PRESETS, PRINTER_KINDS, PrinterProfile
 from ...discovery import DiscoveredPrinter, discover
+from ...i18n import tr
 from ...printing.hints import looks_like_label_printer, looks_like_zpl, suggest_alias
 from ...printing.outputs import list_system_printers
 from ...system import windows_printers
@@ -49,8 +50,8 @@ def _table(headers: list[str], stretch_col: int) -> QTableWidget:
 class PrintersPage(Page):
     def __init__(self, ctx: AppContext) -> None:
         super().__init__(
-            "Impresoras",
-            "Conecta impresoras instaladas en Windows o directamente por IP (Wi‑Fi / red local), sin driver.",
+            tr("Impresoras"),
+            tr("Conecta impresoras instaladas en Windows o directamente por IP (Wi‑Fi / red local), sin driver."),
         )
         self.ctx = ctx
         self._discovered: list[DiscoveredPrinter] = []
@@ -59,26 +60,26 @@ class PrintersPage(Page):
 
         # --- configuradas ------------------------------------------------------------------
         mine = Card(
-            "Impresoras de LabelBridge",
-            "Los trabajos indican la impresora por su alias (p. ej. «etiquetas»). Sin alias se usa la predeterminada ★.",
+            tr("Impresoras de LabelBridge"),
+            tr("Los trabajos indican la impresora por su alias (p. ej. «etiquetas»). Sin alias se usa la predeterminada ★."),
         )
-        self.table = _table(["", "Alias", "Tipo", "Destino", "Lenguaje", "Tamaño", "Estado"], 3)
+        self.table = _table(["", tr("Alias"), tr("Tipo"), tr("Destino"), tr("Lenguaje"), tr("Tamaño"), tr("Estado")], 3)
         self.table.doubleClicked.connect(lambda _i: self._edit())
         mine.add(self.table)
         actions = QHBoxLayout()
-        add = button("Agregar", "plus", "primary")
+        add = button(tr("Agregar"), "plus", "primary")
         self.add_btn = add
         menu = QMenu(add)
-        menu.addAction(icons.icon("printer"), "Impresora instalada en Windows…", lambda: self._new("system"))
-        menu.addAction(icons.icon("wifi"), "Impresora de red por IP…", lambda: self._new("network"))
-        menu.addAction(icons.icon("folder"), "Guardar como archivo (pruebas)…", lambda: self._new("file"))
+        menu.addAction(icons.icon("printer"), tr("Impresora instalada en Windows…"), lambda: self._new("system"))
+        menu.addAction(icons.icon("wifi"), tr("Impresora de red por IP…"), lambda: self._new("network"))
+        menu.addAction(icons.icon("folder"), tr("Guardar como archivo (pruebas)…"), lambda: self._new("file"))
         add.setMenu(menu)
         actions.addWidget(add)
         for text, icon_name, slot, variant in (
-            ("Editar", "edit", self._edit, None),
-            ("Predeterminada", "star", self._make_default, None),
-            ("Imprimir prueba", "printer", self._test, None),
-            ("Eliminar", "trash", self._delete, "danger"),
+            (tr("Editar"), "edit", self._edit, None),
+            (tr("Predeterminada"), "star", self._make_default, None),
+            (tr("Imprimir prueba"), "printer", self._test, None),
+            (tr("Eliminar"), "trash", self._delete, "danger"),
         ):
             btn = button(text, icon_name, variant)
             btn.clicked.connect(slot)
@@ -88,7 +89,7 @@ class PrintersPage(Page):
         self.add(mine)
 
         # --- detección -----------------------------------------------------------------------
-        detect = Card("Detectar impresoras")
+        detect = Card(tr("Detectar impresoras"))
         tabs = QTabWidget()
         self.tabs = tabs
         detect.add(tabs)
@@ -96,27 +97,27 @@ class PrintersPage(Page):
         installed = QWidget()
         installed_layout = QVBoxLayout(installed)
         installed_layout.setContentsMargins(0, 10, 0, 0)
-        self.sys_table = _table(["Nombre", "Modelo / driver", "Puerto", "Predeterminada"], 0)
+        self.sys_table = _table([tr("Nombre"), tr("Modelo / driver"), tr("Puerto"), tr("Predeterminada")], 0)
         installed_layout.addWidget(self.sys_table)
         row = QHBoxLayout()
-        refresh = button("Actualizar", "refresh")
+        refresh = button(tr("Actualizar"), "refresh")
         refresh.clicked.connect(self._load_system)
-        add_sys = button("Agregar a LabelBridge", "plus", "primary")
+        add_sys = button(tr("Agregar a LabelBridge"), "plus", "primary")
         self.add_sys_btn = add_sys
         add_sys.clicked.connect(self._add_system)
         row.addWidget(refresh)
         row.addWidget(add_sys)
         row.addStretch(1)
         installed_layout.addLayout(row)
-        tabs.addTab(installed, icons.icon("printer"), "Instaladas en este equipo")
+        tabs.addTab(installed, icons.icon("printer"), tr("Instaladas en este equipo"))
 
         network = QWidget()
         net_layout = QVBoxLayout(network)
         net_layout.setContentsMargins(0, 10, 0, 0)
         net_layout.addWidget(
             label(
-                "Busca impresoras en tu Wi‑Fi o red local (puertos 9100, 631 y 515, y Bonjour/mDNS). "
-                "No envía nada a las impresoras durante la búsqueda.",
+                tr("Busca impresoras en tu Wi‑Fi o red local (puertos 9100, 631 y 515, y Bonjour/mDNS). "
+                   "No envía nada a las impresoras durante la búsqueda."),
                 "Muted",
                 wrap=True,
             )
@@ -124,22 +125,22 @@ class PrintersPage(Page):
         self.progress = QProgressBar()
         self.progress.setVisible(False)
         net_layout.addWidget(self.progress)
-        self.net_table = _table(["IP", "Nombre / modelo", "Protocolos", "Sugerido"], 1)
+        self.net_table = _table(["IP", tr("Nombre / modelo"), tr("Protocolos"), tr("Sugerido")], 1)
         net_layout.addWidget(self.net_table)
         row = QHBoxLayout()
-        self.scan_btn = button("Buscar en la red", "search", "primary")
+        self.scan_btn = button(tr("Buscar en la red"), "search", "primary")
         self.scan_btn.clicked.connect(self._scan)
-        add_net = button("Agregar a LabelBridge", "plus")
+        add_net = button(tr("Agregar a LabelBridge"), "plus")
         add_net.clicked.connect(self._add_network)
         row.addWidget(self.scan_btn)
         row.addWidget(add_net)
         if windows_printers.supported():
-            install = button("Instalar en Windows…", "download", tooltip="Crea el puerto TCP/IP y la impresora en Windows")
+            install = button(tr("Instalar en Windows…"), "download", tooltip=tr("Crea el puerto TCP/IP y la impresora en Windows"))
             install.clicked.connect(self._install_windows)
             row.addWidget(install)
         row.addStretch(1)
         net_layout.addLayout(row)
-        tabs.addTab(network, icons.icon("wifi"), "En la red (Wi‑Fi / LAN)")
+        tabs.addTab(network, icons.icon("wifi"), tr("En la red (Wi‑Fi / LAN)"))
         self.add(detect)
         self.finish()
 
@@ -159,15 +160,15 @@ class PrintersPage(Page):
             star = QTableWidgetItem()
             if default and p.id == default.id:
                 star.setIcon(icons.icon("star", "#F59E0B", 16))
-                star.setToolTip("Predeterminada")
+                star.setToolTip(tr("Predeterminada"))
             self.table.setItem(row, 0, star)
             values = [
                 p.alias,
-                PRINTER_KINDS.get(p.kind, p.kind),
+                tr(PRINTER_KINDS.get(p.kind, p.kind)),
                 p.target_text(),
-                ("ZPL" if p.language == "zpl" else "PDF") if p.kind == "file" else LANGUAGES.get(p.language, p.language).split(" (")[0],
-                MEDIA_PRESETS.get(p.media, ("?",))[0].split(" (")[0].split(" ·")[0],
-                "Activa" if p.enabled else "Desactivada",
+                ("ZPL" if p.language == "zpl" else "PDF") if p.kind == "file" else tr(LANGUAGES.get(p.language, p.language)).split(" (")[0],
+                tr(MEDIA_PRESETS.get(p.media, ("?",))[0]).split(" (")[0].split(" ·")[0],
+                tr("Activa") if p.enabled else tr("Desactivada"),
             ]
             for col, value in enumerate(values, start=1):
                 item = QTableWidgetItem(value)
@@ -208,13 +209,13 @@ class PrintersPage(Page):
         for key, value in values.items():
             setattr(profile, key, value)
         if not profile.alias:
-            profile.alias = suggest_alias("etiquetas" if not aliases else (profile.system_name or profile.host or kind), aliases)
+            profile.alias = suggest_alias(tr("etiquetas") if not aliases else (profile.system_name or profile.host or kind), aliases)
         self._open_dialog(profile, True)
 
     def _edit(self) -> None:
         profile = self._selected()
         if profile is None:
-            info(self, "Impresoras", "Selecciona una impresora de la lista.")
+            info(self, tr("Impresoras"), tr("Selecciona una impresora de la lista."))
             return
         self._open_dialog(profile, False)
 
@@ -230,7 +231,7 @@ class PrintersPage(Page):
         profile = self._selected()
         if profile is None:
             return
-        if not confirm(self, "Eliminar impresora", f"¿Eliminar «{profile.alias}» de LabelBridge?"):
+        if not confirm(self, tr("Eliminar impresora"), tr("¿Eliminar «{0}» de LabelBridge?", profile.alias)):
             return
         self.ctx.cfg.data.printers = [p for p in self.ctx.cfg.data.printers if p.id != profile.id]
         if self.ctx.cfg.data.general.default_printer_id == profile.id:
@@ -242,24 +243,24 @@ class PrintersPage(Page):
     def _test(self) -> None:
         profile = self._selected()
         if profile is None:
-            info(self, "Impresoras", "Selecciona una impresora de la lista.")
+            info(self, tr("Impresoras"), tr("Selecciona una impresora de la lista."))
             return
         run_async(
             lambda: self.ctx.engine.print_test(profile),
-            lambda detail: info(self, "Prueba enviada", f"Etiqueta de prueba enviada a «{profile.alias}» ({detail})."),
-            lambda message: error(self, "No se pudo imprimir", message),
+            lambda detail: info(self, tr("Prueba enviada"), tr("Etiqueta de prueba enviada a «{0}» ({1}).", profile.alias, detail)),
+            lambda message: error(self, tr("No se pudo imprimir"), message),
         )
 
     # --- instaladas en el sistema ---------------------------------------------------------------
     def _load_system(self) -> None:
-        run_async(list_system_printers, self._show_system, lambda m: error(self, "Impresoras", m))
+        run_async(list_system_printers, self._show_system, lambda m: error(self, tr("Impresoras"), m))
 
     def _show_system(self, printers: list[dict]) -> None:
         self._system = printers
         self.sys_table.setRowCount(len(printers))
         for row, p in enumerate(printers):
             for col, value in enumerate(
-                [p["name"], p["model"] or p["description"], p["port"] or p["location"], "Sí" if p["is_default"] else ""]
+                [p["name"], p["model"] or p["description"], p["port"] or p["location"], tr("Sí") if p["is_default"] else ""]
             ):
                 self.sys_table.setItem(row, col, QTableWidgetItem(value or ""))
             self.sys_table.setRowHeight(row, 34)
@@ -267,7 +268,7 @@ class PrintersPage(Page):
     def _add_system(self) -> None:
         row = self.sys_table.currentRow()
         if row < 0 or row >= len(self._system):
-            info(self, "Impresoras", "Selecciona una impresora instalada.")
+            info(self, tr("Impresoras"), tr("Selecciona una impresora instalada."))
             return
         p = self._system[row]
         text = f"{p['name']} {p['model']} {p['driver']}"
@@ -286,7 +287,7 @@ class PrintersPage(Page):
 
     def _scan(self) -> None:
         self.scan_btn.setEnabled(False)
-        self.scan_btn.setText("Buscando…")
+        self.scan_btn.setText(tr("Buscando…"))
         self.progress.setVisible(True)
         self.progress.setRange(0, 0)
         self._scan_cancel = threading.Event()
@@ -299,11 +300,11 @@ class PrintersPage(Page):
 
     def _scan_failed(self, message: str) -> None:
         self._scan_done()
-        error(self, "Búsqueda en la red", message)
+        error(self, tr("Búsqueda en la red"), message)
 
     def _scan_done(self) -> None:
         self.scan_btn.setEnabled(True)
-        self.scan_btn.setText("Buscar en la red")
+        self.scan_btn.setText(tr("Buscar en la red"))
         self.progress.setVisible(False)
 
     def _show_network(self, printers: list[DiscoveredPrinter], silent: bool = False) -> None:
@@ -320,14 +321,14 @@ class PrintersPage(Page):
         if not printers and not silent:
             info(
                 self,
-                "Búsqueda en la red",
-                "No se encontraron impresoras. Verifica que estén encendidas y en la misma red que este PC.",
+                tr("Búsqueda en la red"),
+                tr("No se encontraron impresoras. Verifica que estén encendidas y en la misma red que este PC."),
             )
 
     def _selected_network(self) -> DiscoveredPrinter | None:
         row = self.net_table.currentRow()
         if row < 0 or row >= len(self._discovered):
-            info(self, "Impresoras", "Selecciona una impresora encontrada.")
+            info(self, tr("Impresoras"), tr("Selecciona una impresora encontrada."))
             return None
         return self._discovered[row]
 
@@ -339,7 +340,7 @@ class PrintersPage(Page):
         aliases = [x.alias for x in self.ctx.cfg.data.printers]
         self._new(
             "network",
-            alias=suggest_alias(p.name or p.model or p.ip, aliases) if aliases else "etiquetas",
+            alias=suggest_alias(p.name or p.model or p.ip, aliases) if aliases else tr("etiquetas"),
             host=p.ip,
             port=s["port"],
             protocol=s["protocol"],
@@ -354,9 +355,9 @@ class PrintersPage(Page):
             return
         drivers = windows_printers.list_drivers()
         dialog = QDialog(self)
-        dialog.setWindowTitle("Instalar en Windows")
+        dialog.setWindowTitle(tr("Instalar en Windows"))
         layout = QVBoxLayout(dialog)
-        layout.addWidget(label(f"Impresora en {p.ip}. Elige el driver (debe estar instalado en Windows):", wrap=True))
+        layout.addWidget(label(tr("Impresora en {0}. Elige el driver (debe estar instalado en Windows):", p.ip), wrap=True))
         combo = QComboBox()
         combo.addItems(drivers)
         preferred = next((d for d in drivers if "zdesigner" in d.lower()), None) if p.is_zpl else None
@@ -364,24 +365,24 @@ class PrintersPage(Page):
         combo.setCurrentText(preferred)
         layout.addWidget(combo)
         layout.addWidget(
-            label("Windows pedirá permiso de administrador. Para Zebra usa el driver ZDesigner (o «Generic / Text Only» solo para ZPL).", "Muted", wrap=True)
+            label(tr("Windows pedirá permiso de administrador. Para Zebra usa el driver ZDesigner (o «Generic / Text Only» solo para ZPL)."), "Muted", wrap=True)
         )
         row = QHBoxLayout()
         row.addStretch(1)
-        ok = button("Instalar", "download", "primary")
+        ok = button(tr("Instalar"), "download", "primary")
         ok.clicked.connect(dialog.accept)
-        cancel = button("Cancelar")
+        cancel = button(tr("Cancelar"))
         cancel.clicked.connect(dialog.reject)
         row.addWidget(cancel)
         row.addWidget(ok)
         layout.addLayout(row)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
-        name = p.name or p.model or f"Impresora {p.ip}"
+        name = p.name or p.model or tr("Impresora {0}", p.ip)
         driver = combo.currentText()
         port = 9100 if 9100 in p.ports else 9100
         run_async(
             lambda: windows_printers.install_network_printer(name, p.ip, driver, port),
-            lambda _r: (info(self, "Listo", f"«{name}» quedó instalada en Windows."), self._load_system()),
-            lambda m: error(self, "No se pudo instalar", m),
+            lambda _r: (info(self, tr("Listo"), tr("«{0}» quedó instalada en Windows.", name)), self._load_system()),
+            lambda m: error(self, tr("No se pudo instalar"), m),
         )

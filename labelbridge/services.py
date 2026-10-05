@@ -14,6 +14,7 @@ from .connectors.base import BackgroundService
 from .connectors.local_api import LocalApiService
 from .connectors.mqtt import MqttService
 from .connectors.shopify import ShopifyService
+from .i18n import tr
 from .jobstore import JobStore
 from .printing.engine import PrintEngine
 from .secret_store import LOCAL_API_KEY, SecretStore
@@ -53,15 +54,15 @@ class NetworkWatcher(BackgroundService):
             networks = tuple(sorted(".".join(ip.split(".")[:3]) for ip in local_ipv4_addresses()))
             if networks and networks != last_networks:
                 last_networks = networks
-                self.set_status("connecting", "Buscando impresoras en la red…")
+                self.set_status("connecting", tr("Buscando impresoras en la red…"))
                 found = discover(cancel=stop)
                 if stop.is_set():
                     break
                 self.publish(found)
-                self.set_status("ok", f"{len(found)} impresora(s) en la red · {time.strftime('%H:%M')}")
+                self.set_status("ok", tr("{0} impresora(s) en la red · {1}", len(found), time.strftime('%H:%M')))
             elif not networks:
                 last_networks = None
-                self.set_status("warn", "Sin conexión de red")
+                self.set_status("warn", tr("Sin conexión de red"))
             if not self.sleep(stop, wake, 60):
                 break
 
@@ -74,8 +75,8 @@ class NetworkWatcher(BackgroundService):
         self._announced.update(p.ip for p in new)
         if new:
             names = ", ".join(f"{p.title} ({p.ip})" for p in new[:3])
-            more = f" y {len(new) - 3} más" if len(new) > 3 else ""
-            self.events.notify("Impresoras encontradas en la red", f"{names}{more}. Agrégalas en Impresoras → En la red.")
+            more = tr(" y {0} más", len(new) - 3) if len(new) > 3 else ""
+            self.events.notify(tr("Impresoras encontradas en la red"), tr("{0}{1}. Agrégalas en Impresoras → En la red.", names, more))
 
 
 class Services:
@@ -107,7 +108,7 @@ class Services:
             if service.enabled():
                 service.start()
             else:
-                service.set_status("off", "Desactivado")
+                service.set_status("off", tr("Desactivado"))
 
     def stop(self) -> None:
         for service in self.all():

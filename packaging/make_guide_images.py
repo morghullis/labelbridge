@@ -1,10 +1,10 @@
-"""Genera las imágenes de la Guía paso a paso (assets/guide/*.png).
+"""Genera las imágenes de la Guía paso a paso (assets/guide/*.png; en inglés, assets/guide/en/*.png).
 
 Abre la app con datos de ejemplo (sin servicios ni impresoras reales), fotografía cada pantalla y
 resalta en dorado lo que hay que pulsar, con números que coinciden con las instrucciones de la guía.
 Lo que ocurre fuera de la app (Shopify, bandeja de Windows) se dibuja como ilustración.
 
-Uso: python packaging/make_guide_images.py   (la compilación lo ejecuta antes de empaquetar)
+Uso: python packaging/make_guide_images.py [--lang en]   (la compilación lo ejecuta antes de empaquetar)
 """
 
 from __future__ import annotations
@@ -29,12 +29,18 @@ from PySide6.QtCore import QEventLoop, QPoint, QPointF, QRectF, Qt, QTimer  # no
 from PySide6.QtGui import QColor, QFont, QImage, QLinearGradient, QPainter, QPainterPath, QPen  # noqa: E402
 from PySide6.QtWidgets import QApplication, QLabel, QWidget  # noqa: E402
 
-OUT = ROOT / "assets" / "guide"
+LANG = sys.argv[sys.argv.index("--lang") + 1] if "--lang" in sys.argv else "es"
+OUT = ROOT / "assets" / "guide" if LANG == "es" else ROOT / "assets" / "guide" / LANG
 S = 2  # escala de las imágenes
 GOLD = QColor("#F59E0B")
 GOLD_GLOW = QColor(245, 158, 11, 80)
 INK = QColor("#0F172A")
 MUTED = QColor("#64748B")
+
+
+def t(es: str, en: str) -> str:
+    """Texto de las ilustraciones y datos de ejemplo en el idioma de las imágenes."""
+    return en if LANG == "en" else es
 
 
 # --- utilidades de dibujo -----------------------------------------------------------------
@@ -214,7 +220,7 @@ def sketch_dev_dashboard() -> None:
     left = k.window(QRectF(20, 20, 450, 540), "dev.shopify.com/dashboard")
     p = k.p
     p.fillRect(QRectF(left.left() + 1, left.top(), 120, left.height() - 1), QColor("#F8FAFC"))
-    for i, item in enumerate(("Inicio", "Apps", "Tiendas", "Ajustes")):
+    for i, item in enumerate((t("Inicio", "Home"), "Apps", t("Tiendas", "Stores"), t("Ajustes", "Settings"))):
         k.text(left.left() + 18, left.top() + 20 + i * 34, item, 13, bold=item == "Apps", color="#0F172A")
     k.text(left.left() + 140, left.top() + 18, "Apps", 20, bold=True)
     create = k.button(QRectF(left.right() - 130, left.top() + 18, 110, 32), "Create app", primary=True)
@@ -222,14 +228,14 @@ def sketch_dev_dashboard() -> None:
     p.setPen(QPen(QColor("#CBD5E1"), 1))
     p.setBrush(QColor("white"))
     p.drawRoundedRect(popup, 10, 10)
-    k.text(popup.left() + 16, popup.top() + 14, "Crear una app", 14, bold=True)
+    k.text(popup.left() + 16, popup.top() + 14, t("Crear una app", "Create an app"), 14, bold=True)
     option = k.button(QRectF(popup.left() + 16, popup.top() + 50, popup.width() - 32, 34), "Start from Dev Dashboard")
-    k.field(QRectF(popup.left() + 16, popup.top() + 120, popup.width() - 32, 32), "LabelBridge", "Nombre de la app")
+    k.field(QRectF(popup.left() + 16, popup.top() + 120, popup.width() - 32, 32), "LabelBridge", t("Nombre de la app", "App name"))
     k.button(QRectF(popup.right() - 96, popup.bottom() - 48, 80, 32), "Create", primary=True)
     k.highlight(create, 2)
     k.highlight(QRectF(option.left(), option.top(), option.width(), 108), 2)
 
-    right = k.window(QRectF(490, 20, 470, 540), "dev.shopify.com · LabelBridge · Versiones")
+    right = k.window(QRectF(490, 20, 470, 540), t("dev.shopify.com · LabelBridge · Versiones", "dev.shopify.com · LabelBridge · Versions"))
     x = right.left() + 22
     x += 18
     k.text(x, right.top() + 8, "Access scopes", 13, bold=True)
@@ -240,33 +246,35 @@ def sketch_dev_dashboard() -> None:
     install = k.button(QRectF(x + 112, right.top() + 236, 120, 34), "Install app")
     k.text(x, right.top() + 290, "App settings · Credentials", 13, bold=True)
     client_id = k.field(QRectF(x, right.top() + 352, right.width() - 148, 32), "a1b2c3d4e5f6a7b8c9d0", "Client ID")
-    k.button(QRectF(client_id.right() + 10, client_id.top(), 70, 32), "Copiar")
+    k.button(QRectF(client_id.right() + 10, client_id.top(), 70, 32), t("Copiar", "Copy"))
     secret = k.field(QRectF(x, right.top() + 420, right.width() - 148, 32), "•••••••••••••••••••••", "Client secret")
-    k.button(QRectF(secret.right() + 10, secret.top(), 70, 32), "Copiar")
+    k.button(QRectF(secret.right() + 10, secret.top(), 70, 32), t("Copiar", "Copy"))
     k.highlight(scopes, 3)
     k.highlight(QRectF(rows[0].left(), rows[0].top(), 140, 68), 4)
     k.highlight(QRectF(release.left(), release.top(), install.right() - release.left(), 34), 5)
     k.highlight(QRectF(client_id.left(), client_id.top() - 22, client_id.width() + 80, secret.bottom() - client_id.top() + 22), 6)
-    k.note("Ilustración: las pantallas de Shopify pueden verse un poco distintas, pero los nombres son los mismos.")
+    k.note(t("Ilustración: las pantallas de Shopify pueden verse un poco distintas, pero los nombres son los mismos.",
+             "Illustration: Shopify's screens may look a little different, but the names are the same."))
     k.save("devdashboard.png")
 
 
 def sketch_draft_order() -> None:
     k = Sketch(980, 520)
-    area = k.window(QRectF(20, 20, 940, 460), "admin.shopify.com · Pedidos preliminares")
+    area = k.window(QRectF(20, 20, 940, 460), t("admin.shopify.com · Pedidos preliminares", "admin.shopify.com · Draft orders"))
     p = k.p
     p.fillRect(QRectF(area.left() + 1, area.top(), 190, area.height() - 1), QColor("#F8FAFC"))
-    menu = ["Inicio", "Pedidos", "   Pedidos preliminares", "Productos", "Clientes"]
+    menu = [t("Inicio", "Home"), t("Pedidos", "Orders"), t("   Pedidos preliminares", "   Draft orders"),
+            t("Productos", "Products"), t("Clientes", "Customers")]
     for i, item in enumerate(menu):
-        k.text(area.left() + 18, area.top() + 20 + i * 32, item, 13, bold=item in ("Pedidos", "   Pedidos preliminares"))
+        k.text(area.left() + 18, area.top() + 20 + i * 32, item, 13, bold=i in (1, 2))
     drafts = QRectF(area.left() + 12, area.top() + 82, 170, 30)
     main_x = area.left() + 216
-    k.text(main_x, area.top() + 16, "Crear pedido", 20, bold=True)
+    k.text(main_x, area.top() + 16, t("Crear pedido", "Create order"), 20, bold=True)
     products = QRectF(main_x, area.top() + 60, 430, 120)
     customer = QRectF(main_x, area.top() + 196, 430, 120)
     for box, title, lines in (
-        (products, "Productos", ["Anillo de prueba · Oro 14k", "1 × $480.00"]),
-        (customer, "Cliente", ["María López", "Calle 8 #120, Miami FL 33130"]),
+        (products, t("Productos", "Products"), [t("Anillo de prueba · Oro 14k", "Test ring · 14k gold"), "1 × $480.00"]),
+        (customer, t("Cliente", "Customer"), ["María López", t("Calle 8 #120, Miami FL 33130", "120 SW 8th St, Miami FL 33130")]),
     ):
         p.setPen(QPen(QColor("#E2E8F0"), 1))
         p.setBrush(QColor("white"))
@@ -274,19 +282,20 @@ def sketch_draft_order() -> None:
         k.text(box.left() + 16, box.top() + 12, title, 13, bold=True)
         for j, line in enumerate(lines):
             k.text(box.left() + 16, box.top() + 46 + j * 26, line, 12, color="#334155")
-    pay = k.button(QRectF(area.right() - 190, area.bottom() - 70, 160, 36), "Cobrar  ▾", primary=True)
+    pay = k.button(QRectF(area.right() - 190, area.bottom() - 70, 160, 36), t("Cobrar  ▾", "Collect payment  ▾"), primary=True)
     dropdown = QRectF(pay.left() - 40, pay.top() - 96, 200, 86)
     p.setPen(QPen(QColor("#CBD5E1"), 1))
     p.setBrush(QColor("white"))
     p.drawRoundedRect(dropdown, 8, 8)
     mark = QRectF(dropdown.left() + 6, dropdown.top() + 8, dropdown.width() - 12, 32)
     p.fillRect(mark, QColor("#F1F5F9"))
-    k.text(mark.left() + 10, mark.top(), "Marcar como pagado", 12, bold=True, height=32)
-    k.text(mark.left() + 10, mark.top() + 40, "Enviar factura", 12, height=32)
+    k.text(mark.left() + 10, mark.top(), t("Marcar como pagado", "Mark as paid"), 12, bold=True, height=32)
+    k.text(mark.left() + 10, mark.top() + 40, t("Enviar factura", "Send invoice"), 12, height=32)
     k.highlight(drafts, 1)
     k.highlight(QRectF(products.left(), products.top(), products.width(), customer.bottom() - products.top()), 2)
     k.highlight(QRectF(dropdown.left(), dropdown.top(), dropdown.width(), pay.bottom() - dropdown.top()), 3)
-    k.note("Ilustración del administrador de Shopify (Pedidos → Pedidos preliminares).")
+    k.note(t("Ilustración del administrador de Shopify (Pedidos → Pedidos preliminares).",
+             "Illustration of the Shopify admin (Orders → Draft orders)."))
     k.save("draft-order.png")
 
 
@@ -300,7 +309,7 @@ def sketch_tray() -> None:
     bar = QRectF(0, 328, 760, 52)
     p.fillRect(bar, QColor("#111827"))
     k.text(640, 334, "10:24", 12, bold=True, color="#E5E7EB", width=90, height=20)
-    k.text(640, 352, "04/10/2026", 11, color="#9CA3AF", width=90, height=18)
+    k.text(640, 352, t("04/10/2026", "10/4/2026"), 11, color="#9CA3AF", width=90, height=18)
     icon_rect = QRectF(588, 340, 28, 28)
     icon = QImage(str(ROOT / "assets" / "icons" / "app-64.png"))
     if not icon.isNull():
@@ -313,8 +322,10 @@ def sketch_tray() -> None:
     p.setPen(QPen(QColor("#CBD5E1"), 1))
     p.setBrush(QColor("white"))
     p.drawRoundedRect(menu, 10, 10)
-    items = ["Abrir LabelBridge", "Pausar impresión automática", "Imprimir etiqueta de prueba", "Buscar actualizaciones",
-             "Salir (detiene la impresión automática)"]
+    from labelbridge.i18n import tr
+
+    items = [tr("Abrir {0}", "LabelBridge"), tr("Pausar impresión automática"), tr("Imprimir etiqueta de prueba"),
+             tr("Buscar actualizaciones"), tr("Salir (detiene la impresión automática)")]
     rows = []
     for i, item in enumerate(items):
         y = menu.top() + 12 + i * 42 + (10 if i == 4 else 0)
@@ -324,8 +335,10 @@ def sketch_tray() -> None:
     p.drawLine(QPointF(menu.left() + 12, menu.top() + 186), QPointF(menu.right() - 12, menu.top() + 186))
     k.highlight(icon_rect, 1)
     k.highlight(rows[1], 2)
-    k.text(24, 24, "Clic derecho en el icono junto al reloj", 15, bold=True, color="#F8FAFC")
-    k.text(24, 48, "La app sigue trabajando aunque cierres la ventana.", 13, color="#CBD5E1")
+    k.text(24, 24, t("Clic derecho en el icono junto al reloj", "Right-click the icon next to the clock"), 15, bold=True,
+           color="#F8FAFC")
+    k.text(24, 48, t("La app sigue trabajando aunque cierres la ventana.", "The app keeps working even if you close the window."),
+           13, color="#CBD5E1")
     k.save("tray.png")
 
 
@@ -335,6 +348,7 @@ def demo_context():
     from labelbridge import paths
     from labelbridge.config import ConfigManager, PrinterProfile
     from labelbridge.events import Events
+    from labelbridge.i18n import tr
     from labelbridge.jobstore import JobStore
     from labelbridge.labels.order import sample_order
     from labelbridge.models import parse_job
@@ -344,56 +358,61 @@ def demo_context():
     from labelbridge.ui.context import AppContext, QtBridge
 
     cfg = ConfigManager(paths.config_path())
-    zebra = PrinterProfile(alias="etiquetas", kind="network", host="192.168.1.50", port=9100, language="zpl", media="4x6")
-    office = PrinterProfile(alias="oficina", kind="system", system_name="HP LaserJet Pro M404", language="driver", media="letter")
+    labels = tr("etiquetas")
+    shop = t("mi-tienda.myshopify.com", "my-store.myshopify.com")
+    zebra = PrinterProfile(alias=labels, kind="network", host="192.168.1.50", port=9100, language="zpl", media="4x6")
+    office = PrinterProfile(alias=t("oficina", "office"), kind="system", system_name="HP LaserJet Pro M404", language="driver", media="letter")
     cfg.data.printers = [zebra, office]
     general = cfg.data.general
     general.default_printer_id = zebra.id
-    general.agent_name = "PC-BODEGA"
+    general.agent_name = t("PC-BODEGA", "WAREHOUSE-PC")
     general.auto_discover = False
     general.guide_acknowledged = "daily,what"
     cfg.data.local_api.enabled = False
-    cfg.data.labels.store_name = "Mi Tienda"
+    cfg.data.labels.store_name = t("Mi Tienda", "My Store")
     cfg.data.labels.sender_address = "2401 NW 7th St\nMiami, FL 33125\n+1 305 555 0123"
     shopify = cfg.data.shopify
-    shopify.enabled, shopify.shop, shopify.client_id = True, "mi-tienda.myshopify.com", "a1b2c3d4e5f6a7b8c9d0e1f2"
-    shopify.buy_shipping_label, shopify.shipping_label_printer = True, "etiquetas"
-    cfg.data.mqtt.channel = "pc-bodega"
+    shopify.enabled, shopify.shop, shopify.client_id = True, shop, "a1b2c3d4e5f6a7b8c9d0e1f2"
+    shopify.buy_shipping_label, shopify.shipping_label_printer = True, labels
+    cfg.data.mqtt.channel = t("pc-bodega", "warehouse-pc")
     secrets = SecretStore(paths.data_dir() / "secrets.json", backend="file")
     secrets.set(SHOPIFY_CLIENT_SECRET, "shpss_ejemplo_no_real")
     secrets.set(ANTHROPIC_API_KEY, "sk-ant-ejemplo-no-real")
     store = JobStore(paths.db_path(), paths.spool_dir())
     for number in (1004, 1005, 1006):
         job, _ = store.add(parse_job({"id": f"pedido-{number}", "order": {**sample_order(), "name": f"#{number}"}}), "shopify")
-        store.set_done(job["id"], "etiquetas")
-    test, _ = store.add(parse_job({"id": "prueba-1", "title": "Etiqueta de prueba", "order": sample_order()}), "test")
-    store.set_done(test["id"], "etiquetas")
+        store.set_done(job["id"], labels)
+    test, _ = store.add(parse_job({"id": "prueba-1", "title": tr("Etiqueta de prueba"), "order": sample_order()}), "test")
+    store.set_done(test["id"], labels)
     events = Events()
     engine = PrintEngine(store, cfg, events)
     services = Services(cfg, secrets, store, engine, events)
+    services.shopify.overview = lambda days=7: []  # la pestaña Pedidos carga al abrir la app
     services.shopify.state = "ok"
-    services.shopify.message = "Conectado a mi-tienda.myshopify.com · revisado a las 10:24"
+    services.shopify.message = tr("Conectado a {0} · revisado a las {1}{2}", shop, "10:24", "")
     return AppContext(cfg, secrets, store, engine, services, events, QtBridge(events, cfg))
 
 
 def demo_conversation(page) -> None:
     """Conversación de ejemplo para la captura (no llama a la API)."""
+    from labelbridge.i18n import tr
     from labelbridge.ui.pages.assistant import ActivityRow, bubble
 
     page._add(
         bubble(
-            "Tengo una Zebra ZD421 por USB y quiero que se impriman solas las guías de Shopify Shipping de "
-            "mi-tienda",
+            t("Tengo una Zebra ZD421 por USB y quiero que se impriman solas las guías de Shopify Shipping de mi-tienda",
+              "I have a Zebra ZD421 on USB and I want my-store's Shopify Shipping labels to print by themselves"),
             "user",
         )
     )
     for text in ("Leyendo las impresoras de Windows", "Agregando la impresora", "Configurando la conexión con Shopify"):
-        page._add(ActivityRow(text)).finish(True)
+        page._add(ActivityRow(tr(text))).finish(True)
     page._add(
         bubble(
-            "Listo: agregué la **Zebra ZD421** como «etiquetas» (ZPL, 4 × 6 in) y conecté "
-            "**mi-tienda.myshopify.com**.\n\nAhora te abro una ventana segura para pegar el **Client secret** "
-            "de tu app de Shopify.",
+            t("Listo: agregué la **Zebra ZD421** como «etiquetas» (ZPL, 4 × 6 in) y conecté **mi-tienda.myshopify.com**."
+              "\n\nAhora te abro una ventana segura para pegar el **Client secret** de tu app de Shopify.",
+              "Done: I added the **Zebra ZD421** as “labels” (ZPL, 4 × 6 in) and connected **my-store.myshopify.com**."
+              "\n\nNow I'll open a secure window so you can paste your Shopify app's **Client secret**."),
             "assistant",
         )
     )
@@ -411,11 +430,22 @@ def fake_system_printers() -> list[dict]:
     ]
 
 
+def offline(method: str, url: str, **_) -> None:
+    from labelbridge.net import NetworkError
+
+    raise NetworkError(f"Las capturas de la guía no usan internet ({method} {url})")
+
+
 def main() -> None:
+    from labelbridge import net
+
+    net.request = offline  # datos de ejemplo: nada sale a internet (la tienda de ejemplo podría existir de verdad)
     app = QApplication.instance() or QApplication([sys.argv[0]])
+    from labelbridge import i18n
     from labelbridge.ui import theme
     from labelbridge.ui.pages import printers as printers_page
 
+    i18n.set_language(LANG)
     printers_page.list_system_printers = fake_system_printers
     app.setStyleSheet(theme.STYLESHEET)
     if sys.platform == "win32":

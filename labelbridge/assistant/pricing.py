@@ -11,6 +11,7 @@ from dataclasses import dataclass
 
 from .providers import Endpoint, Usage
 from .providers.catalog import ESTIMATE, price_of
+from ..i18n import tr
 
 CACHE_WRITE_FACTOR = 1.25  # escribir en la caché cuesta algo más que la entrada normal
 CACHE_READ_FACTOR = 0.10  # leer de la caché, mucho menos
@@ -32,13 +33,13 @@ class Price:
 
     def text(self) -> str:
         if self.source == "local":
-            return "Gratis: el modelo funciona en tu equipo o tu red."
-        values = f"{self.input:g} USD entrada · {self.output:g} USD salida por millón de tokens"
+            return tr("Gratis: el modelo funciona en tu equipo o tu red.")
+        values = tr("{0:g} USD entrada · {1:g} USD salida por millón de tokens", self.input, self.output)
         return {
-            "catalog": f"Precio público: {values}.",
-            "custom": f"Precio que pusiste: {values}.",
-            "estimate": f"Modelo sin precio conocido: se estima con {values} (pon el de tu proveedor para un límite exacto).",
-            "reported": "El proveedor informa el costo exacto de cada llamada y se usa ese para el límite diario.",
+            "catalog": tr("Precio público: {0}.", values),
+            "custom": tr("Precio que pusiste: {0}.", values),
+            "estimate": tr("Modelo sin precio conocido: se estima con {0} (pon el de tu proveedor para un límite exacto).", values),
+            "reported": tr("El proveedor informa el costo exacto de cada llamada y se usa ese para el límite diario."),
         }[self.source]
 
 

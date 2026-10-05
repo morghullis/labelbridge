@@ -26,6 +26,7 @@ from urllib.parse import parse_qs, urlparse
 from .. import APP_NAME, __version__
 from .. import events as ev
 from ..config import ConfigManager
+from ..i18n import tr
 from ..jobstore import JobStore
 from ..labels.order import sample_order
 from ..models import MAX_CONTENT_BYTES, JobError, JobRequest, parse_jobs_payload
@@ -72,7 +73,7 @@ class _Server(ThreadingHTTPServer):
         if not self.slots.acquire(blocking=False):
             # Demasiadas conexiones a la vez: se cierra sin atender (protege de inundaciones).
             self.service.policy.audit.record("api", "conexión", "deny", client=client_address[0],
-                                             detail="demasiadas conexiones simultáneas")
+                                             detail=tr("demasiadas conexiones simultáneas"))
             self.shutdown_request(request)
             return
         try:
@@ -149,12 +150,12 @@ class _Handler(BaseHTTPRequestHandler):
             self._send(429, {"error": "Equipo bloqueado temporalmente por claves incorrectas."}, retry_after=blocked)
             return False
         if not self.svc.host_allowed(self.headers.get("Host", ""), self.client):
-            policy.audit.record("api", self.command, "deny", client=self.client, detail=f"Host {self.headers.get('Host')}")
+            policy.audit.record("api", self.command, "deny", client=self.client, detail=tr("Host {0}", self.headers.get('Host')))
             self._send(421, {"error": "Host no permitido"})
             return False
         allowed, wait = policy.api_requests.allow(self.client)
         if not allowed:
-            policy.audit.record("api", self.command, "deny", client=self.client, detail="límite de peticiones por minuto")
+            policy.audit.record("api", self.command, "deny", client=self.client, detail=tr("límite de peticiones por minuto"))
             self._send(429, {"error": "Demasiadas peticiones. Espera unos segundos."}, retry_after=wait)
             return False
         return True
@@ -171,24 +172,24 @@ class _Handler(BaseHTTPRequestHandler):
             minutes = self.svc.cfg.data.security.api_block_minutes
             policy.audit.record("api", "autenticación", "block", client=self.client, detail=f"{minutes} min")
             self.svc.events.notify(
-                "API local: acceso bloqueado",
-                f"Demasiadas claves incorrectas desde {self.client}. Bloqueado {minutes} minutos.",
+                tr("API local: acceso bloqueado"),
+                tr("Demasiadas claves incorrectas desde {0}. Bloqueado {1} minutos.", self.client, minutes),
                 "error",
             )
         return ok
 
     def _deny_unauthorized(self) -> None:
-        self.svc.policy.audit.record("api", self.command, "deny", client=self.client, detail="clave inválida o ausente")
-        self._send(401, {"error": "Clave de API inválida o ausente (Authorization: Bearer <clave>)"})
+        self.svc.policy.audit.record("api", self.command, "deny", client=self.client, detail=tr("clave inválida o ausente"))
+        self._send(401, {"error": tr("Clave de API inválida o ausente (Authorization: Bearer <clave>)")})
 
     def _read_json(self) -> Any:
         length = self.headers.get("Content-Length")
         if length is None:
-            raise JobError("Falta Content-Length")
+            raise JobError(tr("Falta Content-Length"))
         try:
             size = int(length)
         except ValueError:
-            raise JobError("Content-Length inválido") from None
+            raise JobError(tr("Content-Length inválido")) from None
         if size < 0 or size > MAX_BODY:
             raise OverflowError
         raw = self.rfile.read(size)
@@ -196,7 +197,7 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             return json.loads(raw.decode("utf-8") or "null")
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise JobError(f"JSON inválido: {exc}") from None
+            raise JobError(tr("JSON inválido: {0}", exc)) from None
 
     def _route(self) -> tuple[str, dict[str, list[str]]]:
         self._body_consumed = False
@@ -255,7 +256,7 @@ class _Handler(BaseHTTPRequestHandler):
             try:
                 limit = max(1, min(500, int((query.get("limit") or ["50"])[0] or 50)))
             except ValueError:
-                self._send(400, {"error": "'limit' debe ser un número"})
+                self._send(400, {"error": tr("'limit' debe ser un número")})
                 return
             status = (query.get("status") or [None])[0]
             jobs = self.svc.store.list(limit=limit, status=status)
@@ -285,7 +286,7 @@ class _Handler(BaseHTTPRequestHandler):
                 printer = (query.get("printer") or [""])[0]
                 req = JobRequest(
                     external_id=f"prueba-{datetime.now():%Y%m%d%H%M%S%f}",
-                    title="Etiqueta de prueba",
+                    title=tr("Etiqueta de prueba"),
                     printer=printer,
                     format="order",
                     order=sample_order(),
@@ -304,7 +305,7 @@ class _Handler(BaseHTTPRequestHandler):
             self._send(exc.status, {"error": str(exc)}, retry_after=exc.retry_after)
         except Exception:
             log.exception("Error en la API local")
-            self._send(500, {"error": "Error interno (detalles en el registro de la app)"})
+            self._send(500, {"error": tr("Error interno (detalles en el registro de la app)")})
 
     def do_DELETE(self) -> None:  # noqa: N802
         path, _ = self._route()
@@ -389,7 +390,7 @@ class LocalApiService(BackgroundService):
         try:
             server = _Server((host, settings.port), _Handler)
         except OSError as exc:
-            self.set_status("error", f"No se pudo abrir el puerto {settings.port}: {exc.strerror or exc}")
+            self.set_status("error", tr("No se pudo abrir el puerto {0}: {1}", settings.port, exc.strerror or exc))
             log.error("API local: puerto %s no disponible (%s)", settings.port, exc)
             return
         server.service = self
@@ -397,8 +398,8 @@ class LocalApiService(BackgroundService):
         self._server = server
         self.bound_port = server.server_address[1]
         threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.5}, name="local-api", daemon=True).start()
-        where = "toda la red local" if settings.allow_lan else "solo este equipo"
-        self.set_status("ok", f"Escuchando en el puerto {self.bound_port} ({where})")
+        where = tr("toda la red local") if settings.allow_lan else tr("solo este equipo")
+        self.set_status("ok", tr("Escuchando en el puerto {0} ({1})", self.bound_port, where))
         log.info("API local escuchando en %s:%s", host, self.bound_port)
 
     def stop(self, timeout: float = 5.0) -> None:
@@ -407,4 +408,4 @@ class LocalApiService(BackgroundService):
             server.shutdown()
             server.server_close()
         self.bound_port = None
-        self.set_status("off", "Desactivada")
+        self.set_status("off", tr("Desactivada"))

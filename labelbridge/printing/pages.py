@@ -13,6 +13,7 @@ from PySide6.QtCore import QRect, QRectF, QSize, Qt
 from PySide6.QtGui import QImage, QPainter, QTransform
 from PySide6.QtPdf import QPdfDocument, QPdfDocumentRenderOptions
 
+from ..i18n import tr
 from . import PermanentPrintError
 
 MM_PER_INCH = 25.4
@@ -62,13 +63,13 @@ class PdfSource(PageSource):
         if error != QPdfDocument.Error.None_:
             self.close()
             reason = {
-                QPdfDocument.Error.IncorrectPassword: "está protegido con contraseña",
-                QPdfDocument.Error.UnsupportedSecurityScheme: "usa un cifrado no soportado",
-            }.get(error, f"no es válido ({error.name})")
-            raise PermanentPrintError(f"El PDF {reason}")
+                QPdfDocument.Error.IncorrectPassword: tr("está protegido con contraseña"),
+                QPdfDocument.Error.UnsupportedSecurityScheme: tr("usa un cifrado no soportado"),
+            }.get(error, tr("no es válido ({0})", error.name))
+            raise PermanentPrintError(tr("El PDF {0}", reason))
         if self._doc.pageCount() < 1:
             self.close()
-            raise PermanentPrintError("El PDF no tiene páginas")
+            raise PermanentPrintError(tr("El PDF no tiene páginas"))
 
     def count(self) -> int:
         return self._doc.pageCount()
@@ -93,7 +94,7 @@ class PdfSource(PageSource):
         options.setRenderFlags(flags)
         image = self._doc.render(index, QSize(max(1, width), max(1, height)), options)
         if image.isNull():
-            raise PermanentPrintError(f"No se pudo dibujar la página {index + 1} del PDF")
+            raise PermanentPrintError(tr("No se pudo dibujar la página {0} del PDF", index + 1))
         return flatten(image)
 
     def close(self) -> None:
@@ -111,7 +112,7 @@ class ImageSource(PageSource):
     def __init__(self, data: bytes) -> None:
         image = QImage.fromData(data)
         if image.isNull():
-            raise PermanentPrintError("La imagen no es válida o su formato no está soportado")
+            raise PermanentPrintError(tr("La imagen no es válida o su formato no está soportado"))
         self._image = flatten(image)
 
     def pixel_size(self, index: int) -> tuple[int, int]:

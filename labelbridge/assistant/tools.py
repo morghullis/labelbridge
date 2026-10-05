@@ -32,6 +32,7 @@ from ..secret_store import MQTT_PASSWORD, SHOPIFY_ACCESS_TOKEN, SHOPIFY_CLIENT_S
 from ..system import autostart, windows_printers
 from ..updater import UPDATES_PAGE
 from .secrets_guard import SecretsGuard
+from ..i18n import N_, tr
 
 log = logging.getLogger(__name__)
 
@@ -167,7 +168,7 @@ class Toolbox:
 
     def activity(self, name: str) -> str:
         tool = self.by_name.get(name)
-        return tool.activity if tool else name
+        return tr(tool.activity) if tool else name
 
     def run(self, name: str, args: Any, permissions=None) -> tuple[str, bool]:
         """Ejecuta una herramienta. Devuelve (contenido para el modelo, es_error).
@@ -382,7 +383,7 @@ class Toolbox:
                     "status": status_text(job),
                     "source": SOURCE_LABELS.get(job["source"], job["source"]),
                     "printer": untrusted(job["printer_used"] or job["printer"] or "(predeterminada)"),
-                    "created": datetime.fromtimestamp(job["created_at"]).strftime("%d/%m %H:%M"),
+                    "created": datetime.fromtimestamp(job["created_at"]).strftime("%Y-%m-%d %H:%M"),
                     "error": untrusted(job["error"], 300),
                     "tracking": untrusted((job.get("meta") or {}).get("tracking"), 40),
                 }
@@ -484,7 +485,7 @@ class Toolbox:
     def remove_printer(self, a: dict) -> dict:
         profile = self._printer(a["alias"])
         if not self.ui.confirm(
-            "Eliminar impresora", f"El asistente quiere quitar «{profile.alias}» de LabelBridge.\n\n¿Eliminarla?", "Eliminar"
+            tr("Eliminar impresora"), tr("El asistente quiere quitar «{0}» de LabelBridge.\n\n¿Eliminarla?", profile.alias), tr("Eliminar")
         ):
             return {"removed": False, "reason": "El usuario no aprobó eliminarla en la ventana de confirmación."}
         cfg = self.ctx.cfg
@@ -618,12 +619,9 @@ class Toolbox:
         if a.get("buy_shipping_label") and not s.buy_shipping_label:
             limit = a.get("max_labels_per_day", s.max_labels_per_day)
             approved = self.ui.confirm(
-                "Comprar guías de Shopify Shipping automáticamente",
-                "El asistente quiere activar la compra automática de guías de envío.\n\n"
-                "Por cada pedido nuevo pagado y pendiente de envío, LabelBridge comprará la guía con Shopify Shipping "
-                "(usando el paquete y la tarifa predeterminados de tu tienda) y la imprimirá. Shopify cobra cada guía "
-                f"en tu factura. Máximo {limit} guías por día.\n\n¿Activar la compra automática en este PC?",
-                "Activar compra de guías",
+                tr("Comprar guías de Shopify Shipping automáticamente"),
+                tr("El asistente quiere activar la compra automática de guías de envío.\n\nPor cada pedido nuevo pagado y pendiente de envío, LabelBridge comprará la guía con Shopify Shipping (usando el paquete y la tarifa predeterminados de tu tienda) y la imprimirá. Shopify cobra cada guía en tu factura. Máximo {0} guías por día.\n\n¿Activar la compra automática en este PC?", limit),
+                tr("Activar compra de guías"),
             )
             if not approved:
                 # No se aplica nada de esta petición: apagar otras etiquetas sin la guía dejaría pedidos sin imprimir.
@@ -675,17 +673,15 @@ class Toolbox:
         if not s.shop:
             raise ToolError("Primero configura la tienda.")
         if hours and s.buy_shipping_label and not self.ui.confirm(
-            "Reprocesar pedidos anteriores",
-            f"El asistente quiere revisar los pedidos de las últimas {hours} h.\n\nLa compra automática de guías está "
-            "activa: se comprará (con cargo en Shopify) la guía de cada pedido pagado y pendiente de envío de ese "
-            "periodo que LabelBridge todavía no haya comprado.\n\n¿Continuar?",
-            "Reprocesar y comprar",
+            tr("Reprocesar pedidos anteriores"),
+            tr("El asistente quiere revisar los pedidos de las últimas {0} h.\n\nLa compra automática de guías está activa: se comprará (con cargo en Shopify) la guía de cada pedido pagado y pendiente de envío de ese periodo que LabelBridge todavía no haya comprado.\n\n¿Continuar?", hours),
+            tr("Reprocesar y comprar"),
         ):
             return {"reprocessed": False, "reason": "El usuario no lo aprobó en la ventana de confirmación."}
         since = self.ctx.services.shopify.reset_since(hours)
         return {
             "reprocessed": True,
-            "orders_created_since": datetime.fromtimestamp(since).strftime("%d/%m/%Y %H:%M"),
+            "orders_created_since": datetime.fromtimestamp(since).strftime("%Y-%m-%d %H:%M"),
             "connector_enabled": s.enabled,
         }
 
@@ -871,10 +867,9 @@ class Toolbox:
         name = untrusted(a.get("name") or f"Impresora {ip}", 60)
         port = a.get("port", 9100)
         if not self.ui.confirm(
-            "Instalar impresora en Windows",
-            f"El asistente quiere instalar «{name}» ({ip}:{port}) con el driver «{driver}».\n\n"
-            "Windows pedirá permiso de administrador. ¿Continuar?",
-            "Instalar",
+            tr("Instalar impresora en Windows"),
+            tr("El asistente quiere instalar «{0}» ({1}:{2}) con el driver «{3}».\n\nWindows pedirá permiso de administrador. ¿Continuar?", name, ip, port, driver),
+            tr("Instalar"),
         ):
             return {"installed": False, "reason": "El usuario no lo aprobó en la ventana de confirmación."}
         try:
@@ -952,7 +947,7 @@ class Toolbox:
                 "aparecen solo como guardados o no. Llámala al empezar y antes de afirmar cómo está algo.",
                 _obj({"section": _s("Qué parte.", ["summary", "printers", "shopify", "n8n", "guide", "sender", "all"])}),
                 self.get_status,
-                "Revisando la configuración",
+                N_("Revisando la configuración"),
             ),
             Tool(
                 "diagnose_setup",
@@ -961,7 +956,7 @@ class Toolbox:
                 "configurar y cuando algo no se imprimió.",
                 _obj(),
                 self.diagnose_setup,
-                "Revisando que todo funcione",
+                N_("Revisando que todo funcione"),
             ),
             Tool(
                 "list_windows_printers",
@@ -970,7 +965,7 @@ class Toolbox:
                 "nombre exacto.",
                 _obj(),
                 self.list_windows_printers,
-                "Leyendo las impresoras de Windows",
+                N_("Leyendo las impresoras de Windows"),
             ),
             Tool(
                 "scan_network_printers",
@@ -979,7 +974,7 @@ class Toolbox:
                 "sabe su IP.",
                 _obj(),
                 self.scan_network_printers,
-                "Buscando impresoras en la red",
+                N_("Buscando impresoras en la red"),
             ),
             Tool(
                 "add_printer",
@@ -1006,7 +1001,7 @@ class Toolbox:
                     ("connection",),
                 ),
                 self.add_printer,
-                "Agregando la impresora",
+                N_("Agregando la impresora"),
             ),
             Tool(
                 "install_windows_printer",
@@ -1023,7 +1018,7 @@ class Toolbox:
                     ("ip",),
                 ),
                 self.install_windows_printer,
-                "Instalando la impresora en Windows",
+                N_("Instalando la impresora en Windows"),
             ),
             Tool(
                 "update_printer",
@@ -1046,7 +1041,7 @@ class Toolbox:
                     ("alias",),
                 ),
                 self.update_printer,
-                "Actualizando la impresora",
+                N_("Actualizando la impresora"),
             ),
             Tool(
                 "remove_printer",
@@ -1054,14 +1049,14 @@ class Toolbox:
                 "app pide confirmación en una ventana.",
                 _obj({"alias": printer_alias}, ("alias",)),
                 self.remove_printer,
-                "Quitando la impresora",
+                N_("Quitando la impresora"),
             ),
             Tool(
                 "set_default_printer",
                 "Elige la impresora predeterminada (la que se usa cuando un tipo de etiqueta no indica otra).",
                 _obj({"alias": printer_alias}, ("alias",)),
                 self.set_default_printer,
-                "Cambiando la impresora predeterminada",
+                N_("Cambiando la impresora predeterminada"),
             ),
             Tool(
                 "print_test_label",
@@ -1069,7 +1064,7 @@ class Toolbox:
                 "predeterminada. Gasta una etiqueta: úsala cuando el usuario quiera probar o acepte hacer la prueba.",
                 _obj({"alias": printer_alias}),
                 self.print_test_label,
-                "Imprimiendo la etiqueta de prueba",
+                N_("Imprimiendo la etiqueta de prueba"),
             ),
             Tool(
                 "set_shopify_connection",
@@ -1090,7 +1085,7 @@ class Toolbox:
                     }
                 ),
                 self.set_shopify_connection,
-                "Configurando la conexión con Shopify",
+                N_("Configurando la conexión con Shopify"),
             ),
             Tool(
                 "ask_user_for_secret",
@@ -1099,7 +1094,7 @@ class Toolbox:
                 "ves. Úsala siempre que haga falta un secreto, en vez de pedir que lo escriban en el chat.",
                 _obj({"kind": _s("Qué dato secreto pedir.", list(SECRET_KINDS))}, ("kind",)),
                 self.ask_user_for_secret,
-                "Esperando el dato secreto",
+                N_("Esperando el dato secreto"),
             ),
             Tool(
                 "save_secret",
@@ -1113,7 +1108,7 @@ class Toolbox:
                     ("secret_ref", "kind"),
                 ),
                 self.save_secret,
-                "Guardando el dato secreto",
+                N_("Guardando el dato secreto"),
             ),
             Tool(
                 "test_shopify_connection",
@@ -1122,7 +1117,7 @@ class Toolbox:
                 "activar la compra de guías y cuando algo de Shopify falle.",
                 _obj(),
                 self.test_shopify_connection,
-                "Probando la conexión con Shopify",
+                N_("Probando la conexión con Shopify"),
             ),
             Tool(
                 "set_shopify_printing",
@@ -1154,7 +1149,7 @@ class Toolbox:
                     }
                 ),
                 self.set_shopify_printing,
-                "Configurando qué se imprime en cada pedido",
+                N_("Configurando qué se imprime en cada pedido"),
             ),
             Tool(
                 "reprocess_shopify_orders",
@@ -1162,7 +1157,7 @@ class Toolbox:
                 "de guías activa puede comprar guías de esos pedidos: la app pide confirmación.",
                 _obj({"hours": _i("Horas hacia atrás (0-720).")}, ("hours",)),
                 self.reprocess_shopify_orders,
-                "Reprocesando pedidos de Shopify",
+                N_("Reprocesando pedidos de Shopify"),
             ),
             Tool(
                 "set_sender",
@@ -1178,7 +1173,7 @@ class Toolbox:
                     }
                 ),
                 self.set_sender,
-                "Guardando el remitente",
+                N_("Guardando el remitente"),
             ),
             Tool(
                 "set_general",
@@ -1200,7 +1195,7 @@ class Toolbox:
                     }
                 ),
                 self.set_general,
-                "Guardando los ajustes",
+                N_("Guardando los ajustes"),
             ),
             Tool(
                 "complete_guide_step",
@@ -1208,7 +1203,7 @@ class Toolbox:
                 "iniciar con Windows, la app sigue junto al reloj). Úsala cuando el usuario ya lo tenga claro.",
                 _obj({"step": _s("Paso de la guía.", ["what", "daily"])}, ("step",)),
                 self.complete_guide_step,
-                "Actualizando la guía",
+                N_("Actualizando la guía"),
             ),
             Tool(
                 "get_recent_jobs",
@@ -1216,7 +1211,7 @@ class Toolbox:
                 "no se imprimió o para confirmar que un pedido salió.",
                 _obj({"limit": _i("Cuántos (1-30)."), "only_errors": _b("Solo los que fallaron.")}),
                 self.get_recent_jobs,
-                "Revisando el historial",
+                N_("Revisando el historial"),
             ),
             Tool(
                 "reprint_job",
@@ -1231,7 +1226,7 @@ class Toolbox:
                     ("job_id",),
                 ),
                 self.reprint_job,
-                "Enviando a imprimir",
+                N_("Enviando a imprimir"),
             ),
             Tool(
                 "set_n8n_connection",
@@ -1248,14 +1243,14 @@ class Toolbox:
                     }
                 ),
                 self.set_n8n_connection,
-                "Configurando n8n",
+                N_("Configurando n8n"),
             ),
             Tool(
                 "test_n8n_connection",
                 "Prueba la conexión con el broker MQTT de n8n con lo guardado.",
                 _obj(),
                 self.test_n8n_connection,
-                "Probando la conexión con n8n",
+                N_("Probando la conexión con n8n"),
             ),
             Tool(
                 "open_link",
@@ -1278,7 +1273,7 @@ class Toolbox:
                     ("target",),
                 ),
                 self.open_link,
-                "Abriendo el navegador",
+                N_("Abriendo el navegador"),
             ),
             Tool(
                 "copy_shopify_scopes",
@@ -1286,7 +1281,7 @@ class Toolbox:
                 "for_shipping_labels=true incluye los necesarios para comprar guías.",
                 _obj({"for_shipping_labels": _b("Incluir los permisos para comprar guías (recomendado).")}),
                 self.copy_shopify_scopes,
-                "Copiando los permisos",
+                N_("Copiando los permisos"),
             ),
         ]
 

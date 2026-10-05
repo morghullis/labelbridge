@@ -25,15 +25,27 @@ _language = DEFAULT
 _catalog: dict[str, str] = {}
 
 
+_audit: set[str] | None = None  # pruebas: lo que devolvió tr(), para ver qué texto visible no pasó por tr()
+
+
 def tr(text: str, *args, **kwargs) -> str:
     """El texto en el idioma de la app, con sus huecos rellenos ({0}, {1}… o por nombre)."""
     out = _catalog.get(text, text) if _catalog else text
-    if not args and not kwargs:
-        return out
-    try:
-        return out.format(*args, **kwargs)
-    except (IndexError, KeyError, ValueError):
-        return text.format(*args, **kwargs)  # traducción con huecos mal escritos: mejor el original
+    if args or kwargs:
+        try:
+            out = out.format(*args, **kwargs)
+        except (IndexError, KeyError, ValueError):
+            out = text.format(*args, **kwargs)  # traducción con huecos mal escritos: mejor el original
+    if _audit is not None:
+        _audit.add(out)
+    return out
+
+
+def set_audit(on: bool) -> set[str] | None:
+    """Empieza (o termina) a recordar lo que devuelve tr(). Devuelve el conjunto que se va llenando."""
+    global _audit
+    _audit = set() if on else None
+    return _audit
 
 
 def language() -> str:
@@ -90,3 +102,27 @@ def choose(configured: str = "", installer: str = "") -> str:
         if code in LANGUAGES:
             return code
     return system_language()
+
+
+def date_text(when, *, year: bool = True, clock: str = "%H:%M") -> str:
+    """Fecha corta como se escribe en el idioma de la app: 04/10/2026 13:05 (día/mes) o 10/04/2026 13:05 (mes/día).
+
+    `when` es un datetime o una marca de tiempo; `clock=""` deja solo la fecha.
+    """
+    from datetime import datetime
+
+    if not isinstance(when, datetime):
+        when = datetime.fromtimestamp(float(when))
+    pattern = ("%m/%d" if _language == "en" else "%d/%m") + ("/%Y" if year else "")
+    return when.strftime(f"{pattern} {clock}" if clock else pattern)
+
+
+def decimal(value: float, digits: int = 1) -> str:
+    """Número con decimales: con coma en español (35,2) y con punto en inglés (35.2)."""
+    text = f"{value:.{digits}f}"
+    return text if _language == "en" else text.replace(".", ",")
+
+
+def N_(text: str) -> str:  # noqa: N802
+    """Marca un texto fijo (constante de módulo) para traducirlo donde se muestra con tr(): aquí no lo cambia."""
+    return text
