@@ -85,7 +85,8 @@ jobs:
           name: LabelBridge-Setup
           path: dist/installer
 
-      - name: Publicar versión (las apps instaladas la detectan solas)
+      - name: Publicar versión (las apps instaladas la detectan solas) y las anteriores desde la 1.5
         env:
           UPDATES_DEPLOY_KEY: ${{ secrets.UPDATES_DEPLOY_KEY }}
-        run: python3 packaging/publish_update.py --push
+          GH_TOKEN: ${{ github.token }}
+        run: python3 packaging/publish_update.py --push --fetch-archive

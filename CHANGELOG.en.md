@@ -11,6 +11,7 @@ English version of [CHANGELOG.md](CHANGELOG.md). Each published version shows th
 - When a paid order comes in, LabelBridge notifies you with its sound: who, how much and which carrier it ships with.
 - **Delivery alerts.** New **Delays and deliveries** section in Orders (with its counter at the top): late deliveries, failed delivery attempts, shipments with problems, packages the carrier still hasn't received days after the label was bought and shipments on the way for too long, with buttons to track, copy the tracking number or open the order. They're checked by themselves every half hour and each one notifies once.
 - The Orders table shows how each shipment is going (“On the way · arrives…”, “Delivered on…”), and unshipped orders show how many days they've been waiting.
+- The download page offers **every version since 1.5**, each with its notes, in case you need to go back to an earlier one.
 
 ## 1.7.1
 

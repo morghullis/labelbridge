@@ -169,3 +169,47 @@ def test_every_release_has_notes_in_both_languages():
     spanish, english = changelog_notes(__version__), changelog_notes(__version__, "CHANGELOG.en.md")
     assert spanish.startswith("- ") and english.startswith("- ")
     assert spanish.count("\n- ") == english.count("\n- "), "las notas en inglés no tienen los mismos puntos"
+
+
+def test_download_page_lists_every_version_from_1_5(tmp_path, monkeypatch):
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "packaging"))
+    import publish_update
+
+    archive = tmp_path / "archive"
+    archive.mkdir()
+    for version in ("1.4.0", "1.5.2", "1.6.0", __version__):  # la 1.4 no se ofrece; la actual no se repite
+        (archive / f"LabelBridge-Setup-{version}.exe").write_bytes(b"MZ" + version.encode())
+    (archive / "releases.json").write_text(json.dumps({"1.6.0": "2026-10-05T01:41:31Z"}), encoding="utf-8")
+    installer = tmp_path / f"LabelBridge-Setup-{__version__}.exe"
+    installer.write_bytes(b"MZ actual")
+    out = tmp_path / "site"
+    publish_update.build_site(out, archive, installer)
+    versions = json.loads((out / "versions.json").read_text(encoding="utf-8"))
+    assert [v["version"] for v in versions] == [__version__, "1.6.0", "1.5.2"]
+    assert versions[1]["published_at"] == "2026-10-05T01:41:31Z" and versions[1]["url"].endswith("Setup-1.6.0.exe")
+    page = (out / "index.html").read_text(encoding="utf-8")
+    assert "Todas las versiones" in page and "LabelBridge-Setup-1.5.2.exe" in page and "1.4.0" not in page
+    assert "All versions" in (out / "en.html").read_text(encoding="utf-8")
+    assert (out / "LabelBridge-Setup-1.6.0.exe").exists() and not (out / "LabelBridge-Setup-1.4.0.exe").exists()
+
+    calls = []
+
+    def fake_run(command, **_kwargs):
+        calls.append(command)
+
+        class Done:
+            returncode = 0
+            stdout = json.dumps([{"tagName": f"v{__version__}", "publishedAt": "x"},
+                                 {"tagName": "v1.7.1", "publishedAt": "2026-10-05T02:49:17Z"},
+                                 {"tagName": "v1.4.0", "publishedAt": "y"}])
+            stderr = ""
+        return Done()
+
+    monkeypatch.setattr(publish_update.subprocess, "run", fake_run)
+    publish_update.fetch_archive(tmp_path / "fetched", __version__)
+    downloads = [c for c in calls if c[:3] == ["gh", "release", "download"]]
+    assert [c[3] for c in downloads] == ["v1.7.1"]  # ni la actual ni las de antes de la 1.5
+    assert json.loads((tmp_path / "fetched" / "releases.json").read_text())["1.7.1"] == "2026-10-05T02:49:17Z"

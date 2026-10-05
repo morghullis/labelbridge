@@ -125,7 +125,7 @@ Al empezar pregunta el idioma (**English / Español**) y lo guarda en `HKCU\Soft
 
 ## Actualizaciones automáticas
 
-- Página pública de descargas: <https://morghullis.github.io/labelbridge-updates/> (solo instalador y versión; el código sigue privado).
+- Página pública de descargas: <https://morghullis.github.io/labelbridge-updates/> (solo instaladores y versiones; el código sigue privado). Ofrece la última versión y, en «Todas las versiones», las anteriores desde la 1.5 (hasta 8): al publicar, el workflow las baja de los Releases privados con `gh` (`publish_update.py --fetch-archive`) y deja `versions.json`.
 - La app consulta esa página al arrancar y cada 6 horas. Si hay una versión nueva muestra **«Nueva versión disponible»** con las novedades; al pulsar **Actualizar ahora** descarga el instalador, verifica su SHA-256, se cierra, se instala en silencio y se vuelve a abrir mostrando **«¡Actualización instalada!»**. La configuración y el historial se conservan.
 - También: **Ajustes → Actualizaciones → Buscar actualizaciones ahora**, o clic derecho en el icono de la bandeja.
 - Cada actualización deja registro en `logs/actualizacion.log` (pasos) e `instalador.log` (Inno Setup). Si no se completa, la app lo avisa al abrirse y ofrece reintentar o descargar el instalador.

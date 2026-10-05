@@ -11,6 +11,7 @@ Cada versión publicada muestra estas notas en la ventana de actualización de l
 - Al entrar un pedido pagado, LabelBridge avisa con su sonido: quién, cuánto y por qué paquetería sale.
 - **Alertas de entrega.** Nueva sección **Retrasos y entregas** en Pedidos (y su contador arriba): entregas atrasadas, intentos de entrega fallidos, envíos con problemas, paquetes que la paquetería todavía no recibió días después de comprar la guía y envíos que llevan demasiado tiempo en camino, con botones para rastrear, copiar el seguimiento o abrir el pedido. Se revisan solas cada media hora y cada una avisa una vez.
 - La tabla de Pedidos muestra cómo va cada envío («En camino · llega el…», «Entregado el…») y los pedidos sin enviar marcan cuántos días llevan esperando.
+- La página de descargas ofrece **todas las versiones desde la 1.5**, cada una con sus novedades, por si necesitas volver a una anterior.
 
 ## 1.7.1
 
