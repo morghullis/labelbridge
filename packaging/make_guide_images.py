@@ -41,6 +41,8 @@ from PySide6.QtWidgets import QApplication, QLabel, QWidget  # noqa: E402
 LANG = sys.argv[sys.argv.index("--lang") + 1] if "--lang" in sys.argv else "es"
 OUT = ROOT / "assets" / "guide" if LANG == "es" else ROOT / "assets" / "guide" / LANG
 S = 2  # escala de las imágenes
+MAC = sys.platform == "darwin"  # en la Mac las capturas muestran sus impresoras (colas de CUPS) y sus textos
+OFFICE_PRINTER = "HP_LaserJet_Pro_M404" if MAC else "HP LaserJet Pro M404"
 GOLD = QColor("#F59E0B")
 GOLD_GLOW = QColor(245, 158, 11, 80)
 INK = QColor("#0F172A")
@@ -429,7 +431,7 @@ def demo_context():
     labels = tr("etiquetas")
     shop = t("mi-tienda.myshopify.com", "my-store.myshopify.com")
     zebra = PrinterProfile(alias=labels, kind="network", host="192.168.1.50", port=9100, language="zpl", media="4x6")
-    office = PrinterProfile(alias=t("oficina", "office"), kind="system", system_name="HP LaserJet Pro M404", language="driver", media="letter")
+    office = PrinterProfile(alias=t("oficina", "office"), kind="system", system_name=OFFICE_PRINTER, language="driver", media="letter")
     cfg.data.printers = [zebra, office]
     general = cfg.data.general
     general.default_printer_id = zebra.id
@@ -488,6 +490,12 @@ def demo_conversation(page) -> None:
 
 def fake_system_printers() -> list[dict]:
     base = {"description": "", "location": "", "is_remote": False}
+    if MAC:  # macOS da el nombre de la cola y el modelo; el puerto y el driver son cosa de Windows
+        return [
+            {**base, "name": "Zebra_ZD421", "model": "Zebra ZD421-203dpi ZPL", "port": "", "driver": "", "is_default": True},
+            {**base, "name": OFFICE_PRINTER, "model": "HP LaserJet Pro M404-M405", "port": "", "driver": "",
+             "is_default": False},
+        ]
     return [
         {**base, "name": "ZDesigner ZD421-203dpi ZPL", "model": "ZDesigner ZD421-203dpi ZPL", "port": "USB001",
          "driver": "ZDesigner ZD421-203dpi ZPL", "is_default": True},

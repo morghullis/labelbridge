@@ -646,7 +646,7 @@ class Toolbox:
             details = "".join(f"\n• {line}" for line in sensitive)
             if activating:
                 title, accept = tr("Comprar guías de Shopify Shipping automáticamente"), tr("Activar compra de guías")
-                text = tr("El asistente quiere activar la compra automática de guías de envío.\n\nPor cada pedido nuevo pagado y pendiente de envío, LabelBridge comprará la guía con Shopify Shipping (usando el paquete y la tarifa predeterminados de tu tienda) y la imprimirá. Shopify cobra cada guía en tu factura. Máximo {0} guías por día.\n\n¿Activar la compra automática en este PC?", limit)
+                text = tr("El asistente quiere activar la compra automática de guías de envío.\n\nPor cada pedido nuevo pagado y pendiente de envío, LabelBridge comprará la guía con Shopify Shipping (usando el paquete y la tarifa predeterminados de tu tienda) y la imprimirá. Shopify cobra cada guía en tu factura. Máximo {0} guías por día.\n\n¿Activar la compra automática en este equipo?", limit)
             else:
                 title, accept = tr("Cambiar la compra de guías"), tr("Aplicar cambios")
                 text = tr("El asistente quiere cambiar cómo se compran las guías (Shopify cobra cada una):")

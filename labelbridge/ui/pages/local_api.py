@@ -27,7 +27,7 @@ class LocalApiPage(Page):
         self.header_actions.addWidget(self.status)
 
         card = Card(tr("Servidor"))
-        self.enabled = SwitchRow(tr("API local activa"), tr("Escucha en este PC. Requiere la clave en cada petición."), s.enabled)
+        self.enabled = SwitchRow(tr("API local activa"), tr("Escucha en este equipo. Requiere la clave en cada petición."), s.enabled)
         card.add(self.enabled)
         form = QFormLayout()
         form.setSpacing(10)

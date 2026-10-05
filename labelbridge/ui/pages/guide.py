@@ -126,7 +126,7 @@ STEPS: list[Step] = [
            "Shopify Shipping de mi tienda»</i>. Él agrega la impresora, conecta la tienda y te dice qué falta; la máscara "
            "te muestra si piensa, trabaja o te pregunta algo.</li>"
            "<li>Antes de cada cambio te pide permiso. Las claves se piden en una ventana segura (o con ⑥ el "
-           "<b>candado</b>) y se quedan en este PC. Comprar guías siempre pide confirmación.</li>"
+           "<b>candado</b>) y se quedan en este equipo. Comprar guías siempre pide confirmación.</li>"
            "</ol>"),
         _assistant_ready,
         [(N_("Abrir el asistente"), "chat", "nav:assistant")],
@@ -188,7 +188,7 @@ STEPS: list[Step] = [
     Step(
         "shopify_app",
         N_("Crea la app «LabelBridge» en Shopify (una sola vez)"),
-        N_("Da permiso a LabelBridge para leer tus pedidos. Sirve para todos tus PCs."),
+        N_("Da permiso a LabelBridge para leer tus pedidos. Sirve para todos tus equipos."),
         N_("<ol>"
            "<li>Pulsa <b>Abrir Dev Dashboard</b> e inicia sesión con la cuenta dueña de la tienda.</li>"
            "<li>② <b>Apps → Create app → Start from Dev Dashboard</b>. Nombre: <code>LabelBridge</code>.</li>"
@@ -237,7 +237,7 @@ STEPS: list[Step] = [
            "<li>En Shopify deja listo Shopify Shipping (<b>Configuración → Envío y entrega</b>): un <b>paquete "
            "predeterminado</b>, la dirección de envío completa y un método de pago para las guías.</li>"
            "<li>En la pantalla <b>Shopify</b> de LabelBridge activa ① <b>Guía de envío de Shopify Shipping</b> y elige a "
-           "la derecha ② la impresora de etiquetas. <b>Shopify cobra cada guía</b>; actívala en un solo PC.</li>"
+           "la derecha ② la impresora de etiquetas. <b>Shopify cobra cada guía</b>; actívala en un solo equipo.</li>"
            "<li>③ La <b>Etiqueta de pedido de LabelBridge</b> es opcional (sin franqueo, para empacar). Déjala apagada si "
            "solo quieres la guía, así no gastas dos etiquetas por pedido.</li>"
            "<li>Pulsa <b>Guardar cambios</b>.</li>"
@@ -311,7 +311,7 @@ STEPS: list[Step] = [
         N_("n8n en tiempo real"),
         N_("Solo si usas n8n para guías de otra paquetería o flujos propios."),
         N_("<ol>"
-           "<li>Crea un broker MQTT gratuito (EMQX Serverless) con dos usuarios: uno para n8n y otro para este PC.</li>"
+           "<li>Crea un broker MQTT gratuito (EMQX Serverless) con dos usuarios: uno para n8n y otro para este equipo.</li>"
            "<li>En la pantalla <b>n8n</b> escribe servidor, usuario, contraseña y canal, y pulsa <b>Guardar y "
            "probar</b>.</li>"
            "<li>Importa las plantillas (botón <i>Abrir carpeta de plantillas</i>) y sigue su guía.</li>"
@@ -592,7 +592,7 @@ class GuidePage(Page):
             self.summary_title.setText(tr("✓ ¡Todo listo! LabelBridge ya imprime solo"))
             self.summary_text.setText(
                 tr("Los pedidos nuevos de tu tienda se imprimen automáticamente. Puedes volver a esta guía cuando "
-                   "quieras, por ejemplo al instalar en otro PC.")
+                   "quieras, por ejemplo al instalar en otro equipo.")
             )
         else:
             self.summary_title.setText(tr("Configuración: {0} de {1} pasos listos", done, total))

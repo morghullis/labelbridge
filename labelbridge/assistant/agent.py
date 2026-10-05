@@ -76,7 +76,7 @@ def friendly_error(exc: BaseException, endpoint: Endpoint | None = None) -> str:
         )
     if exc.kind == "network":
         if local:
-            return tr("No se pudo conectar con {0} en este PC. ¿Está abierto y con el servidor activo?", name)
+            return tr("No se pudo conectar con {0} en este equipo. ¿Está abierto y con el servidor activo?", name)
         return tr("No hay conexión con {0}. Revisa internet o el firewall.", name)
     if exc.kind == "timeout":
         return tr("{0} tardó demasiado en responder. Inténtalo de nuevo.", name)

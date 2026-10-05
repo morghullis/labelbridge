@@ -786,7 +786,7 @@ class AssistantPage(QWidget):
         endpoint = self.conversation.endpoint
         today = self.conversation.meter.today()
         self.footnote.setText(
-            tr("🔒 Tus claves se quedan en este PC y cada cambio pide permiso · {0}", self.usage_text())
+            tr("🔒 Tus claves se quedan en este equipo y cada cambio pide permiso · {0}", self.usage_text())
         )
         self.footnote.setToolTip(
             tr("Funciona con {0}. Tokens hoy: {1:,} de entrada · {2:,} leídos de caché · {3:,} de salida. Es una estimación; la factura real está en tu cuenta del proveedor.", endpoint.label, int(today['input']), int(today['cache_read']), int(today['output']))
@@ -849,7 +849,7 @@ class AssistantPage(QWidget):
         self._add(bubble(cleaned.display_text, "user"))
         sections = set()
         for description in cleaned.saved:
-            self._add(ActivityRow(tr("🔒 Guardé en este PC: {0} (no se envió al asistente)", description), False)).finish(True)
+            self._add(ActivityRow(tr("🔒 Guardé en este equipo: {0} (no se envió al asistente)", description), False)).finish(True)
         if any("Shopify" in d for d in cleaned.saved):
             sections.add("shopify")
         if cleaned.ai_keys:
@@ -971,7 +971,7 @@ class AssistantPage(QWidget):
         if section:
             self.ctx.cfg.save(section)
             self.ctx.events.emit(CONFIG_EXTERNAL, section)
-        self._add(ActivityRow(tr("🔒 Guardado en este PC: {0}", title), False)).finish(True)
+        self._add(ActivityRow(tr("🔒 Guardado en este equipo: {0}", title), False)).finish(True)
         self.pending_notes.append(f"[Nota de la app: el usuario guardó «{title}» con la ventana segura.]")
         self.mood.emit("secret", None)
         self.refresh()

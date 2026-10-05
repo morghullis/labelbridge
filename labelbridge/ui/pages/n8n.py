@@ -33,7 +33,7 @@ class N8nPage(Page):
                 tr("1. Shopify avisa a n8n (por ejemplo, <b>pedido pagado</b>): el flujo se ejecuta <b>una vez por pedido</b>, "
                    "sin consultas periódicas.<br>"
                    "2. n8n publica la etiqueta en el <b>canal de este equipo</b> (MQTT cifrado).<br>"
-                   "3. LabelBridge la recibe en el acto y la imprime. Si el PC está apagado, la etiqueta "
+                   "3. LabelBridge la recibe en el acto y la imprime. Si el equipo está apagado, la etiqueta "
                    "<b>espera en el canal</b> y sale al encenderlo."),
                 wrap=True,
             )
@@ -90,7 +90,7 @@ class N8nPage(Page):
             tr("Importa estos archivos en n8n (Workflows → Import from file). Todos se activan por eventos."),
         )
         for name, desc in (
-            ("01-pedido-a-labelbridge.json", tr("Pedido pagado → etiqueta de pedido al instante en este PC.")),
+            ("01-pedido-a-labelbridge.json", tr("Pedido pagado → etiqueta de pedido al instante en este equipo.")),
             ("02-comprar-etiqueta-shopify-shipping.json", tr("Compra la guía con Shopify Shipping y la envía a imprimir.")),
             ("03-etiqueta-a-metafield.json", tr("Guía de cualquier paquetería → metafield del pedido (sin broker).")),
             ("04-avisar-errores.json", tr("Opcional: te avisa solo cuando una etiqueta falla.")),
@@ -126,7 +126,7 @@ class N8nPage(Page):
     def _update_topic(self) -> None:
         channel = slugify(self.channel.text() or "pc")
         self.topic.setText(
-            tr("En el nodo MQTT de n8n publica en <b>{0}/&lt;id del trabajo&gt;</b> con QoS 1 y Retain activado (así espera si el PC está apagado).", topics(channel)['jobs'])
+            tr("En el nodo MQTT de n8n publica en <b>{0}/&lt;id del trabajo&gt;</b> con QoS 1 y Retain activado (así espera si el equipo está apagado).", topics(channel)['jobs'])
         )
 
     def _on_event(self, kind: str, data) -> None:

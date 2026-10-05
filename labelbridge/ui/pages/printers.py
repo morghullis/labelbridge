@@ -325,7 +325,7 @@ class PrintersPage(Page):
             info(
                 self,
                 tr("Búsqueda en la red"),
-                tr("No se encontraron impresoras. Verifica que estén encendidas y en la misma red que este PC."),
+                tr("No se encontraron impresoras. Verifica que estén encendidas y en la misma red que este equipo."),
             )
 
     def _selected_network(self) -> DiscoveredPrinter | None:

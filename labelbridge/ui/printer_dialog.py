@@ -174,7 +174,7 @@ class PrinterDialog(QDialog):
         lang = self.language.currentData()
         kind = self.original.kind
         if kind == "network" and lang == "zpl":
-            text = tr("Los PDF e imágenes se convierten a ZPL en este PC: no necesitas instalar driver.")
+            text = tr("Los PDF e imágenes se convierten a ZPL en este equipo: no necesitas instalar driver.")
         elif kind == "network":
             text = tr("Se envía PDF directamente a la impresora (sin driver).")
         elif kind == "system" and lang == "zpl":
