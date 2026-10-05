@@ -14,6 +14,7 @@ if ($LASTEXITCODE -ne 0) { throw "Las pruebas fallaron" }
 Remove-Item Env:QT_QPA_PLATFORM
 
 & $py packaging\make_icon.py
+& $py packaging\make_installer_images.py
 & $py -m PyInstaller packaging\labelbridge.spec --noconfirm --clean
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller falló" }
 

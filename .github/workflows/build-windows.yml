@@ -37,6 +37,7 @@ jobs:
         run: |
           python packaging/make_icon.py
           python packaging/make_guide_images.py
+          python packaging/make_installer_images.py
           python -m PyInstaller packaging/labelbridge.spec --noconfirm --clean
 
       - name: Probar el ejecutable empaquetado

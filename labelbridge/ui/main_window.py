@@ -320,6 +320,15 @@ class MainWindow(QMainWindow):
         self.status_title.setText(f"{dot}  {'En pausa' if paused else 'Imprimiendo'}")
         self.status_detail.setText(f"{self.ctx.cfg.data.general.agent_name} · {queued} en cola")
 
+    def connect_store(self) -> None:
+        """Pantalla Shopify con la tienda del instalador ya escrita: falta pegar la clave secreta y probar."""
+        self.show_and_raise()
+        self.navigate("shopify")
+        page = self.pages["shopify"]
+        field = page.client_secret if not page.client_secret.text() else page.client_id
+        field_widget = getattr(field, "edit", field)
+        field_widget.setFocus()
+
     def show_and_raise(self) -> None:
         self.showNormal()
         self.raise_()

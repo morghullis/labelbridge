@@ -72,6 +72,7 @@ def main(argv: list[str] | None = None) -> int:
     from PySide6.QtGui import QFont
     from PySide6.QtWidgets import QApplication, QMessageBox, QSystemTrayIcon
 
+    from . import i18n
     from .config import ConfigManager
     from .events import Events
     from .jobstore import JobStore
@@ -83,7 +84,7 @@ def main(argv: list[str] | None = None) -> int:
     from .security.crypto import CryptoError, DataProtector
     from .security.policy import SecurityPolicy
     from .services import Services
-    from .system import autostart
+    from .system import autostart, installer_hints
     from .system.single_instance import SingleInstance
     from .ui import icons
     from .ui.actions import enqueue_test_label
@@ -100,7 +101,9 @@ def main(argv: list[str] | None = None) -> int:
     QApplication.setApplicationVersion(__version__)
     app = QApplication(argv)
     app.setQuitOnLastWindowClosed(False)
-    _install_spanish_translator(app)
+    # Idioma provisional (el del instalador o el de Windows) hasta leer la configuración.
+    hints = installer_hints.read()
+    i18n.set_language(i18n.choose("", hints.get("language", "")))
 
     setup_logging()
     _install_exception_hooks()
@@ -130,6 +133,13 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
     cfg = ConfigManager(config_path(), protector)
+    language = i18n.set_language(i18n.choose(cfg.data.general.language, hints.get("language", "")))
+    if language == "es":
+        _install_spanish_translator(app)  # botones estándar de Qt (Sí, No, Cancelar…)
+    log.info("Idioma de la interfaz: %s", language)
+    connect_store = "--connect-store" in argv or installer_hints.apply(cfg, hints)
+    if hints.get("shop"):
+        installer_hints.forget_store()
     store = JobStore(db_path(), spool_dir(), protector)
     events = Events()
     policy = SecurityPolicy(cfg, AuditLog(logs_dir() / "seguridad.log"))
@@ -187,8 +197,10 @@ def main(argv: list[str] | None = None) -> int:
         log.warning("No se pudo configurar el inicio automático", exc_info=True)
 
     wants_hidden = "--minimized" in argv or cfg.data.general.start_minimized
-    if "--show" in argv or "--updated" in argv or not guide_complete(ctx) or not wants_hidden:
+    if "--show" in argv or "--updated" in argv or not guide_complete(ctx) or not wants_hidden or connect_store:
         window.show()
+    if connect_store:  # recién instalada con la tienda: directo a terminar de conectarla
+        QTimer.singleShot(700, window.connect_store)
     not_installed = failed_update(store.kv_get)
     if not_installed is not None:
         store.kv_set("update:installed", "")

@@ -97,6 +97,7 @@ class GeneralSettings:
     default_printer_id: str = ""
     max_retries: int = 5
     retention_days: int = 30
+    language: str = ""  # es | en; vacío: el que se eligió en el instalador o el de Windows
 
 
 @dataclass
