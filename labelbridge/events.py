@@ -16,6 +16,7 @@ CONNECTOR = "connector"  # {"name", "state", "message"}
 NOTIFY = "notify"  # {"title", "message", "level"}
 PAUSED = "paused"  # bool
 CONFIG_EXTERNAL = "config_external"  # sección que cambió el asistente: las pantallas recargan sus campos
+ORDERS = "orders"  # {"order", "state"}: cambió lo que LabelBridge sabe de un pedido (pestaña Pedidos)
 
 
 class Events:

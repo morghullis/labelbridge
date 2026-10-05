@@ -27,6 +27,7 @@ from .pages.history import HistoryPage
 from .pages.local_api import LocalApiPage
 from .pages.logs import LogsPage
 from .pages.n8n import N8nPage
+from .pages.orders import OrdersPage
 from .pages.printers import PrintersPage
 from .pages.settings import SettingsPage
 from .pages.shopify import ShopifyPage
@@ -38,6 +39,7 @@ NAV = (
     ("guide", "Guía paso a paso", "book"),
     ("assistant", "Asistente", "chat"),  # no es una pantalla: abre y cierra el chat flotante
     ("home", "Inicio", "home"),
+    ("orders", "Pedidos", "package"),
     ("printers", "Impresoras", "printer"),
     ("shopify", "Shopify", "shop"),
     ("n8n", "n8n", "flow"),
@@ -86,6 +88,7 @@ class MainWindow(QMainWindow):
         self.pages = {
             "guide": GuidePage(ctx, self.navigate),
             "home": DashboardPage(ctx, self.navigate),
+            "orders": OrdersPage(ctx),
             "printers": PrintersPage(ctx),
             "shopify": ShopifyPage(ctx),
             "n8n": N8nPage(ctx),
@@ -96,6 +99,7 @@ class MainWindow(QMainWindow):
         }
         for page in self.pages.values():
             self.stack.addWidget(page)
+        self.pages["orders"].attention_changed.connect(self._set_orders_badge)
         # El asistente flota sobre todas las pantallas (bubble abajo a la derecha; F1 lo abre y lo cierra).
         self.assistant = _assistant_dock(ctx, root, self.stack)
         if self.assistant is not None:
@@ -144,6 +148,13 @@ class MainWindow(QMainWindow):
                 self.nav_group.addButton(btn)
             self.nav_buttons[key] = btn
             col.addWidget(btn)
+            if key == "orders":  # aviso con los pedidos que necesitan acción
+                inside = QHBoxLayout(btn)
+                inside.setContentsMargins(0, 0, 10, 0)
+                inside.addStretch(1)
+                self.orders_badge = label("", "NavBadge")
+                self.orders_badge.setVisible(False)
+                inside.addWidget(self.orders_badge)
         col.addStretch(1)
 
         self.update_pill = QPushButton("")
@@ -194,6 +205,11 @@ class MainWindow(QMainWindow):
 
         QMessageBox.information(self, "Asistente", "No se pudo cargar el asistente en este equipo. "
                                 "El resto de LabelBridge funciona con normalidad.")
+
+    def _set_orders_badge(self, count: int) -> None:
+        self.orders_badge.setText(str(count))
+        self.orders_badge.setVisible(count > 0)
+        self.orders_badge.setToolTip(f"{count} pedido(s) necesitan acción")
 
     def _mark_assistant_tab(self, is_open: bool) -> None:
         btn = self.nav_buttons["assistant"]

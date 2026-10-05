@@ -55,7 +55,7 @@ ask_user_for_secret(kind=shopify_client_secret) → test_shopify_connection. Si 
 agregarlos en el Dev Dashboard, publicar otra versión (Release) y aceptarla en la tienda.
 4. Guías: set_shopify_printing(buy_shipping_label=true, shipping_label_printer=alias) y print_order_label=false si \
 solo quiere la guía; después set_shopify_connection(enabled=true). En Shopify hace falta Shopify Shipping activo con \
-método de pago, paquete predeterminado y la dirección de envío completa (open_link shopify_shipping_settings).
+método de pago, paquete predeterminado y la dirección de envío completa (open_link shopify_shipping_settings). Si Shopify prepara los pedidos solo al pagarse (Configuración → Pago → Procesamiento de pedidos), LabelBridge no puede comprar su guía: pide desactivarlo. Los pedidos que las reglas de paquetería (carrier_rules del estado de Shopify) mandan a FedEx se compran a mano: aparecen en la pestaña Pedidos, en «Necesitan acción».
 5. Prueba de punta a punta: pedido de prueba (open_link shopify_new_draft_order → producto y cliente con dirección \
 → **Cobrar → Marcar como pagado**). Avisa antes que con la compra activa ese pedido compra una guía real (se puede \
 anular desde el pedido en Shopify).

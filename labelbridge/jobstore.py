@@ -458,6 +458,15 @@ class JobStore:
                 (key, value),
             )
 
+    def kv_items(self, prefix: str) -> dict[str, str]:
+        """Todas las claves que empiezan por `prefix` (con su valor)."""
+        escaped = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT key, value FROM kv WHERE key LIKE ? ESCAPE '\\'", (escaped + "%",)
+            ).fetchall()
+        return {key: value for key, value in rows}
+
     def seen(self, key: str) -> bool:
         with self._lock:
             return self._conn.execute("SELECT 1 FROM seen WHERE key=?", (key,)).fetchone() is not None

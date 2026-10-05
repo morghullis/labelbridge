@@ -2,6 +2,16 @@
 
 Cada versión publicada muestra estas notas en la ventana de actualización de la app y en la página de descargas.
 
+## 1.6.0
+
+- Nueva pestaña **Pedidos**: todos tus pedidos de Shopify, ordenados.
+  - Arriba, el resumen del período: pedidos, gasto en guías, promedio por guía y gasto por paquetería.
+  - Primero, **Necesitan acción**, cada uno con el porqué y el botón para resolverlo: comprar a mano la guía de FedEx, reimprimir una guía que no salió, reintentar una compra que Shopify rechazó (con su motivo), anular la guía de un pedido cancelado o revisar pedidos que Shopify marcó como preparados sin guía.
+  - Después, la tabla por paquetería (USPS, FedEx, otras y retiro en tienda): cliente, destino, método de envío, valor de las piezas, número de seguimiento, costo de cada guía (también las compradas a mano en Shopify y las anuladas) y si ya se imprimió. Con búsqueda, rastreo con un clic y exportación a Excel (CSV).
+  - En la barra lateral, un aviso con el número de pedidos que necesitan acción.
+- **Reglas de paquetería** (Pedidos → Reglas de paquetería). Por defecto, los pedidos con piezas de más de US$1000 salen por FedEx y su guía se compra a mano; todo lo demás sale por USPS y LabelBridge compra la guía sola. Ya no se compra una guía USPS por error para un pedido de FedEx.
+- Si Shopify marca los pedidos como preparados apenas se pagan (así LabelBridge no puede comprar la guía), la pestaña Pedidos lo detecta y explica cómo cambiarlo.
+
 ## 1.5.3
 
 - La guía de envío de Shopify Shipping sale siempre a 4 × 6 in reales, en cualquier papel: en un rollo de etiquetas 4×6 lo llena y en una hoja carta o A4 va arriba y centrada para recortarla, sin agrandarse. Si Shopify la entrega en formato carta, se toma solo la guía, a tamaño real.

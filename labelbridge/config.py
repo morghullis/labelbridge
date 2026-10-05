@@ -110,6 +110,20 @@ class LabelSettings:
     show_price: bool = False
 
 
+CARRIERS = ("USPS", "FedEx", "UPS", "DHL")
+
+
+@dataclass
+class ShippingRule:
+    """Por qué paquetería sale un pedido y si LabelBridge compra la guía sola. Se cumple si el método de envío
+    contiene `method` (vacío: cualquiera) y las piezas suman más de `over` (0: cualquier valor)."""
+
+    method: str = ""  # texto del método de envío (sin distinguir mayúsculas), p. ej. "Express"
+    carrier: str = "USPS"  # CARRIERS u otra
+    auto: bool = True  # False: la guía se compra a mano (FedEx no se puede por API) y el pedido pide acción
+    over: float = 0.0  # valor de las piezas (sin envío ni impuestos) a partir del cual se aplica
+
+
 @dataclass
 class ShopifySettings:
     enabled: bool = False
@@ -128,6 +142,10 @@ class ShopifySettings:
     buy_shipping_label: bool = False
     shipping_label_printer: str = ""
     label_size: str = "4x6"  # LABEL_SIZES: la guía sale a 4×6 in aunque la impresora tenga hojas carta o A4
+    # Paquetería de cada pedido según su método de envío y valor; sin regla, default_carrier con compra automática.
+    # Las piezas de más de US$1000 salen por FedEx, que se compra a mano.
+    shipping_rules: list[ShippingRule] = field(default_factory=lambda: [ShippingRule("", "FedEx", False, 1000.0)])
+    default_carrier: str = "USPS"
     notify_customer: bool = False
     max_labels_per_day: int = 50
     metafield_label: bool = False
@@ -251,6 +269,9 @@ def _from_dict(cls: type, raw: Any) -> Any:
         elif f.name == "printers":
             items = value if isinstance(value, list) else []
             setattr(obj, f.name, [_from_dict(PrinterProfile, item) for item in items])
+        elif f.name == "shipping_rules":
+            items = value if isinstance(value, list) else []
+            setattr(obj, f.name, [_from_dict(ShippingRule, item) for item in items])
         else:
             setattr(obj, f.name, _coerce(value, current))
     return obj

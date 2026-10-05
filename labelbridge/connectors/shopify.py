@@ -31,6 +31,15 @@ from ..printing.engine import PrintEngine
 from ..secret_store import SHOPIFY_ACCESS_TOKEN, SHOPIFY_CLIENT_SECRET, SecretStore
 from ..security.policy import PolicyDenied
 from .base import BackgroundService
+from .orders_overview import (
+    ACTION_STATES,
+    OVERVIEW_QUERY,
+    OVERVIEW_QUERY_BASIC,
+    OrderRow,
+    classify,
+    rule_for,
+    subtotal_of,
+)
 
 log = logging.getLogger(__name__)
 
@@ -54,6 +63,7 @@ query LabelBridgeOrders($first: Int!, $after: String, $query: String!, $ns: Stri
       tags
       note
       totalPriceSet { shopMoney { amount currencyCode } }
+      currentSubtotalPriceSet { shopMoney { amount } }
       shippingAddress {
         name firstName lastName company address1 address2 city province provinceCode zip country countryCodeV2 phone
       }
@@ -200,6 +210,7 @@ class ShopifyClient:
         self._token = ""
         self._token_expiry = 0.0
         self.granted_scopes = ""
+        self._token_lock = threading.Lock()
 
     # --- autenticación ---------------------------------------------------------------
     def access_token(self, force: bool = False) -> str:
@@ -208,8 +219,12 @@ class ShopifyClient:
             if not token:
                 raise ShopifyError("Falta el token de acceso de la Admin API (shpat_…)")
             return token
-        if not force and self._token and time.time() < self._token_expiry - 300:
-            return self._token
+        with self._token_lock:
+            if not force and self._token and time.time() < self._token_expiry - 300:
+                return self._token
+            return self._new_token()
+
+    def _new_token(self) -> str:
         secret = self.secrets.get(SHOPIFY_CLIENT_SECRET)
         if not self.client_id or not secret:
             raise ShopifyError("Faltan el Client ID y/o el Client secret de la app (Dev Dashboard)")
@@ -320,6 +335,39 @@ class ShopifyClient:
             after = page.get("endCursor")
         return orders, after
 
+    def order(self, legacy_id: str, namespace: str, key: str) -> dict | None:
+        """Un pedido (con los mismos datos que el ciclo) por su número interno."""
+        data = self.graphql(
+            ORDERS_QUERY,
+            {"first": 1, "after": None, "query": f"id:{int(legacy_id)}", "ns": namespace or "custom",
+             "key": key or "label_url"},
+        )
+        nodes = (data.get("orders") or {}).get("nodes") or []
+        return nodes[0] if nodes else None
+
+    def orders_overview(self, created_from_iso: str, max_pages: int = 8) -> list[dict]:
+        """Pedidos creados desde esa fecha (los más nuevos primero) para la pestaña Pedidos."""
+        orders: list[dict] = []
+        after = None
+        query = OVERVIEW_QUERY
+        pages = 0
+        while pages < max_pages:
+            try:
+                data = self.graphql(query, {"first": 25, "after": after, "query": f"created_at:>='{created_from_iso}'"})
+            except ShopifyError as exc:
+                if query is OVERVIEW_QUERY and "permisos" in str(exc):
+                    query = OVERVIEW_QUERY_BASIC  # la app no puede leer órdenes de preparación: sin esa parte
+                    continue
+                raise
+            pages += 1
+            connection = data.get("orders") or {}
+            orders.extend(connection.get("nodes") or [])
+            page = connection.get("pageInfo") or {}
+            if not page.get("hasNextPage"):
+                break
+            after = page.get("endCursor")
+        return orders
+
     def fulfillment_orders(self, order_gid: str) -> list[dict]:
         data = self.graphql(FULFILLMENT_ORDERS_QUERY, {"id": order_gid})
         return ((data.get("order") or {}).get("fulfillmentOrders") or {}).get("nodes") or []
@@ -414,6 +462,34 @@ class ShopifyService(BackgroundService):
     def _key(self, suffix: str) -> str:
         return f"shopify:{normalize_shop(self.cfg.data.shopify.shop)}:{suffix}"
 
+    # --- registro por pedido (pestaña Pedidos) -------------------------------------------------
+    def _ledger_key(self, legacy: str) -> str:
+        return self._key(f"ledger:{legacy}")
+
+    def ledger(self, legacy: str) -> dict:
+        try:
+            return json.loads(self.store.kv_get(self._ledger_key(str(legacy))) or "{}")
+        except json.JSONDecodeError:
+            return {}
+
+    def ledgers(self) -> dict[str, dict]:
+        prefix = self._key("ledger:")
+        out: dict[str, dict] = {}
+        for key, value in self.store.kv_items(prefix).items():
+            try:
+                out[key[len(prefix):]] = json.loads(value)
+            except json.JSONDecodeError:
+                continue
+        return out
+
+    def _note(self, legacy: str, state: str, **data: Any) -> None:
+        """Anota qué pasó con un pedido (compra hecha, fallida, a mano…) para la pestaña Pedidos."""
+        if not legacy:
+            return
+        entry = {"state": state, "at": time.time(), **{k: v for k, v in data.items() if v not in (None, "")}}
+        self.store.kv_set(self._ledger_key(str(legacy)), json.dumps(entry, ensure_ascii=False))
+        self.events.emit(ev.ORDERS, {"order": str(legacy), "state": state})
+
     def since_ts(self) -> float:
         value = self.store.kv_get(self._key("since"))
         if value is None:
@@ -501,18 +577,24 @@ class ShopifyService(BackgroundService):
     def _process_order(
         self, client: ShopifyClient, s: ShopifySettings, order: dict, since: float, stop: threading.Event
     ) -> int:
+        legacy = str(order.get("legacyResourceId") or order.get("id", "").rsplit("/", 1)[-1])
+        name = order.get("name") or legacy
         if order.get("cancelledAt"):
+            if self.ledger(legacy).get("state") in ACTION_STATES:
+                self._note(legacy, "resolved", name=name)  # cancelado: ya no hace falta la guía
             return 0
         tags = [t.lower() for t in order.get("tags") or []]
         if s.required_tag.strip() and s.required_tag.strip().lower() not in tags:
             return 0
-        legacy = str(order.get("legacyResourceId") or order.get("id", "").rsplit("/", 1)[-1])
-        name = order.get("name") or legacy
         paid_ok = not s.only_paid or order.get("displayFinancialStatus") in PAID_STATUSES
         open_ok = not s.only_unfulfilled or order.get("displayFulfillmentStatus") in OPEN_FULFILLMENT
         is_new = _iso_to_ts(order.get("createdAt", "")) >= since
         meta = {"order_gid": order.get("id"), "order_name": name, "order_id": legacy}
         queued = 0
+        noted = self.ledger(legacy).get("state")
+        if noted in ACTION_STATES and order.get("displayFulfillmentStatus") not in OPEN_FULFILLMENT:
+            self._note(legacy, "resolved", name=name)  # ya se resolvió (guía a mano o enviado)
+            noted = "resolved"
 
         if s.print_order_label and is_new and paid_ok and open_ok:
             key = self._key(f"order:{legacy}:label")
@@ -547,8 +629,63 @@ class ShopifyService(BackgroundService):
                 self.store.mark_seen(key)
 
         if s.buy_shipping_label and is_new and paid_ok and open_ok:
-            queued += self._buy_labels(client, s, order, meta, stop)
+            rule = rule_for(s.shipping_rules, (order.get("shippingLine") or {}).get("title") or "", subtotal_of(order))
+            if rule is not None and not rule.auto:
+                # FedEx (y lo que se marque «a mano»): Shopify no deja comprarla por API; nunca otra paquetería.
+                if noted != "manual":
+                    self._note(legacy, "manual", name=name, carrier=rule.carrier)
+                    self.events.notify(
+                        f"Pedido {name}: guía de {rule.carrier} a mano",
+                        f"Sale por {rule.carrier}: cómprala en el pedido en Shopify (está en la pestaña Pedidos).",
+                        "error",
+                    )
+            else:
+                queued += self._buy_labels(client, s, order, meta, stop)
         return queued
+
+    def retry_order(self, legacy: str) -> int:
+        """Vuelve a intentar la compra de la guía de un pedido («Reintentar compra» en Pedidos).
+
+        Solo olvida intentos que Shopify rechazó o que frenó el límite diario: si una compra quedó sin confirmar
+        o está en curso no se repite (se pagaría dos veces). Devuelve cuántas etiquetas quedaron en cola."""
+        s = self.cfg.data.shopify
+        state = self.ledger(legacy).get("state")
+        if state in ("uncertain", "purchasing"):
+            raise ShopifyError("Esa compra no se confirmó o sigue en curso: revísala en Shopify antes de reintentar.")
+        if any(str(info.get("order_id")) == str(legacy) for info in self._pending().values()):
+            raise ShopifyError("La compra de ese pedido sigue en curso.")
+        client = self.client()
+        order = client.order(legacy, s.metafield_namespace, s.metafield_key)
+        if order is None:
+            raise ShopifyError("Shopify no encontró ese pedido.")
+        for fo in client.fulfillment_orders(order["id"]):
+            if fo.get("status") in ("OPEN", "IN_PROGRESS"):
+                key = self._key(f"fo:{str(fo['id']).rsplit('/', 1)[-1]}:label")
+                self.store.unmark_seen(key)
+                self.store.kv_set(key + ":intentos", "0")
+        with self._cycle_lock:
+            queued = self._process_order(client, s, order, 0.0, threading.Event())
+        if queued:
+            self.engine.wake()
+        return queued
+
+    def overview(self, days: int = 30, now: float | None = None) -> list[OrderRow]:
+        """Los pedidos de los últimos `days` días, ordenados para la pestaña Pedidos."""
+        s = self.cfg.data.shopify
+        now = now or time.time()
+        orders = self.client().orders_overview(_ts_to_iso(now - days * 86400))
+        ledgers = self.ledgers()
+        jobs: dict[str, list[dict]] = {}
+        for job in self.store.list(limit=3000):
+            meta = job.get("meta") or {}
+            if job.get("source") == "shopify" and "tracking" in meta and meta.get("order_id"):
+                jobs.setdefault(str(meta["order_id"]), []).append(job)
+        since = self.since_ts()
+        rows = []
+        for order in orders:
+            legacy = str(order.get("legacyResourceId") or str(order.get("id", "")).rsplit("/", 1)[-1])
+            rows.append(classify(order, settings=s, ledger=ledgers.get(legacy), jobs=jobs.get(legacy), since=since, now=now))
+        return rows
 
     def _enqueue(self, req: JobRequest) -> int:
         try:
@@ -584,6 +721,8 @@ class ShopifyService(BackgroundService):
                 continue
             today = self.store.start_of_today()
             if self.store.count_seen(self._key("fo:"), today) >= max(0, s.max_labels_per_day):
+                if self.ledger(meta["order_id"]).get("state") != "limit":
+                    self._note(meta["order_id"], "limit", name=meta["order_name"])
                 if self._limit_warned_day != today:
                     self._limit_warned_day = today
                     self.events.notify(
@@ -600,6 +739,7 @@ class ShopifyService(BackgroundService):
             except PurchaseRejected as exc:
                 # Shopify contestó que no compró: se puede volver a intentar (p. ej. tras corregir el paquete).
                 self.store.unmark_seen(key)
+                self._note(meta["order_id"], "failed", name=meta["order_name"], reason=str(exc))
                 log.error("Shopify rechazó la compra de la etiqueta de %s: %s", meta["order_name"], exc)
                 self.events.notify(
                     "No se pudo comprar la etiqueta",
@@ -612,6 +752,7 @@ class ShopifyService(BackgroundService):
                     self.store.unmark_seen(key)  # seguro que no llegó a Shopify
                     raise
                 # No sabemos si Shopify la compró: no se reintenta sola para no pagar dos veces.
+                self._note(meta["order_id"], "uncertain", name=meta["order_name"], reason=str(exc))
                 log.error("Shopify: compra de etiqueta sin confirmar para %s: %s", meta["order_name"], exc)
                 self.events.notify(
                     "Revisa la etiqueta en Shopify",
@@ -623,6 +764,7 @@ class ShopifyService(BackgroundService):
             pending = self._pending()
             pending[result_id] = {**meta, "started": time.time()}
             self._save_pending(pending)
+            self._note(meta["order_id"], "purchasing", name=meta["order_name"])
             log.info("Shopify: compra de etiqueta iniciada para %s", meta["order_name"])
             queued += self._check_pending_purchases(client, wait_seconds=20, stop=stop)
         return queued
@@ -655,7 +797,13 @@ class ShopifyService(BackgroundService):
                     queued += new_jobs
                     if documents:
                         pending.pop(result_id)
+                        tracking = ((result.get("shippingLabels") or [{}])[0].get("trackingInfo") or {})
+                        self._note(
+                            info.get("order_id", ""), "purchased", name=info.get("order_name"),
+                            carrier=tracking.get("company"), tracking=tracking.get("number"),
+                        )
                     elif age > 600:
+                        self._note(info.get("order_id", ""), "no_document", name=info.get("order_name"))
                         self.events.notify(
                             "Etiqueta comprada sin documento",
                             f"{info.get('order_name')}: Shopify no entregó el PDF/ZPL. Imprímela desde Shopify.",
@@ -665,9 +813,11 @@ class ShopifyService(BackgroundService):
                 elif status == "PURCHASE_FAILED":
                     reason = "; ".join(e.get("message", "") for e in result.get("errors") or []) or "sin detalle"
                     log.error("Shopify: falló la compra de etiqueta de %s: %s", info.get("order_name"), reason)
+                    self._note(info.get("order_id", ""), "failed", name=info.get("order_name"), reason=reason)
                     self.events.notify("Falló la compra de etiqueta", f"{info.get('order_name')}: {reason}", "error")
                     pending.pop(result_id)
                 elif age > 3600:
+                    self._note(info.get("order_id", ""), "uncertain", name=info.get("order_name"))
                     self.events.notify(
                         "Compra de etiqueta sin respuesta",
                         f"{info.get('order_name')}: revisa el pedido en Shopify.",

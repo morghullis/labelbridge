@@ -284,6 +284,13 @@ class Toolbox:
             "buy_shipping_label": s.buy_shipping_label,
             "shipping_label_printer": s.shipping_label_printer or "(predeterminada)",
             "shipping_label_size": s.label_size,
+            # Por qué paquetería sale cada pedido (pestaña Pedidos → Reglas de paquetería). FedEx siempre a mano.
+            "carrier_rules": [
+                {"method_contains": r.method, "pieces_over_usd": r.over, "carrier": r.carrier,
+                 "bought": "automatically" if r.auto else "by hand"}
+                for r in s.shipping_rules
+            ],
+            "default_carrier": s.default_carrier,
             "labels_bought_today": self.ctx.store.count_seen(prefix, self.ctx.store.start_of_today()) if prefix else 0,
             "max_labels_per_day": s.max_labels_per_day,
             "print_order_label": s.print_order_label,

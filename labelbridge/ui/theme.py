@@ -47,6 +47,9 @@ QPushButton#NavButton[toggle="true"]:checked {{
     background: #1E293B; color: white; font-weight: 600; border: 1px solid #B8892F; padding: 8px 11px;
 }}
 QFrame#SidebarStatus {{ background: #1E293B; border-radius: 10px; }}
+QLabel#NavBadge {{
+    background: #F59E0B; color: #1E1B4B; border-radius: 9px; padding: 1px 7px; font-size: 11px; font-weight: 700;
+}}
 
 QLabel#PageTitle {{ font-size: 22px; font-weight: 700; }}
 QLabel#PageSubtitle {{ color: {MUTED}; font-size: 13px; }}
@@ -81,6 +84,13 @@ QPushButton[variant="chip"] {{
 }}
 QPushButton[variant="chip"]:hover {{ background: #E0E7FF; border-color: #A5B4FC; }}
 QPushButton[variant="chip"]:disabled {{ color: #94A3B8; background: #F8FAFC; border-color: {BORDER}; }}
+QPushButton[variant="segment"] {{
+    background: transparent; color: {MUTED}; border: 1px solid {BORDER}; border-radius: 14px; padding: 5px 12px;
+    font-weight: 600;
+}}
+QPushButton[variant="segment"]:hover {{ background: #F1F5F9; color: {TEXT}; }}
+QPushButton[variant="segment"]:checked {{ background: #EEF2FF; color: {ACCENT_HOVER}; border-color: #C7D2FE; }}
+QFrame#ActionItem {{ background: #FFFBEB; border: 1px solid #FDE68A; border-radius: 10px; }}
 
 QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox, QPlainTextEdit, QTextEdit {{
     background: white; color: {TEXT}; border: 1px solid #CBD5E1; border-radius: 8px;
