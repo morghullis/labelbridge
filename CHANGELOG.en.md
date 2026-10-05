@@ -2,6 +2,11 @@
 
 English version of [CHANGELOG.md](CHANGELOG.md). Each published version shows these notes in the app's update window when the app is in English, and on the English download page.
 
+## 1.9.1
+
+- **Windows: the installer no longer asks for administrator permission.** It always installs LabelBridge just for your user, without the “for me / for everyone” question.
+- If you installed it “for all users” on a PC, that same copy keeps getting updated (Windows asks for administrator permission on each update). To stop that, uninstall it once and install it again: it keeps your settings.
+
 ## 1.9.0
 
 - **LabelBridge for Mac.** New version for Macs with Apple Silicon (M1 or newer) and macOS 15 or newer: on the downloads page press **Download for Mac**, open the .dmg and drag LabelBridge to Applications. It does the same as on Windows: prints Shopify orders, buys labels, alerts with sounds and includes the assistant and the step-by-step guide.

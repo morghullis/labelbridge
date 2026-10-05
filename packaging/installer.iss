@@ -36,9 +36,10 @@ WizardImageFile={#Images}\wizard-100.bmp,{#Images}\wizard-125.bmp,{#Images}\wiza
 WizardSmallImageFile={#Images}\small-100.bmp,{#Images}\small-125.bmp,{#Images}\small-150.bmp,{#Images}\small-175.bmp,{#Images}\small-200.bmp,{#Images}\small-225.bmp,{#Images}\small-250.bmp
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
-; Instalación por usuario sin pedir administrador (se puede elegir "para todos").
+; Siempre por usuario, sin preguntar ni pedir administrador. Hasta la 1.9.0 se podía elegir «para todos»: esos
+; equipos se siguen actualizando en Archivos de programa (ver AdminInstallExists en [Code]); /ALLUSERS lo permite.
 PrivilegesRequired=lowest
-PrivilegesRequiredOverridesAllowed=dialog
+PrivilegesRequiredOverridesAllowed=commandline
 UsedUserAreasWarning=no
 ; La app crea el mutex LabelBridgeRunningMutex mientras está abierta. No se usa AppMutex: en modo silencioso
 ; (actualización automática) el instalador se cancelaría si la app aún no terminó de cerrarse. Ver [Code].
@@ -56,6 +57,8 @@ english.NetworkGroup=Network:
 spanish.NetworkGroup=Red:
 english.FirewallTask=Allow the local API from other computers on the private network (firewall rule)
 spanish.FirewallTask=Permitir la API local desde otros equipos de la red privada (regla de firewall)
+english.AdminInstall=LabelBridge is installed for all users of this computer. To update it, Windows will ask for administrator permission.%n%nTo stop it asking on future updates, uninstall LabelBridge once and install it again: it will be installed just for you and it keeps your settings.
+spanish.AdminInstall=LabelBridge está instalada para todos los usuarios de este equipo. Para actualizarla, Windows pedirá permiso de administrador.%n%nPara que no lo pida en las próximas actualizaciones, desinstálala una vez y vuelve a instalarla: quedará solo para tu usuario y conserva tu configuración.
 english.CloseApp=LabelBridge is open. Close it (right-click its icon next to the clock → Exit) and press OK.
 spanish.CloseApp=LabelBridge está abierta. Ciérrala (clic derecho en el icono junto al reloj → Salir) y pulsa Aceptar.
 english.ShopTitle=Your Shopify store
@@ -149,8 +152,53 @@ begin
     end;
 end;
 
+{ --- Instalada «para todos los usuarios» (hasta la 1.9.0 se podía elegir) ---------------------------- }
+
+function AdminInstallExists(): Boolean;
+var
+  Key: String;
+begin
+  Key := ExpandConstant('Software\Microsoft\Windows\CurrentVersion\Uninstall\{#emit SetupSetting("AppId")}_is1');
+  Result := RegKeyExists(HKLM64, Key) or RegKeyExists(HKLM32, Key);
+end;
+
+{ Los mismos parámetros, en modo «para todos» y con el idioma ya elegido. }
+function AdminParams(): String;
+var
+  I: Integer;
+  Param: String;
+begin
+  Result := '/ALLUSERS /LANG=' + ActiveLanguage;
+  for I := 1 to ParamCount do
+  begin
+    Param := Uppercase(ParamStr(I));
+    if (Pos('/SL5=', Param) = 1) or (Pos('/LANG=', Param) = 1) or (Param = '/ALLUSERS') or (Param = '/CURRENTUSER') then
+      continue;
+    Result := Result + ' ' + AddQuotes(ParamStr(I));
+  end;
+end;
+
+{ Se actualiza esa misma copia (Windows pide permiso de administrador) en vez de crear otra solo para este usuario,
+  también cuando lo lanza la actualización automática de una versión anterior. }
+function UpdateAdminInstall(): Boolean;
+var
+  ResultCode: Integer;
+begin
+  Log('LabelBridge está instalada para todos los usuarios: se actualiza esa copia.');
+  if not WizardSilent then
+    MsgBox(CustomMessage('AdminInstall'), mbInformation, MB_OK);
+  if not ShellExec('', ExpandConstant('{srcexe}'), AdminParams(), '', SW_SHOWNORMAL, ewWaitUntilTerminated, ResultCode) then
+    Log('No se pudo abrir el instalador para todos los usuarios: ' + SysErrorMessage(ResultCode));
+  Result := False;  { esta copia del instalador termina aquí }
+end;
+
 function InitializeSetup(): Boolean;
 begin
+  if (not IsAdminInstallMode) and AdminInstallExists() then
+  begin
+    Result := UpdateAdminInstall();
+    exit;
+  end;
   Result := WaitForAppClosed(WizardSilent);
 end;
 

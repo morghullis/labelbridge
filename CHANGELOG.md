@@ -2,6 +2,11 @@
 
 Cada versión publicada muestra estas notas en la ventana de actualización de la app y en la página de descargas.
 
+## 1.9.1
+
+- **Windows: el instalador ya no pide permiso de administrador.** Siempre instala LabelBridge solo para tu usuario, sin la pregunta «para mí / para todos».
+- Si en algún PC la instalaste «para todos los usuarios», se sigue actualizando esa misma copia (Windows pide permiso de administrador en cada actualización). Para que no lo pida más, desinstálala una vez y vuelve a instalarla: conserva tu configuración.
+
 ## 1.9.0
 
 - **LabelBridge para Mac.** Nueva versión para Mac con Apple Silicon (M1 o más nueva) y macOS 15 o más nueva: en la página de descargas pulsa **Descargar para Mac**, abre el .dmg y arrastra LabelBridge a Aplicaciones. Hace lo mismo que en Windows: imprime los pedidos de Shopify, compra guías, avisa con sonidos y trae el asistente y la guía paso a paso.

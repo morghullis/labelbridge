@@ -3,6 +3,8 @@
 #   D) con el actualizador de la versión instalada (la que tiene el usuario hoy)
 #   E) con el actualizador nuevo
 #   F) con el actualizador nuevo cuando la app tarda en cerrarse
+#   G) cuando estaba instalada «para todos los usuarios» (se actualiza esa copia, no se crea otra)
+#   H) una instalación nueva queda solo para el usuario (sin pedir administrador)
 name: Update end-to-end
 
 on:
@@ -25,6 +27,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       FROM_VERSION: ${{ inputs.from_version }}
       APPKEY: HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{8B5C6F1E-3C2A-4E7B-9C1D-2F4A6B8C0D1E}_is1
+      ADMINKEY: HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{8B5C6F1E-3C2A-4E7B-9C1D-2F4A6B8C0D1E}_is1
     steps:
       - uses: actions/checkout@v4
         with:
@@ -138,3 +141,46 @@ jobs:
           $slow | Stop-Process -Force -ErrorAction SilentlyContinue
           if ($after -ne $env:NEW_VERSION) { throw "F: no se instaló la versión nueva" }
           if (-not $running) { throw "F: la app no se volvió a abrir" }
+
+      - name: "G) Instalada «para todos los usuarios» → el instalador nuevo actualiza esa copia"
+        if: always()
+        shell: pwsh
+        run: |
+          function Uninstall-Copy($key) {
+            if (-not (Test-Path $key)) { return }
+            Get-Process LabelBridge -ErrorAction SilentlyContinue | Stop-Process -Force
+            Start-Sleep 2
+            $unins = (Get-ItemProperty $key).UninstallString -replace '"', ''
+            (Start-Process $unins -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -PassThru).WaitForExit()
+            Start-Sleep 5
+          }
+          Uninstall-Copy $env:APPKEY  # la copia por usuario de las pruebas anteriores
+          if (Test-Path $env:APPKEY) { throw "G: no se pudo desinstalar la copia por usuario" }
+          (Start-Process (Get-ChildItem old\*.exe)[0].FullName -ArgumentList '/ALLUSERS','/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -PassThru).WaitForExit()
+          Start-Sleep 12
+          Get-Process LabelBridge -ErrorAction SilentlyContinue | Stop-Process -Force
+          $before = Get-ItemProperty $env:ADMINKEY
+          "Antes: $($before.DisplayVersion) en $($before.InstallLocation)"
+          # Sin /ALLUSERS, como lo lanza el actualizador automático de la versión instalada.
+          $setup = (Get-ChildItem dist\installer\*.exe)[0].FullName
+          (Start-Process $setup -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -PassThru).WaitForExit()
+          Start-Sleep 15
+          $after = (Get-ItemProperty $env:ADMINKEY).DisplayVersion
+          "Después: $after · otra copia solo para el usuario: $(Test-Path $env:APPKEY)"
+          if ($after -ne $env:NEW_VERSION) { throw "G: no se actualizó la copia para todos los usuarios" }
+          if (Test-Path $env:APPKEY) { throw "G: se creó otra copia solo para este usuario" }
+          Uninstall-Copy $env:ADMINKEY
+          if (Test-Path $env:ADMINKEY) { throw "G: no se pudo desinstalar la copia para todos los usuarios" }
+
+      - name: "H) Instalación nueva: solo para el usuario, sin pedir administrador"
+        if: always()
+        shell: pwsh
+        run: |
+          Get-Process LabelBridge -ErrorAction SilentlyContinue | Stop-Process -Force
+          $setup = (Get-ChildItem dist\installer\*.exe)[0].FullName
+          (Start-Process $setup -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -PassThru).WaitForExit()
+          Start-Sleep 12
+          "Por usuario: $(Test-Path $env:APPKEY) · para todos: $(Test-Path $env:ADMINKEY)"
+          if (-not (Test-Path $env:APPKEY)) { throw "H: no quedó instalada para el usuario" }
+          if (Test-Path $env:ADMINKEY) { throw "H: quedó instalada para todos los usuarios" }
+          if ((Get-ItemProperty $env:APPKEY).DisplayVersion -ne $env:NEW_VERSION) { throw "H: versión equivocada" }
