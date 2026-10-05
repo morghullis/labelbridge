@@ -424,7 +424,7 @@ class SettingsPage(Page):
         grid = QGridLayout()
         grid.setHorizontalSpacing(14)
         grid.setVerticalSpacing(8)
-        grid.addWidget(label(tr("Aviso"), "Small"), 0, 1)
+        grid.addWidget(label(tr("Avisar"), "Small"), 0, 1)
         grid.addWidget(label(tr("Sonido"), "Small"), 0, 2)
         self.alert_toasts: dict[str, QCheckBox] = {}
         self.alert_sounds: dict[str, QComboBox] = {}
@@ -495,6 +495,8 @@ class SettingsPage(Page):
         self.transit_days = _spin(2, 60, tr(" días"))
         delays.addRow(tr("En camino sin fecha de entrega más de"), self.transit_days)
         self.unshipped_days = _spin(1, 30, tr(" días"))
+        for spin in (self.no_scan_days, self.transit_days, self.unshipped_days):
+            spin.setMaximumWidth(140)
         delays.addRow(tr("Marcar los pedidos pagados sin enviar después de"), self.unshipped_days)
         delays.addRow("", label(tr("También avisa si se pasa la fecha estimada de entrega o la paquetería reporta un problema "
                                    "(intento fallido, retraso, no entregado)."), "Muted", wrap=True))

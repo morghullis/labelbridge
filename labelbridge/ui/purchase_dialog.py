@@ -113,14 +113,14 @@ class PurchaseDialog(QDialog):
         for code, text in PACKAGE_TYPES.items():
             self.package_type.addItem(tr(text), code)
         self.package_type.setCurrentIndex(max(0, self.package_type.findData(p.type)))
-        self.length, self.width, self.height = _spin(p.length), _spin(p.width), _spin(p.height)
+        self.box_length, self.box_width, self.box_height = _spin(p.length), _spin(p.width), _spin(p.height)
         self.dim_unit = _units(DIM_UNITS, p.dim_unit)
         self.box_weight = _spin(p.weight)
         self.box_weight_unit = _units(WEIGHT_UNITS, p.weight_unit)
         dims = QHBoxLayout()
         dims.setSpacing(6)
         dims.addWidget(self.package_type)
-        for index, spin in enumerate((self.length, self.width, self.height)):
+        for index, spin in enumerate((self.box_length, self.box_width, self.box_height)):
             if index:
                 dims.addWidget(label("×"))
             dims.addWidget(spin)
@@ -219,8 +219,12 @@ class PurchaseDialog(QDialog):
         QTimer.singleShot(0, self._fit)  # con los estilos ya aplicados: el alto justo para el texto
 
     def _fit(self) -> None:
-        self.layout().activate()
-        self.adjustSize()
+        """El alto justo para el contenido al ancho actual (con textos que ocupan dos líneas, p. ej. en inglés)."""
+        layout = self.layout()
+        layout.activate()
+        width = max(self.minimumWidth(), self.size().width())
+        needed = layout.heightForWidth(width) if layout.hasHeightForWidth() else layout.sizeHint().height()
+        self.resize(width, max(needed, layout.minimumSize().height()))
 
     def _update(self) -> None:
         usable = (not self.fedex or self.other_carrier.isChecked()) and not self.bought
@@ -240,7 +244,8 @@ class PurchaseDialog(QDialog):
         if self.package_custom.isChecked():
             package = {
                 "type": self.package_type.currentData(),
-                "dimensions": {"length": self.length.value(), "width": self.width.value(), "height": self.height.value(),
+                "dimensions": {"length": self.box_length.value(), "width": self.box_width.value(),
+                               "height": self.box_height.value(),
                                "unit": self.dim_unit.currentData()},
                 "weight": {"value": self.box_weight.value(), "unit": self.box_weight_unit.currentData()},
             }
@@ -250,7 +255,7 @@ class PurchaseDialog(QDialog):
         return {"package": package, "total_weight": weight, "notify": self.notify.isChecked()}
 
     def _problem(self) -> str:
-        if self.package_custom.isChecked() and min(self.length.value(), self.width.value(), self.height.value()) <= 0:
+        if self.package_custom.isChecked() and min(self.box_length.value(), self.box_width.value(), self.box_height.value()) <= 0:
             return tr("Escribe las medidas de la caja.")
         if self.weight_manual.isChecked() and self.total_weight.value() <= 0:
             return tr("Escribe el peso total del paquete.")
@@ -262,7 +267,7 @@ class PurchaseDialog(QDialog):
         p.use_custom = self.package_custom.isChecked() and self.remember.isChecked()
         if self.package_custom.isChecked():
             p.type = self.package_type.currentData()
-            p.length, p.width, p.height = self.length.value(), self.width.value(), self.height.value()
+            p.length, p.width, p.height = self.box_length.value(), self.box_width.value(), self.box_height.value()
             p.dim_unit = self.dim_unit.currentData()
             p.weight, p.weight_unit = self.box_weight.value(), self.box_weight_unit.currentData()
         self.ctx.cfg.save("shopify")

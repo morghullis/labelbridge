@@ -1023,6 +1023,7 @@
  "Primero guarda la clave en Asistente → Conectar IA.": "First save the key in Assistant → Connect AI.",
  "{0} modelos disponibles en tu cuenta. Elige uno y pulsa «Guardar ajustes».": "{0} models available in your account. Choose one and press “Save settings”.",
  "No se pudo cargar la lista: {0}": "Couldn't load the list: {0}",
+ "Avisar": "Notify",
  "Sonido": "Sound",
  "Mostrar el aviso junto al reloj": "Show the notification next to the clock",
  "Probar el sonido": "Play the sound",
