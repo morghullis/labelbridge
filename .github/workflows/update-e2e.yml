@@ -3,7 +3,7 @@
 #   D) con el actualizador de la versión instalada (la que tiene el usuario hoy)
 #   E) con el actualizador nuevo
 #   F) con el actualizador nuevo cuando la app tarda en cerrarse
-#   G) cuando estaba instalada «para todos los usuarios» (se actualiza esa copia, no se crea otra)
+#   G) cuando estaba instalada «para todos los usuarios» (esa copia se quita y queda solo para el usuario)
 #   H) una instalación nueva queda solo para el usuario (sin pedir administrador)
 name: Update end-to-end
 
@@ -146,7 +146,7 @@ jobs:
           if ($after -ne $env:NEW_VERSION) { throw "F: no se instaló la versión nueva" }
           if (-not $running) { throw "F: la app no se volvió a abrir" }
 
-      - name: "G) Instalada «para todos los usuarios» → el instalador nuevo actualiza esa copia"
+      - name: "G) Instalada «para todos los usuarios» → pasa a «solo para el usuario»"
         if: always() && contains(inputs.cases, 'G')
         shell: pwsh
         run: |
@@ -172,15 +172,15 @@ jobs:
           $proc = Start-Process $setup -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',"/LOG=`"$log`"" -PassThru
           $proc.WaitForExit()
           "El instalador terminó (código $($proc.ExitCode)) en $([int]((Get-Date) - $started).TotalSeconds) s"
-          foreach ($file in @($log, ($log -replace '\.log$', '-todos.log'))) {
-            if (Test-Path $file) { "----- $file"; Get-Content $file -Tail 40 } else { "----- (no existe) $file" }
-          }
-          $after = (Get-ItemProperty $env:ADMINKEY).DisplayVersion
-          "Después: $after · otra copia solo para el usuario: $(Test-Path $env:APPKEY)"
-          if ($after -ne $env:NEW_VERSION) { throw "G: no se actualizó la copia para todos los usuarios" }
-          if (Test-Path $env:APPKEY) { throw "G: se creó otra copia solo para este usuario" }
-          Uninstall-Copy $env:ADMINKEY
-          if (Test-Path $env:ADMINKEY) { throw "G: no se pudo desinstalar la copia para todos los usuarios" }
+          if (Test-Path $log) { Get-Content $log | Select-String -Pattern 'para todos|copia|InitializeSetup|Installation process succeeded|Exit code' }
+          Start-Sleep 10
+          $user = Get-ItemProperty $env:APPKEY -ErrorAction SilentlyContinue
+          "Después: para todos $(Test-Path $env:ADMINKEY) · solo para el usuario $($user.DisplayVersion) en $($user.InstallLocation)"
+          if (Test-Path $env:ADMINKEY) { throw "G: sigue la copia para todos los usuarios" }
+          if ($user.DisplayVersion -ne $env:NEW_VERSION) { throw "G: no quedó la versión nueva solo para el usuario" }
+          if (Test-Path 'C:\Program Files\LabelBridge\LabelBridge.exe') { throw "G: quedó el programa en Archivos de programa" }
+          if (-not (Test-Path (Join-Path $env:LOCALAPPDATA 'LabelBridge'))) { throw "G: se perdió la carpeta de datos" }
+          Uninstall-Copy $env:APPKEY
 
       - name: "H) Instalación nueva: solo para el usuario, sin pedir administrador"
         if: always() && contains(inputs.cases, 'H')

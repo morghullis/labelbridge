@@ -5,7 +5,7 @@ English version of [CHANGELOG.md](CHANGELOG.md). Each published version shows th
 ## 1.9.1
 
 - **Windows: the installer no longer asks for administrator permission.** It always installs LabelBridge just for your user, without the “for me / for everyone” question.
-- If you installed it “for all users” on a PC, that same copy keeps getting updated (Windows asks for administrator permission on each update). To stop that, uninstall it once and install it again: it keeps your settings.
+- If you installed it “for all users” on a PC (which asked for administrator permission on every update), updating moves it to “just for you” by itself: Windows asks for permission one last time and then no more. Your settings, orders and printers are kept.
 
 ## 1.9.0
 

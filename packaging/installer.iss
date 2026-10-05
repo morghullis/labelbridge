@@ -36,8 +36,8 @@ WizardImageFile={#Images}\wizard-100.bmp,{#Images}\wizard-125.bmp,{#Images}\wiza
 WizardSmallImageFile={#Images}\small-100.bmp,{#Images}\small-125.bmp,{#Images}\small-150.bmp,{#Images}\small-175.bmp,{#Images}\small-200.bmp,{#Images}\small-225.bmp,{#Images}\small-250.bmp
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
-; Siempre por usuario, sin preguntar ni pedir administrador. Hasta la 1.9.0 se podía elegir «para todos»: esos
-; equipos se siguen actualizando en Archivos de programa (ver AdminInstallExists en [Code]); /ALLUSERS lo permite.
+; Siempre por usuario, sin preguntar ni pedir administrador. Hasta la 1.9.0 se podía elegir «para todos»: esa copia
+; se desinstala al actualizar y queda solo para el usuario (ver RemoveAdminInstall en [Code]). /ALLUSERS sigue valiendo.
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=commandline
 UsedUserAreasWarning=no
@@ -57,8 +57,10 @@ english.NetworkGroup=Network:
 spanish.NetworkGroup=Red:
 english.FirewallTask=Allow the local API from other computers on the private network (firewall rule)
 spanish.FirewallTask=Permitir la API local desde otros equipos de la red privada (regla de firewall)
-english.AdminInstall=LabelBridge is installed for all users of this computer. To update it, Windows will ask for administrator permission.%n%nTo stop it asking on future updates, uninstall LabelBridge once and install it again: it will be installed just for you and it keeps your settings.
-spanish.AdminInstall=LabelBridge está instalada para todos los usuarios de este equipo. Para actualizarla, Windows pedirá permiso de administrador.%n%nPara que no lo pida en las próximas actualizaciones, desinstálala una vez y vuelve a instalarla: quedará solo para tu usuario y conserva tu configuración.
+english.AdminInstall=This PC has an earlier LabelBridge installed for all users. It will be removed so the new one is installed just for you: Windows will ask for administrator permission one last time.%n%nYour settings, orders and printers are kept.
+spanish.AdminInstall=Esta PC tiene una versión anterior de LabelBridge instalada para todos los usuarios. Se va a quitar para instalar la nueva solo para ti: Windows pedirá permiso de administrador por última vez.%n%nTu configuración, tus pedidos y tus impresoras se conservan.
+english.AdminInstallFailed=The earlier LabelBridge (installed for all users) couldn't be removed. Uninstall it from Settings → Apps and open this installer again: your settings are kept.
+spanish.AdminInstallFailed=No se pudo quitar la versión anterior de LabelBridge (instalada para todos los usuarios). Desinstálala desde Configuración → Aplicaciones y vuelve a abrir este instalador: tu configuración se conserva.
 english.CloseApp=LabelBridge is open. Close it (right-click its icon next to the clock → Exit) and press OK.
 spanish.CloseApp=LabelBridge está abierta. Ciérrala (clic derecho en el icono junto al reloj → Salir) y pulsa Aceptar.
 english.ShopTitle=Your Shopify store
@@ -152,64 +154,59 @@ begin
     end;
 end;
 
-{ --- Instalada «para todos los usuarios» (hasta la 1.9.0 se podía elegir) ---------------------------- }
+{ --- Copia «para todos los usuarios» (hasta la 1.9.0 se podía elegir) --------------------------------- }
 
-function AdminInstallExists(): Boolean;
+{ Esas copias, en Archivos de programa, pedían permiso de administrador en cada actualización. Ahora siempre se instala
+  solo para el usuario: si hay una, se desinstala (Windows pide permiso una última vez; la configuración, los pedidos y
+  las claves no se tocan) y la instalación sigue normal. Inno no deja relanzar este mismo instalador «para todos» antes
+  de instalar, y así además no lo vuelve a pedir. }
+function AdminUninstaller(var Uninstaller: String): Boolean;
 var
   Key: String;
 begin
   Key := ExpandConstant('Software\Microsoft\Windows\CurrentVersion\Uninstall\{#emit SetupSetting("AppId")}_is1');
-  Result := RegKeyExists(HKLM64, Key) or RegKeyExists(HKLM32, Key);
+  Result := RegQueryStringValue(HKLM64, Key, 'UninstallString', Uninstaller) or
+    RegQueryStringValue(HKLM32, Key, 'UninstallString', Uninstaller);
+  Uninstaller := RemoveQuotes(Uninstaller);
 end;
 
-{ Los mismos parámetros, en modo «para todos» y con el idioma ya elegido. El registro (/LOG) va a otro archivo:
-  este instalador todavía tiene abierto el suyo. }
-function AdminParams(): String;
+function RemoveAdminInstall(): Boolean;
 var
-  I: Integer;
-  Param: String;
+  Uninstaller: String;
+  ResultCode, Waited: Integer;
 begin
-  Result := '/ALLUSERS /LANG=' + ActiveLanguage;
-  for I := 1 to ParamCount do
-  begin
-    Param := Uppercase(ParamStr(I));
-    if (Pos('/SL5=', Param) = 1) or (Pos('/LANG=', Param) = 1) or (Param = '/ALLUSERS') or (Param = '/CURRENTUSER') then
-      continue;
-    if Pos('/LOG=', Param) = 1 then
-      Result := Result + ' ' + AddQuotes(ChangeFileExt(ParamStr(I), '') + '-todos.log')
-    else
-      Result := Result + ' ' + AddQuotes(ParamStr(I));
-  end;
-end;
-
-{ Se actualiza esa misma copia (Windows pide permiso de administrador) en vez de crear otra solo para este usuario,
-  también cuando lo lanza la actualización automática de una versión anterior. }
-function UpdateAdminInstall(): Boolean;
-var
-  Params: String;
-  ResultCode: Integer;
-begin
-  Params := AdminParams();
-  Log('LabelBridge está instalada para todos los usuarios: se actualiza esa copia (' + Params + ').');
+  Result := True;
+  if IsAdminInstallMode or not AdminUninstaller(Uninstaller) then
+    exit;
+  Log('Hay una copia para todos los usuarios (' + Uninstaller + '): se desinstala para instalar solo para este usuario.');
   if not WizardSilent then
     MsgBox(CustomMessage('AdminInstall'), mbInformation, MB_OK);
-  { Exec espera de verdad al otro instalador (y este, a su copia con permiso de administrador): quien lanzó este
-    instalador, como la actualización automática, sabe cuándo terminó. }
-  if Exec(ExpandConstant('{srcexe}'), Params, '', SW_SHOWNORMAL, ewWaitUntilTerminated, ResultCode) then
-    Log('El instalador para todos los usuarios terminó con código ' + IntToStr(ResultCode))
+  { ShellExec: el desinstalador necesita permiso de administrador y Windows lo pide. }
+  if ShellExec('', Uninstaller, '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART', '', SW_SHOWNORMAL, ewWaitUntilTerminated, ResultCode) then
+  begin
+    { El desinstalador termina en una copia temporal: se espera a que la copia anterior desaparezca del registro. }
+    Waited := 0;
+    while AdminUninstaller(Uninstaller) and (Waited < 120000) do
+    begin
+      Sleep(500);
+      Waited := Waited + 500;
+    end;
+  end else
+    Log('No se pudo abrir el desinstalador de la copia anterior: ' + SysErrorMessage(ResultCode));
+  Result := not AdminUninstaller(Uninstaller);
+  if Result then
+    Log('Copia para todos los usuarios desinstalada.')
   else
-    Log('No se pudo abrir el instalador para todos los usuarios: ' + SysErrorMessage(ResultCode));
-  Result := False;  { esta copia del instalador termina aquí }
+  begin
+    Log('La copia para todos los usuarios sigue instalada: no se instala otra.');
+    if not WizardSilent then
+      MsgBox(CustomMessage('AdminInstallFailed'), mbError, MB_OK);
+  end;
 end;
 
 function InitializeSetup(): Boolean;
 begin
-  if (not IsAdminInstallMode) and AdminInstallExists() then
-  begin
-    Result := UpdateAdminInstall();
-    exit;
-  end;
-  Result := WaitForAppClosed(WizardSilent);
+  Result := WaitForAppClosed(WizardSilent) and RemoveAdminInstall();
 end;
 
 function InitializeUninstall(): Boolean;

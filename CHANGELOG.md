@@ -5,7 +5,7 @@ Cada versión publicada muestra estas notas en la ventana de actualización de l
 ## 1.9.1
 
 - **Windows: el instalador ya no pide permiso de administrador.** Siempre instala LabelBridge solo para tu usuario, sin la pregunta «para mí / para todos».
-- Si en algún PC la instalaste «para todos los usuarios», se sigue actualizando esa misma copia (Windows pide permiso de administrador en cada actualización). Para que no lo pida más, desinstálala una vez y vuelve a instalarla: conserva tu configuración.
+- Si en algún PC la instalaste «para todos los usuarios» (que pedía permiso de administrador en cada actualización), al actualizar se pasa sola a «solo para ti»: Windows pide permiso una última vez y después ya no. Tu configuración, tus pedidos y tus impresoras se conservan.
 
 ## 1.9.0
 
