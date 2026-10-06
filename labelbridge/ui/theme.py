@@ -58,6 +58,10 @@ QLabel#Small {{ color: {MUTED}; font-size: 11px; }}
 QLabel#SectionTitle {{ font-size: 14px; font-weight: 600; }}
 QLabel#ItemTitle {{ font-weight: 600; }}
 QLabel#StatValue {{ font-size: 26px; font-weight: 700; }}
+QLabel#StripValue {{ font-size: 20px; font-weight: 700; }}
+QPushButton#ConnItem {{ background: #F8FAFC; border: 1px solid {BORDER}; border-radius: 10px; text-align: left; }}
+QPushButton#ConnItem:hover {{ background: #EEF2FF; border-color: #C7D2FE; }}
+QLabel#NavSection {{ color: #64748B; font-size: 10px; font-weight: 700; letter-spacing: 1px; padding: 10px 12px 3px 12px; }}
 QLabel#StatLabel {{ color: {MUTED}; font-size: 11px; font-weight: 600; letter-spacing: 0.5px; }}
 QLabel#Warning {{ background: #FFFBEB; color: #92400E; border: 1px solid #FDE68A; border-radius: 8px; padding: 8px 10px; }}
 QLabel#Hint {{ background: #EEF2FF; color: #3730A3; border: 1px solid #C7D2FE; border-radius: 8px; padding: 8px 10px; }}

@@ -113,6 +113,7 @@ if MAC:
         version=VERSION,
         info_plist={
             "CFBundleName": "LabelBridge",
+            "NSAppSleepDisabled": True,  # sin App Nap: sigue revisando pedidos con la ventana oculta
             "CFBundleDisplayName": "LabelBridge",
             "CFBundleShortVersionString": VERSION,
             "CFBundleVersion": VERSION,

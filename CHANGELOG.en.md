@@ -2,6 +2,17 @@
 
 English version of [CHANGELOG.md](CHANGELOG.md). Each published version shows these notes in the app's update window when the app is in English, and on the English download page.
 
+## 1.13.0
+
+- **Always working.** By default, the computer doesn't go to sleep on its own while LabelBridge is open (the screen still turns off), so it keeps printing with the screen off. If someone puts it to sleep by hand or closes the lid, it catches up right away when it wakes. It opens by itself when the computer starts and, on the Mac, it reopens if it closes because of an error.
+- **Updates itself** (Settings → General → Updates, on by default): it downloads and verifies the new version and installs it when it isn't printing or buying labels; when it opens again it shows what's new. If a version doesn't install, it lets you know as before and you decide.
+- **Processed orders**: an **All / Pending / Processed / Delays** filter (processed = “Fulfilled” in Shopify; all by default, as always). In **More** or with right-click: **Mark as fulfilled in Shopify** (without a label, for what you shipped another way; several at once too) or **Cancel fulfillment** (back to Pending; if it has an active label, it explains that it's voided in Shopify and Shopify refunds it).
+- **More organized design:**
+  - Sidebar by sections (Operation, Store and connections, Help), with the same tabs.
+  - **Home** as the day's summary: today's orders, printed labels, what's waiting and the printer, plus the connections and the latest activity.
+  - Cleaner **Orders**: one strip with the numbers, two-line “Need action” cards and the carrier in a list.
+  - **Settings** in tabs (General, Alerts, Email, Label, Assistant, Security), with **Save settings** always at the top.
+
 ## 1.12.0
 
 - **Guided FedEx label, in a few clicks.** Shopify doesn't let any app buy FedEx or pass it the signature or insurance, so the label is bought in Shopify, but LabelBridge does everything else: one click opens the order in Shopify and shows a card on top of the browser with what to choose, in the order of Shopify's screen (FedEx 2Day, signature required, insurance for the value of the items with a button to copy it, and your box). As soon as you buy it, LabelBridge detects it, prints it by itself and confirms it with the FedEx number; the order is fulfilled in Shopify.

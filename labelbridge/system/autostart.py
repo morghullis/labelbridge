@@ -43,6 +43,7 @@ def mac_agent(bundle: Path | None = None) -> dict:
         "Label": MAC_AGENT_LABEL,
         "ProgramArguments": [str(bundle / "Contents" / "MacOS" / APP_NAME), "--minimized"],
         "RunAtLoad": True,
+        "KeepAlive": {"SuccessfulExit": False},  # si se cierra por un error, launchd la vuelve a abrir (Salir no)
         "ProcessType": "Interactive",
         "LimitLoadToSessionType": "Aqua",  # solo en la sesión con escritorio (no por SSH)
         "AssociatedBundleIdentifiers": [MAC_AGENT_LABEL],

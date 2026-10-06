@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import csv
 import time
+from html import escape
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -40,12 +41,22 @@ from PySide6.QtWidgets import (
 from ...config import CARRIERS, FEDEX_SERVICES, FEDEX_SIGNATURES, ShippingRule
 from ...connectors.label_batch import BUY, IN_SHOPIFY, REPRINT, plan_for
 from ...connectors.shipping_services import AUTO
-from ...connectors.orders_overview import CSV_COLUMNS, GROUPS, OrderRow, Summary, csv_rows, in_group, summarize
+from ...connectors.orders_overview import (
+    CARRIER_FILTERS,
+    CSV_COLUMNS,
+    STATUS_FILTERS,
+    OrderRow,
+    Summary,
+    csv_rows,
+    in_group,
+    in_status,
+    summarize,
+)
 from ...connectors.shopify import admin_url
 from ...i18n import N_, date_text, tr
 from .. import icons
 from ..context import AppContext
-from ..widgets import Card, Page, button, copy_to_clipboard, error, info, label, run_async, run_dialog
+from ..widgets import Card, Page, button, confirm, copy_to_clipboard, error, info, label, run_async, run_dialog
 
 PERIODS = (("today", N_("Hoy")), (7, N_("Últimos 7 días")), (30, N_("Últimos 30 días")), (60, N_("Últimos 60 días")))
 STALE_SECONDS = 60
@@ -164,27 +175,20 @@ class ActionItem(QFrame):
         super().__init__()
         self.setObjectName("ActionItem")
         column = QVBoxLayout(self)
-        column.setContentsMargins(14, 12, 14, 12)
-        column.setSpacing(6)
+        column.setContentsMargins(12, 8, 12, 8)
+        column.setSpacing(4)
         head = QHBoxLayout()
         head.setSpacing(10)
         head.addWidget(carrier_chip(row.carrier))
-        name = label(row.name, "CardTitle")
-        head.addWidget(name)
-        who = " · ".join(part for part in (row.customer, row.destination, row.method) if part)
-        head.addWidget(label(who, "Muted"), 1)
+        head.addWidget(label(row.name, "ItemTitle"))
+        who = [row.customer, row.destination, row.method]
         if row.subtotal:
-            head.addWidget(label(tr("{0} en piezas", money(row.subtotal)), "Muted"))
+            who.append(tr("{0} en piezas", money(row.subtotal)))
+        head.addWidget(label(" · ".join(part for part in who if part), "Muted"), 1)
         overdue = max(1, int(page.ctx.cfg.data.notifications.unshipped_days or 0))
         if row.waiting_days >= overdue:
             head.addWidget(label(tr("{0} días sin enviar", row.waiting_days), "Overdue"))
-        column.addLayout(head)
-        title = label(row.status, "SectionTitle")
-        title.setStyleSheet(f"color: {STATE_COLORS['action']};")
-        column.addWidget(title)
-        column.addWidget(label(row.reason, wrap=True))
-        actions = QHBoxLayout()
-        actions.setSpacing(8)
+        actions = head  # los botones, a la derecha de la misma línea
         text, icon_name = ACTION_BUTTONS.get(row.action, ACTION_BUTTONS["open"])
         if row.action == "buy":  # se compra en Shopify: la ventana dice qué elegir y la imprime sola
             text, icon_name = tr("Comprar guía {0}", row.carrier or row.rule_carrier or "FedEx"), "truck"
@@ -196,11 +200,14 @@ class ActionItem(QFrame):
             other.clicked.connect(lambda: page.run_action(row, "other"))
             actions.addWidget(other)
         elif row.action not in ("open", "void", ""):
-            other = button(tr("Abrir en Shopify"), "link")
+            other = button("", "link", None, tr("Abrir en Shopify"))
             other.clicked.connect(lambda: page.run_action(row, "open"))
             actions.addWidget(other)
-        actions.addStretch(1)
-        column.addLayout(actions)
+        column.addLayout(head)
+        color = STATE_COLORS["action"]
+        why = label(f"<b style='color:{color}'>{escape(row.status)}</b> · {escape(row.reason)}", wrap=True)
+        why.setTextFormat(Qt.TextFormat.RichText)
+        column.addWidget(why)
 
 
 class DelayItem(QFrame):
@@ -362,6 +369,7 @@ class ShippingRulesDialog(QDialog):
 
 class OrdersPage(Page):
     attention_changed = Signal(int)  # pedidos que necesitan acción (para el aviso en la barra lateral)
+    rows_loaded = Signal(list)  # los pedidos recién traídos de Shopify (Inicio arma con ellos el resumen del día)
 
     def __init__(self, ctx: AppContext) -> None:
         super().__init__(
@@ -388,26 +396,30 @@ class OrdersPage(Page):
                                  tooltip=tr("Crear un pedido manual en Shopify y comprar su guía"))
         self.manual_btn.clicked.connect(self.new_manual_label)
         self.header_actions.addWidget(self.manual_btn)
-        rules_btn = button(tr("Reglas de paquetería"), "sliders")
-        rules_btn.clicked.connect(self.edit_rules)
-        self.header_actions.addWidget(rules_btn)
-        self.export_btn = button(tr("Exportar"), "download", tooltip=tr("Guardar la lista en un archivo para Excel (CSV)"))
-        self.export_btn.clicked.connect(self.export_csv)
-        self.header_actions.addWidget(self.export_btn)
+        # Lo que se usa poco, en un menú: reglas de paquetería y exportar.
+        self.tools_btn = button("", "more", None, tr("Reglas de paquetería y exportar"))
+        tools = QMenu(self)
+        tools.addAction(icons.icon("sliders"), tr("Reglas de paquetería…"), self.edit_rules)
+        tools.addAction(icons.icon("download"), tr("Exportar a Excel (CSV)…"), self.export_csv)
+        self.tools_btn.setMenu(tools)
+        self.header_actions.addWidget(self.tools_btn)
 
         self.notice = label("", "Warning", wrap=True)
         self.notice.setVisible(False)
         self.notice.setOpenExternalLinks(True)
         self.add(self.notice)
 
+        # Los números, en una sola franja.
+        strip = Card()
         stats = QHBoxLayout()
-        stats.setSpacing(16)
-        self.stat_action = self._stat(stats, tr("NECESITAN ACCIÓN"), "alert")
-        self.stat_delays = self._stat(stats, tr("RETRASOS"), "clock")
-        self.stat_orders = self._stat(stats, tr("PEDIDOS"), "package")
-        self.stat_labels = self._stat(stats, tr("GUÍAS COMPRADAS"), "tag")
-        self.stat_carriers = self._stat(stats, tr("PROMEDIO POR GUÍA"), "truck")
-        self.add(layout=stats)
+        stats.setSpacing(0)
+        self.stat_action = self._stat(stats, tr("NECESITAN ACCIÓN"))
+        self.stat_delays = self._stat(stats, tr("RETRASOS"))
+        self.stat_orders = self._stat(stats, tr("PEDIDOS"))
+        self.stat_labels = self._stat(stats, tr("GUÍAS COMPRADAS"))
+        self.stat_carriers = self._stat(stats, tr("PROMEDIO POR GUÍA"), last=True)
+        strip.add(layout=stats)
+        self.add(strip)
 
         self.action_card = Card(tr("Necesitan acción"))
         self.action_list = QVBoxLayout()
@@ -425,19 +437,27 @@ class OrdersPage(Page):
         table_card = Card(tr("Todos los pedidos"))
         tabs = QHBoxLayout()
         tabs.setSpacing(6)
-        self.tab_group = QButtonGroup(self)
-        self.tab_group.setExclusive(True)
-        self.tabs: dict[str, QPushButton] = {}
-        for key, text in GROUPS:
-            if key == "action":
-                continue
+        # Filtro principal: procesado = «Preparado» en Shopify (por defecto, todos, como siempre).
+        self.status = "all"
+        self.status_group = QButtonGroup(self)
+        self.status_group.setExclusive(True)
+        self.status_tabs: dict[str, QPushButton] = {}
+        for key, text in STATUS_FILTERS:
             tab = button(tr(text), None, "segment")
             tab.setCheckable(True)
-            tab.clicked.connect(lambda _=False, k=key: self._set_group(k))
-            self.tab_group.addButton(tab)
-            self.tabs[key] = tab
+            tab.clicked.connect(lambda _=False, k=key: self._set_status(k))
+            self.status_group.addButton(tab)
+            self.status_tabs[key] = tab
             tabs.addWidget(tab)
-        self.tabs["all"].setChecked(True)
+        self.status_tabs["all"].setChecked(True)
+        tabs.addSpacing(10)
+        tabs.addWidget(label(tr("Paquetería"), "Muted"))
+        self.carrier_filter = QComboBox()
+        for key, text in CARRIER_FILTERS:
+            self.carrier_filter.addItem(tr(text), key)
+        self.carrier_filter.currentIndexChanged.connect(
+            lambda _i: self._set_group(self.carrier_filter.currentData() or "all"))
+        tabs.addWidget(self.carrier_filter)
         tabs.addStretch(1)
         self.search = QLineEdit()
         self.search.setPlaceholderText(tr("Buscar pedido, cliente o seguimiento…"))
@@ -510,20 +530,23 @@ class OrdersPage(Page):
         QTimer.singleShot(1500, self.reload)  # al abrir la app: el aviso de la barra lateral sin entrar aquí
 
     # --- piezas --------------------------------------------------------------------------------------
-    def _stat(self, row: QHBoxLayout, title: str, icon_name: str):
-        card = Card()
-        head = QHBoxLayout()
-        head.addWidget(label(title, "StatLabel"))
-        head.addStretch(1)
-        ico = label()
-        ico.setPixmap(icons.pixmap(icon_name, "#94A3B8", 18))
-        head.addWidget(ico)
-        card.add(layout=head)
-        value = label("—", "StatValue")
-        card.add(value)
+    def _stat(self, row: QHBoxLayout, title: str, last: bool = False):
+        """Un número de la franja de arriba: título, valor y detalle (separados por una línea fina)."""
+        block = QVBoxLayout()
+        block.setSpacing(2)
+        block.setContentsMargins(14, 2, 14, 2)
+        block.addWidget(label(title, "StatLabel"))
+        value = label("—", "StripValue")
+        block.addWidget(value)
         detail = label("", "Small", wrap=True)
-        card.add(detail)
-        row.addWidget(card, 1)
+        block.addWidget(detail)
+        block.addStretch(1)
+        row.addLayout(block, 1)
+        if not last:
+            line = QFrame()
+            line.setFrameShape(QFrame.Shape.VLine)
+            line.setStyleSheet("color: #E2E8F0;")
+            row.addWidget(line)
         return value, detail
 
     def _connected(self) -> bool:
@@ -574,6 +597,7 @@ class OrdersPage(Page):
         self.all_rows = rows
         self.notice.setVisible(False)
         self._render()
+        self.rows_loaded.emit(rows)
         if self.ctx.services.shopify.overview_truncated:  # Shopify devuelve como mucho 1000 por consulta
             self.notice.setText(tr("Se muestran los {0} pedidos más recientes de este período: elige un período más corto para ver los anteriores.", len(rows)))
             self.notice.setVisible(True)
@@ -603,9 +627,9 @@ class OrdersPage(Page):
         self._render_stats(summary)
         self._render_actions([row for row in rows if row.needs_action])
         self._render_delays([row for row in rows if row.alert])
-        for key, text in GROUPS:
-            if key in self.tabs:
-                self.tabs[key].setText(f"{tr(text)}  {summary.groups.get(key, 0)}")
+        for key, text in STATUS_FILTERS:
+            count = sum(1 for row in rows if in_status(row, key))
+            self.status_tabs[key].setText(f"{tr(text)}  {count}")
         self._fill_table()
         self._render_notice(summary)
         self.attention_changed.emit(summary.action + summary.alerts)
@@ -667,11 +691,16 @@ class OrdersPage(Page):
         self.group = key
         self._fill_table()
 
+    def _set_status(self, key: str) -> None:
+        self.status = key
+        self.status_tabs[key].setChecked(True)
+        self._fill_table()
+
     def _fill_table(self) -> None:
         text = self.search.text().strip().lower()
         visible = []
         for row in self.all_rows:
-            if not in_group(row, self.group):
+            if not in_status(row, self.status) or not in_group(row, self.group):
                 continue
             if text:
                 haystack = " ".join([row.name, row.customer, row.destination, row.method, row.carrier, row.status]
@@ -722,6 +751,15 @@ class OrdersPage(Page):
                                         lambda: self.run_action(row, "copy"))
         track.setEnabled(bool(row.tracking))
         copy.setEnabled(bool(row.tracking))
+        self.more_menu.addSeparator()
+        self._add_state_action(self.more_menu, row)
+
+    def _add_state_action(self, menu: QMenu, row: OrderRow) -> None:
+        """Cambiar el estado de preparación en Shopify (procesado / pendiente)."""
+        if row.fulfilled:
+            menu.addAction(icons.icon("retry"), tr("Cancelar preparación en Shopify"), lambda: self.run_action(row, "unfulfill"))
+        else:
+            menu.addAction(icons.icon("check"), tr("Marcar preparado en Shopify"), lambda: self.run_action(row, "fulfill"))
 
     def _menu(self, pos: QPoint) -> None:
         rows = self._selected_rows()
@@ -730,6 +768,10 @@ class OrdersPage(Page):
         menu = QMenu(self)
         if len(rows) > 1:
             menu.addAction(icons.icon("printer"), tr("Imprimir {0} guías", len(rows)), self.print_selected)
+            pending = [row for row in rows if not row.fulfilled]
+            if pending:
+                menu.addAction(icons.icon("check"), tr("Marcar {0} preparados en Shopify", len(pending)),
+                               lambda: self._fulfill(pending))
             menu.exec(self.view.viewport().mapToGlobal(pos))
             return
         row = rows[0]
@@ -739,6 +781,8 @@ class OrdersPage(Page):
         if row.tracking:
             menu.addAction(icons.icon("truck"), tr("Rastrear el envío"), lambda: self.run_action(row, "track"))
             menu.addAction(icons.icon("copy"), tr("Copiar el número de seguimiento"), lambda: self.run_action(row, "copy"))
+        menu.addSeparator()
+        self._add_state_action(menu, row)
         menu.exec(self.view.viewport().mapToGlobal(pos))
 
     def print_selected(self) -> None:
@@ -767,6 +811,10 @@ class OrdersPage(Page):
             self._fedex(row)
         elif action == "other":  # otra paquetería en vez de la de la regla
             self._retry(row, prefer=AUTO)
+        elif action == "fulfill":
+            self._fulfill([row])
+        elif action == "unfulfill":
+            self._unfulfill(row)
         elif action in ("open", "void"):
             QDesktopServices.openUrl(QUrl(admin_url(shop, f"orders/{row.legacy}")))
         elif action == "track":  # en una ventana de LabelBridge, sin ir a la web de la paquetería
@@ -795,6 +843,48 @@ class OrdersPage(Page):
             self._retry(row)
         else:
             info(self, tr("Imprimir guía"), tr("{0}: {1}", row.name, why))
+
+    def _fulfill(self, rows: list[OrderRow]) -> None:
+        """«Marcar preparado en Shopify» (se envió de otra forma): pasa a Procesados y ya no espera guía."""
+        names = ", ".join(row.name for row in rows[:5]) + ("…" if len(rows) > 5 else "")
+        if not confirm(self, tr("Marcar preparado en Shopify"), tr(
+                "¿Marcar {0} como preparado en Shopify, sin comprar guía?\n\nPasa a «Procesados» y LabelBridge ya no le "
+                "compra guía. El cliente no recibe aviso.", names)):
+            return
+        shopify = self.ctx.services.shopify
+
+        def work() -> list[str]:
+            problems = []
+            for row in rows:
+                try:
+                    shopify.mark_fulfilled(row.legacy, row.name)
+                except Exception as exc:  # cada pedido por su lado: se informa al final
+                    problems.append(str(exc))
+            return problems
+
+        def done(problems: list[str]) -> None:
+            if problems:
+                error(self, tr("Marcar preparado en Shopify"), "\n".join(problems))
+            self.reload()
+
+        run_async(work, done, lambda message: error(self, tr("Marcar preparado en Shopify"), message))
+
+    def _unfulfill(self, row: OrderRow) -> None:
+        """«Cancelar preparación en Shopify»: vuelve a Pendientes (con guía activa, se anula en Shopify)."""
+        if row.labels:
+            info(self, tr("Cancelar preparación en Shopify"), tr(
+                "{0} tiene una guía activa: anúlala en Shopify («Anular etiqueta»). Así se cancela la preparación y "
+                "Shopify te devuelve el dinero de la guía.", row.name))
+            QDesktopServices.openUrl(QUrl(admin_url(self.ctx.cfg.data.shopify.shop, f"orders/{row.legacy}")))
+            return
+        auto = self.ctx.cfg.data.shopify.buy_shipping_label
+        extra = tr(" Como la compra automática está activa, LabelBridge le comprará la guía.") if auto else ""
+        if not confirm(self, tr("Cancelar preparación en Shopify"), tr(
+                "¿Cancelar la preparación de {0} en Shopify?\n\nVuelve a «Pendientes».{1}", row.name, extra)):
+            return
+        run_async(lambda: self.ctx.services.shopify.cancel_fulfillment(row.legacy, row.name),
+                  lambda _count: self.reload(),
+                  lambda message: error(self, tr("Cancelar preparación en Shopify"), message))
 
     def _reprint(self, row: OrderRow) -> None:
         run_async(

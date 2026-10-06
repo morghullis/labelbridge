@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from PySide6.QtCore import Qt, QTime, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
@@ -16,9 +17,14 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLineEdit,
     QPlainTextEdit,
+    QPushButton,
+    QSizePolicy,
     QSlider,
     QSpinBox,
+    QStackedWidget,
     QTimeEdit,
+    QVBoxLayout,
+    QWidget,
 )
 
 from ... import APP_NAME, __version__
@@ -79,12 +85,70 @@ def _price_spin() -> QDoubleSpinBox:
     return spin
 
 
+# Las pestañas de Ajustes, en orden: (clave, título).
+SETTINGS_TABS = (
+    ("general", N_("General")),
+    ("alerts", N_("Avisos")),
+    ("email", N_("Email")),
+    ("label", N_("Etiqueta")),
+    ("assistant", N_("Asistente")),
+    ("security", N_("Seguridad")),
+)
+
+
+class _TabStack(QStackedWidget):
+    """Ocupa solo lo que ocupa la pestaña visible (las demás no alargan la página)."""
+
+    def sizeHint(self):  # noqa: N802
+        page = self.currentWidget()
+        return page.sizeHint() if page is not None else super().sizeHint()
+
+    def minimumSizeHint(self):  # noqa: N802
+        page = self.currentWidget()
+        return page.minimumSizeHint() if page is not None else super().minimumSizeHint()
+
+
 class SettingsPage(Page):
+    def show_tab(self, key: str) -> None:
+        """Muestra la pestaña de Ajustes `key` (general, alerts, email, label, assistant, security)."""
+        index = [k for k, _t in SETTINGS_TABS].index(key)
+        for position in range(self.tab_stack.count()):
+            policy = QSizePolicy.Policy.Preferred if position == index else QSizePolicy.Policy.Ignored
+            self.tab_stack.widget(position).setSizePolicy(policy, policy)
+        self.tab_stack.setCurrentIndex(index)
+        self.tab_buttons[key].setChecked(True)
+        self.tab_stack.updateGeometry()
+
     def __init__(self, ctx: AppContext) -> None:
         super().__init__(tr("Ajustes"), tr("Comportamiento del agente en este equipo."))
         self.ctx = ctx
         g = ctx.cfg.data.general
         lb = ctx.cfg.data.labels
+
+        # Ajustes por pestañas: cada tarjeta en la suya, y un solo «Guardar ajustes» abajo.
+        tabs_row = QHBoxLayout()
+        tabs_row.setSpacing(6)
+        self.tab_group = QButtonGroup(self)
+        self.tab_group.setExclusive(True)
+        self.tab_buttons: dict[str, QPushButton] = {}
+        self.tab_stack = _TabStack()
+        tabs: dict[str, QVBoxLayout] = {}
+        for key, title in SETTINGS_TABS:
+            page = QWidget()
+            column = QVBoxLayout(page)
+            column.setContentsMargins(0, 0, 0, 0)
+            column.setSpacing(18)
+            self.tab_stack.addWidget(page)
+            tabs[key] = column
+            tab = button(tr(title), None, "segment")
+            tab.setCheckable(True)
+            tab.clicked.connect(lambda _=False, k=key: self.show_tab(k))
+            self.tab_group.addButton(tab)
+            self.tab_buttons[key] = tab
+            tabs_row.addWidget(tab)
+        tabs_row.addStretch(1)
+        self.add(layout=tabs_row)
+        self.add(self.tab_stack)
 
         general = Card(tr("General"))
         form = QFormLayout()
@@ -97,6 +161,12 @@ class SettingsPage(Page):
         if not autostart.supported():
             self.autostart.setToolTip(tr("Se aplica en la app instalada"))
         form.addRow("", self.autostart)
+        self.keep_awake = QCheckBox(tr("Mantener el equipo despierto mientras LabelBridge está abierto (la pantalla sí "
+                                       "se apaga)"))
+        self.keep_awake.setChecked(g.keep_awake)
+        self.keep_awake.setToolTip(tr("Así sigue imprimiendo con la pantalla apagada. Si alguien suspende el equipo a "
+                                      "mano, LabelBridge se pone al día en cuanto despierta."))
+        form.addRow("", self.keep_awake)
         self.minimized = QCheckBox(tr(pick(N_("Iniciar minimizado en la bandeja del sistema"),
                                            N_("Iniciar oculto (solo el icono en la barra de menús)"))))
         self.minimized.setChecked(g.start_minimized)
@@ -120,9 +190,9 @@ class SettingsPage(Page):
         self.language.setCurrentIndex(max(0, self.language.findData(g.language)))
         form.addRow(tr("Idioma / Language"), self.language)
         general.add(layout=form)
-        self.add(general)
-        self.add(self._notifications_card())
-        self.add(self._email_card())
+        tabs["general"].addWidget(general)
+        tabs["alerts"].addWidget(self._notifications_card())
+        tabs["email"].addWidget(self._email_card())
 
         label_card = Card(
             tr("Etiqueta de pedido generada"),
@@ -147,15 +217,7 @@ class SettingsPage(Page):
         self.show_price.setChecked(lb.show_price)
         form.addRow("", self.show_price)
         label_card.add(layout=form)
-        self.add(label_card)
-
-        row = QHBoxLayout()
-        row.addStretch(1)
-        save = button(tr("Guardar ajustes"), "check", "primary")
-        self.save_btn = save
-        save.clicked.connect(self._save)
-        row.addWidget(save)
-        self.add(layout=row)
+        tabs["label"].addWidget(label_card)
 
         assistant = Card(
             tr("Asistente"),
@@ -229,7 +291,7 @@ class SettingsPage(Page):
         form.addRow("", label(tr("Solo tú las cambias, aquí. No pueden saltarse las confirmaciones ni los límites de "
                                  "seguridad."), "Small", wrap=True))
         assistant.add(layout=form)
-        self.add(assistant)
+        tabs["assistant"].addWidget(assistant)
 
         security = Card(
             tr("Seguridad"),
@@ -265,19 +327,18 @@ class SettingsPage(Page):
         row.addWidget(audit_btn)
         row.addStretch(1)
         security.add(layout=row)
-        self.add(security)
+        tabs["security"].addWidget(security)
 
-        row = QHBoxLayout()
-        row.addStretch(1)
-        save_all = button(tr("Guardar ajustes"), "check", "primary")
-        save_all.clicked.connect(self._save)
-        row.addWidget(save_all)
-        self.add(layout=row)
-
-        updates = Card(tr("Actualizaciones"), tr("LabelBridge avisa cuando hay una versión nueva y se actualiza con un clic."))
-        self.auto_update = QCheckBox(tr("Avisarme cuando haya una nueva versión (recomendado)"))
+        updates = Card(tr("Actualizaciones"), tr("LabelBridge busca versiones nuevas y se actualiza solo, sin cortar "
+                                                 "nada que esté imprimiendo o comprando."))
+        self.auto_update = QCheckBox(tr("Buscar versiones nuevas (recomendado)"))
         self.auto_update.setChecked(g.auto_update_check)
         updates.add(self.auto_update)
+        self.auto_install = QCheckBox(tr("Actualizar sola, cuando no está imprimiendo ni comprando guías (recomendado)"))
+        self.auto_install.setChecked(g.auto_install_updates)
+        updates.add(self.auto_install)
+        self.auto_update.toggled.connect(self.auto_install.setEnabled)
+        self.auto_install.setEnabled(g.auto_update_check)
         row = QHBoxLayout()
         row.addWidget(label(tr("Versión instalada: <b>{0}</b>", __version__)))
         row.addStretch(1)
@@ -288,7 +349,7 @@ class SettingsPage(Page):
         row.addWidget(page_btn)
         row.addWidget(check)
         updates.add(layout=row)
-        self.add(updates)
+        tabs["general"].addWidget(updates)
 
         data = Card(tr("Datos y soporte"))
         data.add(
@@ -306,7 +367,16 @@ class SettingsPage(Page):
             row.addWidget(btn)
         row.addStretch(1)
         data.add(layout=row)
-        self.add(data)
+        tabs["general"].addWidget(data)
+        for column in tabs.values():
+            column.addStretch(1)
+
+        # Guardar, arriba a la derecha: siempre a la vista, en cualquier pestaña.
+        save = button(tr("Guardar ajustes"), "check", "primary")
+        self.save_btn = save
+        save.clicked.connect(self._save)
+        self.header_actions.addWidget(save)
+        self.show_tab("general")
         self.finish()
         ctx.bridge.event.connect(self._on_event)
         self._load_protection()
@@ -709,6 +779,7 @@ class SettingsPage(Page):
         lb = self.ctx.cfg.data.labels
         self.agent.setText(g.agent_name)
         self.autostart.setChecked(g.start_with_windows)
+        self.keep_awake.setChecked(g.keep_awake)
         self.minimized.setChecked(g.start_minimized)
         self.auto_discover.setChecked(g.auto_discover)
         self._load_notifications()
@@ -716,6 +787,7 @@ class SettingsPage(Page):
         self.retries.setValue(g.max_retries)
         self.retention.setValue(g.retention_days)
         self.auto_update.setChecked(g.auto_update_check)
+        self.auto_install.setChecked(g.auto_install_updates)
         self.store_name.setText(lb.store_name)
         self.sender.setPlainText(lb.sender_address)
         self.show_items.setChecked(lb.show_items)
@@ -788,9 +860,11 @@ class SettingsPage(Page):
         lb = self.ctx.cfg.data.labels
         g.agent_name = self.agent.text().strip() or g.agent_name
         g.start_with_windows = self.autostart.isChecked()
+        g.keep_awake = self.keep_awake.isChecked()
         g.start_minimized = self.minimized.isChecked()
         g.auto_discover = self.auto_discover.isChecked()
         g.auto_update_check = self.auto_update.isChecked()
+        g.auto_install_updates = self.auto_install.isChecked()
         g.max_retries = self.retries.value()
         g.retention_days = self.retention.value()
         language_changed = (self.language.currentData() or "") != g.language

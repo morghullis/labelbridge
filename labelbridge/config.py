@@ -100,6 +100,8 @@ class GeneralSettings:
     auto_discover: bool = True
     guide_acknowledged: str = ""  # pasos informativos de la guía marcados como «Entendido»
     auto_update_check: bool = True
+    auto_install_updates: bool = True  # «Actualizar sola»: se instala cuando no está imprimiendo ni comprando
+    keep_awake: bool = True  # el equipo no se duerme solo mientras LabelBridge está abierto (la pantalla sí)
     skipped_version: str = ""
     default_printer_id: str = ""
     max_retries: int = 5

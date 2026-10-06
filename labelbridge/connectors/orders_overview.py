@@ -232,6 +232,7 @@ class OrderRow:
     waiting_days: int = 0  # días pagado y sin enviar (pedidos que necesitan acción)
     kind: str = "ship"  # ship | pickup | local | none (cómo se entrega)
     address_problem: str = ""  # por qué no puede llevar guía (sin dirección, sin envío…); «» si puede
+    fulfilled: bool = False  # «Preparado» en Shopify (procesado)
     country: str = ""  # país de destino (código de dos letras)
     shipped: bool = False  # Shopify ya lo marcó enviado (con o sin guía)
     paid: bool = True
@@ -418,6 +419,7 @@ def classify(
     ]
     shipped = any(f.get("status") == "SUCCESS" for f in fulfillments)
     row.shipped = shipped
+    row.fulfilled = (order.get("displayFulfillmentStatus") or "") == "FULFILLED"
     row.paid = (order.get("displayFinancialStatus") or "") in PAID_STATUSES
     row.country = str(address.get("countryCodeV2") or "")
     row.address_problem = shipping_problem(order)
@@ -613,6 +615,27 @@ def summarize(rows: list[OrderRow]) -> Summary:
     summary.cost = round(summary.cost, 2)
     summary.voided = round(summary.voided, 2)
     return summary
+
+
+# Filtro principal de la tabla: procesado = «Preparado» en Shopify. Por defecto, todos (como siempre).
+STATUS_FILTERS = (
+    ("all", N_("Todos")),
+    ("pending", N_("Pendientes")),
+    ("processed", N_("Procesados")),
+    ("delays", N_("Retrasos")),
+)
+# Lista de paqueterías del filtro.
+CARRIER_FILTERS = (("all", N_("Todas")), ("usps", N_("USPS")), ("fedex", N_("FedEx")), ("other", N_("Otras")))
+
+
+def in_status(row: OrderRow, status: str) -> bool:
+    if status == "pending":
+        return not row.fulfilled
+    if status == "processed":
+        return row.fulfilled
+    if status == "delays":
+        return bool(row.alert)
+    return True
 
 
 def in_group(row: OrderRow, group: str) -> bool:

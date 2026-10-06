@@ -434,10 +434,16 @@ def test_orders_page_puts_what_needs_a_person_first(core, monkeypatch, tmp_path)
     assert wait_for(lambda: (QApplication.processEvents(), bool(page.all_rows))[1])
     assert counts[-1] == 1 and page.model.rowCount() == 3
     assert isinstance(page.action_list.itemAt(0).widget(), orders_page.ActionItem)
-    assert page.stat_labels[0].text() == "US$5.68" and page.tabs["usps"].text().endswith("1")
-    page._set_group("fedex")
+    assert page.stat_labels[0].text() == "US$5.68"
+    assert page.status_tabs["processed"].text().endswith("1")  # el de la guía comprada: «Preparado» en Shopify
+    page.carrier_filter.setCurrentIndex(page.carrier_filter.findData("fedex"))
     assert [row.name for row in page.model.rows] == ["#1#"]
-    page._set_group("all")
+    page.carrier_filter.setCurrentIndex(page.carrier_filter.findData("all"))
+    page._set_status("processed")
+    assert [row.name for row in page.model.rows] == ["#2#"]
+    page._set_status("pending")
+    assert sorted(row.name for row in page.model.rows) == ["#1#", "#3#"]
+    page._set_status("all")
     page.search.setText("9200190267")  # por número de seguimiento
     assert [row.name for row in page.model.rows] == ["#2#"]
 

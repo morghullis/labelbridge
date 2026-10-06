@@ -2,6 +2,17 @@
 
 Cada versión publicada muestra estas notas en la ventana de actualización de la app y en la página de descargas.
 
+## 1.13.0
+
+- **Funciona siempre.** Por defecto, el equipo no se duerme solo mientras LabelBridge está abierto (la pantalla sí se apaga), así que sigue imprimiendo con la pantalla apagada. Si alguien lo suspende a mano o cierra la tapa, al despertar se pone al día enseguida. Se abre sola al encender el equipo y, en la Mac, si se cierra por un error se vuelve a abrir.
+- **Se actualiza sola** (Ajustes → General → Actualizaciones, encendido por defecto): descarga y verifica la versión nueva y la instala cuando no está imprimiendo ni comprando guías; al abrirse muestra las novedades. Si una versión no se instala, avisa como antes y decides tú.
+- **Pedidos procesados**: un filtro **Todos / Pendientes / Procesados / Retrasos** (procesado = «Preparado» en Shopify; por defecto, todos, como siempre). En **Más** o con clic derecho: **Marcar preparado en Shopify** (sin guía, para lo que enviaste por otra vía; también varios a la vez) o **Cancelar preparación** (vuelve a Pendientes; si tiene guía activa, te explica que se anula en Shopify y Shopify devuelve el dinero).
+- **Diseño más organizado:**
+  - Menú lateral por secciones (Operación, Tienda y conexiones, Ayuda), con las mismas pestañas.
+  - **Inicio** como resumen del día: pedidos de hoy, guías impresas, lo que espera y la impresora, más las conexiones y lo último que pasó.
+  - **Pedidos** más limpio: una franja con los números, tarjetas de «Necesitan acción» en dos líneas y la paquetería en una lista.
+  - **Ajustes** por pestañas (General, Avisos, Email, Etiqueta, Asistente, Seguridad), con **Guardar ajustes** siempre arriba.
+
 ## 1.12.0
 
 - **Guía FedEx, guiada y con pocos clics.** Shopify no deja que ninguna app compre FedEx ni le pase la firma o el seguro, así que la guía se compra en Shopify, pero LabelBridge hace todo lo demás: con un clic abre el pedido en Shopify y muestra una tarjeta encima del navegador con lo que hay que elegir, en el orden de la pantalla de Shopify (FedEx 2Day, firma requerida, el seguro por el valor de las piezas con botón para copiarlo y tu caja). En cuanto la compras, LabelBridge la detecta, la imprime sola y lo confirma con el número de FedEx; el pedido queda preparado en Shopify.

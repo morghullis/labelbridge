@@ -290,6 +290,15 @@ class JobStore:
                 "total": q("SELECT COUNT(*) FROM jobs").fetchone()[0],
             }
 
+    def working_now(self, now: float | None = None) -> int:
+        """Trabajos imprimiéndose o listos para imprimirse ya (los que esperan un reintento más tarde no cuentan)."""
+        now = time.time() if now is None else now
+        with self._lock:
+            return self._conn.execute(
+                "SELECT COUNT(*) FROM jobs WHERE status='printing' OR (status='queued' AND next_attempt_at<=?)",
+                (now + 5,),
+            ).fetchone()[0]
+
     def count_done(self, source: str | None = None) -> int:
         sql = "SELECT COUNT(*) FROM jobs WHERE status='done'"
         params: tuple = ()

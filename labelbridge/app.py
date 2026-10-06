@@ -245,6 +245,25 @@ def main(argv: list[str] | None = None) -> int:
     except OSError:
         log.warning("No se pudo configurar el inicio automático", exc_info=True)
 
+    # Funcionar siempre: el equipo no se duerme solo mientras la app está abierta (la pantalla sí se apaga) y, si
+    # vuelve de una suspensión, todo se pone al día enseguida.
+    from .system.power import KeepAwake, ResumeWatcher
+
+    keep_awake = KeepAwake()
+    keep_awake.apply(cfg.data.general.keep_awake)
+    bridge.config_saved.connect(lambda _section: keep_awake.apply(cfg.data.general.keep_awake))
+    app.aboutToQuit.connect(keep_awake.release)
+
+    def caught_up(_gap: float) -> None:
+        for service in services.all():
+            service.wake()
+        engine.wake()
+
+    resume = ResumeWatcher(caught_up)
+    resume_timer = QTimer()
+    resume_timer.timeout.connect(lambda: resume.check())
+    resume_timer.start(int(resume.every * 1000))
+
     wants_hidden = "--minimized" in argv or cfg.data.general.start_minimized
     if "--show" in argv or "--updated" in argv or not guide_complete(ctx) or not wants_hidden or connect_store:
         window.show()
@@ -253,6 +272,7 @@ def main(argv: list[str] | None = None) -> int:
     not_installed = failed_update(store.kv_get)
     if not_installed is not None:
         store.kv_set("update:installed", "")
+        store.kv_set("update:auto_failed", not_installed.version)  # esa versión ya no se instala sola: se pregunta
         window.show()
         log.error("La actualización a la versión %s no se completó (sigue la %s)", not_installed.version, __version__)
         QTimer.singleShot(900, lambda: window.update_failed(not_installed))

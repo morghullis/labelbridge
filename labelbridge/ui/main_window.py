@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QMainWindow,
     QPushButton,
+    QScrollArea,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -50,6 +51,13 @@ NAV = (
     ("settings", N_("Ajustes"), "sliders"),
     ("logs", N_("Registro"), "activity"),
 )
+# El menú lateral, por secciones (las mismas pestañas, agrupadas).
+NAV_SECTIONS = (
+    (N_("OPERACIÓN"), ("home", "orders", "printers", "history")),
+    (N_("TIENDA Y CONEXIONES"), ("shopify", "n8n", "api")),
+    (N_("AYUDA"), ("guide", "assistant", "logs")),
+    ("", ("settings",)),
+)
 
 
 def _assistant_dock(ctx: AppContext, host: QWidget, area: QWidget):
@@ -72,6 +80,9 @@ class MainWindow(QMainWindow):
         self.quit_app = self.close  # app.py lo reemplaza por la salida real
         self.pending_update = None
         self._prompted_versions: set[str] = set()
+        from .auto_update import AutoUpdater
+
+        self.auto_updater = AutoUpdater(self, ctx)  # «Actualizar sola» (Ajustes → Actualizaciones)
         self.setWindowTitle(APP_NAME)
         self.setWindowIcon(icons.app_icon())
         self.resize(1180, 780)
@@ -102,6 +113,9 @@ class MainWindow(QMainWindow):
         for page in self.pages.values():
             self.stack.addWidget(page)
         self.pages["orders"].attention_changed.connect(self._set_orders_badge)
+        # Inicio resume el día con lo que Pedidos ya trajo de Shopify (sin preguntar dos veces).
+        self.pages["orders"].attention_changed.connect(self.pages["home"].set_attention)
+        self.pages["orders"].rows_loaded.connect(self.pages["home"].set_orders)
         # Recordatorio de los pedidos que esperan a una persona (Ajustes → Notificaciones y sonidos).
         self.attention = 0
         self._reminder = QTimer(self)
@@ -136,35 +150,65 @@ class MainWindow(QMainWindow):
         names.addWidget(label(tr("Etiquetas automáticas"), "BrandSub"))
         brand.addLayout(names, 1)
         col.addLayout(brand)
-        col.addSpacing(18)
+        col.addSpacing(8)
+
+        # Las pestañas, por secciones; con la ventana muy baja, la lista se desplaza (nunca se corta).
+        nav = QWidget()
+        nav.setObjectName("SidebarNav")
+        nav_col = QVBoxLayout(nav)
+        nav_col.setContentsMargins(0, 0, 0, 0)
+        nav_col.setSpacing(4)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("QScrollArea, QWidget#SidebarNav { background: transparent; }")
+        scroll.viewport().setStyleSheet("background: transparent;")
+        scroll.setWidget(nav)
+        entries = {key: (text, icon_name) for key, text, icon_name in NAV}
 
         self.nav_group = QButtonGroup(self)
         self.nav_group.setExclusive(True)
         self.nav_buttons: dict[str, QPushButton] = {}
-        for key, text, icon_name in NAV:
-            btn = QPushButton(f"  {tr(text)}")
-            btn.setObjectName("NavButton")
-            btn.setCheckable(True)
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.setIcon(icons.icon(icon_name, "#CBD5E1", 18))
-            btn.setIconSize(QSize(18, 18))
-            if key == "assistant":  # se queda marcada (con borde dorado) mientras el chat está abierto
-                btn.setProperty("toggle", True)
-                btn.clicked.connect(self.toggle_assistant)
+        for section, keys in NAV_SECTIONS:
+            if section:
+                nav_col.addWidget(label(tr(section), "NavSection"))
             else:
-                btn.clicked.connect(lambda _=False, k=key: self.navigate(k))
-                self.nav_group.addButton(btn)
-            self.nav_buttons[key] = btn
-            col.addWidget(btn)
-            if key == "orders":  # aviso con los pedidos que necesitan acción
-                inside = QHBoxLayout(btn)
-                inside.setContentsMargins(0, 0, 10, 0)
-                inside.addStretch(1)
-                self.orders_badge = label("", "NavBadge")
-                self.orders_badge.setVisible(False)
-                inside.addWidget(self.orders_badge)
-        col.addStretch(1)
+                nav_col.addSpacing(10)
+            for key in keys:
+                text, icon_name = entries[key]
+                nav_col.addWidget(self._nav_button(key, text, icon_name))
+        nav_col.addStretch(1)
+        col.addWidget(scroll, 1)
+        self._sidebar_footer(col)
+        return side
 
+    def _nav_button(self, key: str, text: str, icon_name: str) -> QPushButton:
+        """Una pestaña del menú lateral (las de siempre: mismo texto, icono y estilo)."""
+        btn = QPushButton(f"  {tr(text)}")
+        btn.setObjectName("NavButton")
+        btn.setCheckable(True)
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn.setIcon(icons.icon(icon_name, "#CBD5E1", 18))
+        btn.setIconSize(QSize(18, 18))
+        if key == "assistant":  # se queda marcada (con borde dorado) mientras el chat está abierto
+            btn.setProperty("toggle", True)
+            btn.clicked.connect(self.toggle_assistant)
+        else:
+            btn.clicked.connect(lambda _=False, k=key: self.navigate(k))
+            self.nav_group.addButton(btn)
+        self.nav_buttons[key] = btn
+        if key == "orders":  # aviso con los pedidos que necesitan acción
+            inside = QHBoxLayout(btn)
+            inside.setContentsMargins(0, 0, 10, 0)
+            inside.addStretch(1)
+            self.orders_badge = label("", "NavBadge")
+            self.orders_badge.setVisible(False)
+            inside.addWidget(self.orders_badge)
+        return btn
+
+    def _sidebar_footer(self, col: QVBoxLayout) -> None:
+        """Abajo del menú: aviso de versión nueva, estado de la impresión y versión."""
         self.update_pill = QPushButton("")
         self.update_pill.setCursor(Qt.CursorShape.PointingHandCursor)
         self.update_pill.setIcon(icons.icon("download", "#1E1B4B", 16))
@@ -191,7 +235,6 @@ class MainWindow(QMainWindow):
         col.addWidget(status)
         col.addSpacing(6)
         col.addWidget(label(f"v{__version__}", "BrandSub"))
-        return side
 
     def open_assistant(self, connect: bool = False, provider: str | None = None) -> None:
         """Muestra la ventana y abre el chat del asistente (con «Conecta tu IA» si se pide)."""
@@ -241,12 +284,16 @@ class MainWindow(QMainWindow):
         btn.setIcon(icons.icon("chat", "#FFFFFF" if is_open else "#CBD5E1", 18))
 
     def navigate(self, key: str) -> None:
+        """Abre una pantalla; «settings/label» abre también esa pestaña de Ajustes."""
+        key, _, tab = key.partition("/")
         if key == "assistant":  # el asistente no es una pantalla: se abre el chat flotante
             self.open_assistant()
             return
         page = self.pages.get(key)
         if page is None:
             return
+        if tab and hasattr(page, "show_tab"):
+            page.show_tab(tab)
         for name, btn in self.nav_buttons.items():
             if name == "assistant":  # su marca sigue al chat, no a la pantalla
                 continue
@@ -264,10 +311,13 @@ class MainWindow(QMainWindow):
             self.announce_update(data)
 
     # --- actualizaciones -------------------------------------------------------------------
-    def announce_update(self, info, prompt: bool = True) -> None:
+    def announce_update(self, info, prompt: bool = True, automatic: bool = True) -> None:
         self.pending_update = info
         self.update_pill.setText(tr("  Actualizar a la {0}", info.version))
         self.update_pill.setVisible(True)
+        if prompt and automatic and self.auto_updater.offer(info):  # «Actualizar sola»: sin preguntar
+            self.update_pill.setText(tr("  Actualizando a la {0}…", info.version))
+            return
         if not prompt or info.version in self._prompted_versions:
             return
         self._prompted_versions.add(info.version)

@@ -561,8 +561,12 @@ def main() -> None:
     window.navigate("settings")
     page = window.pages["settings"]
     pump(300)
+    page.show_tab("label")
+    pump(300)
     capture(window, [page.store_name, page.sender, page.save_btn], "sender.png", context=[page.show_price])
-    capture(window, [page.autostart], "daily.png", context=[page.agent, page.notify_printed])
+    page.show_tab("general")
+    pump(300)
+    capture(window, [page.autostart], "daily.png", context=[page.agent, page.keep_awake])
 
     window.navigate("shopify")
     page = window.pages["shopify"]

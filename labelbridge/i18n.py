@@ -134,3 +134,19 @@ def decimal(value: float, digits: int = 1) -> str:
 def N_(text: str) -> str:  # noqa: N802
     """Marca un texto fijo (constante de módulo) para traducirlo donde se muestra con tr(): aquí no lo cambia."""
     return text
+
+
+WEEKDAYS = (N_("lunes"), N_("martes"), N_("miércoles"), N_("jueves"), N_("viernes"), N_("sábado"), N_("domingo"))
+MONTHS = (N_("enero"), N_("febrero"), N_("marzo"), N_("abril"), N_("mayo"), N_("junio"), N_("julio"), N_("agosto"),
+          N_("septiembre"), N_("octubre"), N_("noviembre"), N_("diciembre"))
+
+
+def long_date(when=None) -> str:
+    """«domingo 5 de octubre» / «Sunday, October 5»."""
+    from datetime import datetime
+
+    if when is None:
+        when = datetime.now()
+    elif not isinstance(when, datetime):
+        when = datetime.fromtimestamp(float(when))
+    return tr("{0} {1} de {2}", tr(WEEKDAYS[when.weekday()]), when.day, tr(MONTHS[when.month - 1]))

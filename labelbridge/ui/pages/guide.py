@@ -182,7 +182,7 @@ STEPS: list[Step] = [
            "<li>Elige si quieres mostrar los productos, el QR del pedido y el total, y pulsa ③ <b>Guardar ajustes</b>.</li>"
            "</ol>"),
         _sender_ready,
-        [(N_("Ir a Ajustes"), "sliders", "nav:settings")],
+        [(N_("Ir a Ajustes"), "sliders", "nav:settings/label")],
         images=[("sender.png", N_("Ajustes → Etiqueta de pedido generada"))],
     ),
     Step(
@@ -275,31 +275,35 @@ STEPS: list[Step] = [
                "imprimir solo.</li>"
                "<li>Al cerrar la ventana la app <b>sigue funcionando</b> junto al reloj (① en la segunda imagen). Clic "
                "derecho → ② <i>Pausar impresión automática</i> si necesitas detenerla.</li>"
-               "<li>Deja el PC <b>encendido</b> y la impresora conectada. Si algo falla verás un aviso y la etiqueta se "
-               "reintenta sola.</li>"
+               "<li>Deja el PC <b>encendido</b> y la impresora conectada. LabelBridge no deja que se duerma solo mientras "
+               "está abierto (la pantalla sí se apaga) y, si alguien lo suspende, se pone al día al despertar. Si algo "
+               "falla verás un aviso y la etiqueta se reintenta sola.</li>"
                "<li><b>¿Otro PC?</b> Descarga el instalador desde la <b>página de descargas</b>, instálalo y haz los pasos "
                "1 a 3. Deja el conector Shopify activo <b>solo en un PC</b> (o reparte pedidos con el filtro por tag).</li>"
                "<li>Si Windows dice <i>«Windows protegió su PC»</i> al instalar: <b>Más información → Ejecutar de todas "
                "formas</b>.</li>"
-               "<li>Las <b>actualizaciones</b> llegan solas: la app te avisa y se actualiza con un clic.</li>"
+               "<li>Las <b>actualizaciones</b> se instalan solas cuando no está imprimiendo ni comprando guías (se puede "
+               "cambiar en Ajustes).</li>"
                "</ul>"),
             N_("<ul>"
                "<li>① <b>Abrir LabelBridge al iniciar sesión en la Mac</b> debe estar activado: si la Mac se reinicia, "
                "vuelve a imprimir sola.</li>"
                "<li>Al cerrar la ventana la app <b>sigue funcionando</b> con su icono en la barra de menús (① en la segunda "
                "imagen). Clic en el icono → ② <i>Pausar impresión automática</i> si necesitas detenerla.</li>"
-               "<li>Deja la Mac <b>encendida</b> (sin reposo) y la impresora conectada. Si algo falla verás un aviso y la "
-               "etiqueta se reintenta sola.</li>"
+               "<li>Deja la Mac <b>encendida</b> y la impresora conectada. LabelBridge no deja que se duerma sola mientras "
+               "está abierta (la pantalla sí se apaga) y, si alguien la suspende o cierra la tapa, se pone al día al "
+               "despertar. Si algo falla verás un aviso y la etiqueta se reintenta sola.</li>"
                "<li><b>¿Otro equipo?</b> Descarga LabelBridge desde la <b>página de descargas</b> y haz los pasos 1 a 3. "
                "Deja el conector Shopify activo <b>solo en un equipo</b> (o reparte pedidos con el filtro por tag).</li>"
                "<li>Si la Mac no deja abrirla la primera vez: <b>Ajustes del Sistema → Privacidad y seguridad → Abrir "
                "igualmente</b>.</li>"
-               "<li>Las <b>actualizaciones</b> llegan solas: la app te avisa y se actualiza con un clic.</li>"
+               "<li>Las <b>actualizaciones</b> se instalan solas cuando no está imprimiendo ni comprando guías (se puede "
+               "cambiar en Ajustes).</li>"
                "</ul>"),
         ),
         _daily,
         [
-            (N_("Ir a Ajustes"), "sliders", "nav:settings"),
+            (N_("Ir a Ajustes"), "sliders", "nav:settings/general"),
             (N_("Página de descargas"), "link", f"url:{UPDATES_PAGE}"),
             (N_("Entendido"), "check", "ack:daily"),
         ],

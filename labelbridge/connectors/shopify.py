@@ -163,6 +163,35 @@ mutation LabelBridgeTagsAdd($id: ID!, $tags: [String!]!) {
 }
 """
 
+# Preparar o deshacer la preparación de un pedido en Shopify (Pedidos → «Marcar preparado» / «Cancelar preparación»).
+FULFILLMENTS_QUERY = """
+query LabelBridgeFulfillments($id: ID!) {
+  order(id: $id) {
+    id name displayFulfillmentStatus
+    fulfillments(first: 20) { id status trackingInfo { company number } }
+    fulfillmentOrders(first: 10) { nodes { id status deliveryMethod { methodType } } }
+  }
+}
+"""
+
+FULFILL_MUTATION = """
+mutation LabelBridgeFulfill($fulfillment: FulfillmentInput!) {
+  fulfillmentCreate(fulfillment: $fulfillment) {
+    fulfillment { id status }
+    userErrors { field message }
+  }
+}
+"""
+
+CANCEL_FULFILLMENT_MUTATION = """
+mutation LabelBridgeCancelFulfillment($id: ID!) {
+  fulfillmentCancel(id: $id) {
+    fulfillment { id status }
+    userErrors { field message }
+  }
+}
+"""
+
 # De dónde sale y adónde va un pedido, para preguntar a Shopify qué servicios ofrece en ese envío.
 ROUTE_QUERY = """
 query LabelBridgeRoute($id: ID!) {
@@ -1311,6 +1340,57 @@ class ShopifyService(BackgroundService):
                 raise ShopifyError(tr("Ese pedido ya tiene una compra hecha, en curso o sin confirmar: revísalo en "
                                       "Shopify antes de comprar otra guía."))
             self._note(legacy, "manual", name=name, carrier=carrier, fetch=1)
+
+    def mark_fulfilled(self, legacy: str, name: str, notify: bool = False) -> int:
+        """«Marcar preparado en Shopify» sin guía (se envió de otra forma): sale de Pendientes y LabelBridge ya no le
+        compra guía. Nunca con una compra de guía en curso o sin confirmar. Devuelve cuántos envíos se prepararon."""
+        client = self.client()
+        gid = self.order_gid(legacy)
+        with self._cycle_lock:  # la compra automática no puede comprarle la guía a la vez
+            busy = any(str(info.get("order_id")) == str(legacy) for info in self._pending().values())
+            if busy or self.ledger(legacy).get("state") in ("purchasing", "uncertain"):
+                raise ShopifyError(tr("{0} tiene una compra de guía en curso o sin confirmar: revísala en Shopify "
+                                      "antes de cambiar su estado.", name))
+            order = (client.graphql(FULFILLMENTS_QUERY, {"id": gid}).get("order") or {})
+            open_fos = [fo for fo in (order.get("fulfillmentOrders") or {}).get("nodes") or []
+                        if fo.get("status") in ("OPEN", "IN_PROGRESS")]
+            if not open_fos:
+                raise ShopifyError(tr("{0} ya está preparado en Shopify.", name))
+            data = client.graphql(FULFILL_MUTATION, {"fulfillment": {
+                "lineItemsByFulfillmentOrder": [{"fulfillmentOrderId": fo["id"]} for fo in open_fos],
+                "notifyCustomer": bool(notify)}}, mutation=True)
+            errors = (data.get("fulfillmentCreate") or {}).get("userErrors") or []
+            if errors:
+                raise ShopifyError(tr("Shopify no lo marcó preparado: {0}", "; ".join(str(e.get("message")) for e in errors)))
+            # Cerradas, la compra automática ya no las toca; si se cancela la preparación vuelven a esperar su guía.
+            if self.ledger(legacy).get("state") in ACTION_STATES:
+                self._note(legacy, "resolved", name=name)
+        self.events.emit(ev.ORDERS, {"order": str(legacy), "state": "fulfilled"})
+        log.info("Shopify: %s marcado preparado a mano", name)
+        return len(open_fos)
+
+    def cancel_fulfillment(self, legacy: str, name: str) -> int:
+        """«Cancelar preparación»: el pedido vuelve a Pendientes. Si tiene una guía activa no se toca: anularla en
+        Shopify (eso devuelve el dinero y deshace la preparación). Devuelve cuántos envíos se cancelaron."""
+        client = self.client()
+        gid = self.order_gid(legacy)
+        active = [label_id for label_id, entry in client.order_labels(gid).items() if not entry.get("voided")]
+        if active:
+            raise ShopifyError(tr("{0} tiene una guía activa: anúlala en Shopify («Anular etiqueta») y la preparación "
+                                  "se cancela con ella, y Shopify te devuelve el dinero de la guía.", name))
+        order = (client.graphql(FULFILLMENTS_QUERY, {"id": gid}).get("order") or {})
+        done = [f for f in order.get("fulfillments") or [] if f.get("status") == "SUCCESS"]
+        if not done:
+            raise ShopifyError(tr("{0} no está preparado en Shopify.", name))
+        for fulfillment in done:
+            data = client.graphql(CANCEL_FULFILLMENT_MUTATION, {"id": fulfillment["id"]}, mutation=True)
+            errors = (data.get("fulfillmentCancel") or {}).get("userErrors") or []
+            if errors:
+                raise ShopifyError(tr("Shopify no canceló la preparación: {0}",
+                                      "; ".join(str(e.get("message")) for e in errors)))
+        self.events.emit(ev.ORDERS, {"order": str(legacy), "state": "unfulfilled"})
+        log.info("Shopify: preparación de %s cancelada a mano", name)
+        return len(done)
 
     def collect_shopify_label(self, legacy: str, name: str) -> dict:
         """La guía que se compró en Shopify para este pedido (p. ej. FedEx): si ya está, se pone en la cola de impresión
