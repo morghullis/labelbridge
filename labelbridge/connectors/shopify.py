@@ -34,15 +34,18 @@ from ..security.policy import PolicyDenied
 from .base import BackgroundService
 from .shipping_services import AUTO, Route, is_domestic, offered_services, selection
 from .shopify_orders import MANUAL_TAG, ManualItem, ManualOrders, OrderDetail, ProductChoice, Recipient
+from .tracking import TRACKING_QUERY, Tracking, parse_tracking
 from .orders_overview import (
     ACTION_STATES,
     OVERVIEW_QUERY,
     OVERVIEW_QUERY_BASIC,
     OrderRow,
+    belongs,
     classify,
     friendly_reason,
     label_events,
     rule_for,
+    shipping_problem,
     subtotal_of,
 )
 
@@ -69,6 +72,7 @@ query LabelBridgeOrders($first: Int!, $after: String, $query: String!, $ns: Stri
       displayFulfillmentStatus
       tags
       note
+      requiresShipping
       totalPriceSet { shopMoney { amount currencyCode } }
       currentSubtotalPriceSet { shopMoney { amount } }
       shippingAddress {
@@ -743,6 +747,10 @@ class ShopifyService(BackgroundService):
             if self.ledger(legacy).get("state") in ACTION_STATES:
                 self._note(legacy, "resolved", name=name)  # cancelado: ya no hace falta la guía
             return 0
+        if shipping_problem(order):
+            # Sin envío o sin a quién y adónde mandarlo (retiro en tienda, venta en el local, un pedido de otro canal
+            # sin dirección…): LabelBridge no lo trata (ni aviso, ni etiquetas, ni guía).
+            return 0
         tags = [t.lower() for t in order.get("tags") or []]
         if s.required_tag.strip() and s.required_tag.strip().lower() not in tags:
             return 0
@@ -833,8 +841,10 @@ class ShopifyService(BackgroundService):
         rows = []
         for order in orders:
             legacy = str(order.get("legacyResourceId") or str(order.get("id", "")).rsplit("/", 1)[-1])
-            rows.append(classify(order, settings=s, ledger=ledgers.get(legacy), jobs=jobs.get(legacy), since=since, now=now,
-                                 limits=self.cfg.data.notifications))
+            row = classify(order, settings=s, ledger=ledgers.get(legacy), jobs=jobs.get(legacy), since=since, now=now,
+                           limits=self.cfg.data.notifications)
+            if belongs(row):  # solo pedidos que se envían, con a quién y adónde mandarlos
+                rows.append(row)
         return rows
 
     def check_deliveries(self, now: float | None = None) -> int:
@@ -888,6 +898,10 @@ class ShopifyService(BackgroundService):
         """Compra la guía de cada orden de preparación abierta. Con `options` la pidió una persona desde Pedidos
         (paquete, peso y aviso al cliente elegidos ahí; sin el límite diario de las compras automáticas)."""
         queued = 0
+        problem = shipping_problem(order)
+        if problem:  # nunca una guía sin sentido (sin envío o sin dirección): quien llama ya lo explica
+            log.warning("Shopify: %s no lleva guía: %s", meta.get("order_name"), problem)
+            return 0
         manual = options is not None
         if manual:
             package, weight, notify = options.get("package"), options.get("total_weight"), options.get("notify")
@@ -1010,6 +1024,9 @@ class ShopifyService(BackgroundService):
                 raise ShopifyError(tr("Shopify no encontró ese pedido."))
             if order.get("cancelledAt"):
                 raise ShopifyError(tr("Ese pedido está cancelado."))
+            problem = shipping_problem(order)
+            if problem:
+                raise ShopifyError(tr("{0} no puede llevar guía: {1}.", order.get("name") or legacy, problem))
             open_fos = [
                 fo for fo in client.fulfillment_orders(order["id"])
                 if fo.get("status") in ("OPEN", "IN_PROGRESS")
@@ -1249,6 +1266,13 @@ class ShopifyService(BackgroundService):
             raise ShopifyError(tr("No se pudo volver a poner la guía en la cola de impresión."))
         self.engine.wake()
         return queued
+
+    def tracking(self, legacy: str) -> Tracking:
+        """«Rastrear»: los envíos del pedido con su estado y los movimientos que informó la paquetería."""
+        order = self.client().graphql(TRACKING_QUERY, {"id": self.order_gid(legacy)}).get("order")
+        if not order:
+            raise ShopifyError(tr("Shopify no encontró ese pedido."))
+        return parse_tracking(order)
 
     def buy_in_shopify(self, legacy: str, name: str, carrier: str = "FedEx") -> None:
         """La persona eligió una paquetería que se compra en Shopify (FedEx): el pedido queda esperándola y, cuando

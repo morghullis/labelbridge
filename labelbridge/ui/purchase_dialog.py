@@ -348,7 +348,6 @@ class PurchaseDialog(QDialog):
         buttons.addWidget(self.buy_btn)
         layout.addLayout(buttons)
 
-        self.tracking_url = ""
         self.services.keep_fedex = in_shopify
         self.services.fill(ss.Route(domestic=_domestic(row)), prefer=ss.FEDEX if in_shopify else "")
         self._update()
@@ -470,7 +469,6 @@ class PurchaseDialog(QDialog):
                           what or tr("lista")), "Hint")
             self.cancel_btn.setText(tr("Cerrar"))
             self.problem_label.setVisible(False)
-            self.tracking_url = result.get("tracking_url") or ""
             self.track_btn.setVisible(bool(result.get("tracking")))
             self._update()
             return
@@ -508,11 +506,10 @@ class PurchaseDialog(QDialog):
         QDesktopServices.openUrl(QUrl(admin_url(self.ctx.cfg.data.shopify.shop, f"orders/{self.row.legacy}")))
 
     def _track(self) -> None:
-        url = self.tracking_url or next((u for _c, _n, u in self.row.tracking if u), "")
-        if url:
-            QDesktopServices.openUrl(QUrl(url))
-        else:
-            self._open_in_shopify()
+        """El seguimiento de la guía recién comprada, en una ventana de LabelBridge (no en la web)."""
+        from .tracking_dialog import open_tracking
+
+        open_tracking(self, self.ctx, self.row)
 
 
 def _domestic(row: OrderRow) -> bool:

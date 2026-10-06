@@ -9,7 +9,9 @@ import pytest
 
 from labelbridge.connectors.shopify import ShopifyError, ShopifyService
 
-ORDER = {"id": "gid://shopify/Order/1", "legacyResourceId": "1", "name": "#1001"}
+ORDER = {"id": "gid://shopify/Order/1", "legacyResourceId": "1", "name": "#1001",
+         "shippingAddress": {"name": "Ana López", "address1": "123 Main St", "city": "Miami", "provinceCode": "FL",
+                             "zip": "33101", "countryCodeV2": "US"}}
 
 
 def fo(number: int) -> dict:

@@ -741,10 +741,11 @@ class OrdersPage(Page):
             self._details(row)
         elif action in ("open", "void", "buy"):
             QDesktopServices.openUrl(QUrl(admin_url(shop, f"orders/{row.legacy}")))
-        elif action == "track":
-            url = next((u for _c, _n, u in row.tracking if u), "")
-            if url:
-                QDesktopServices.openUrl(QUrl(url))
+        elif action == "track":  # en una ventana de LabelBridge, sin ir a la web de la paquetería
+            if row.tracking:
+                from ..tracking_dialog import open_tracking
+
+                open_tracking(self, self.ctx, row)
             else:
                 info(self, tr("Rastrear"), tr("Este pedido todavía no tiene número de seguimiento."))
         elif action == "copy":

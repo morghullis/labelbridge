@@ -255,6 +255,35 @@ def visible_leftovers() -> list[str]:
             total=60.0, discounts=5.0, tracking=[("USPS", "9400", "https://t")], orders_count=3, spent=180.0,
             customer_since="2025-01-01T00:00:00Z", email="ana@example.com",
         )
+        # «Rastrear»: la ventana de seguimiento con un envío en camino y una guía anulada.
+        import time
+        from datetime import datetime, timezone
+
+        from labelbridge.connectors.tracking import parse_tracking
+        from labelbridge.ui.tracking_dialog import TrackingDialog
+
+        now = time.time()
+
+        def iso(ts: float) -> str:
+            return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        events = {"nodes": [
+            {"happenedAt": iso(now - 3600), "status": status, "message": "x", "city": "MIAMI", "province": "FL"}
+            for status in ("IN_TRANSIT", "CARRIER_PICKED_UP", "CONFIRMED", "LABEL_PURCHASED", "ATTEMPTED_DELIVERY")]}
+        tracking = parse_tracking({"name": "#1", "shippingAddress": {"city": "Miami", "provinceCode": "FL"}, "fulfillments": [
+            {"status": "SUCCESS", "createdAt": iso(now - 7200), "displayStatus": "IN_TRANSIT",
+             "estimatedDeliveryAt": iso(now + 86400), "trackingInfo": [{"company": "USPS", "number": "9400", "url": "u"},
+                                                                     {"company": "USPS", "number": "9401"}],
+             "events": events},
+            {"status": "CANCELLED", "createdAt": iso(now - 9000), "displayStatus": "LABEL_VOIDED",
+             "trackingInfo": [{"company": "USPS", "number": "9200"}], "events": {"nodes": []}},
+        ]})
+        track = TrackingDialog(window, window.ctx, rows[0], tracking)
+        track._show(tracking)
+        found += [f"[rastrear] {item}" for item in leftovers_in(track, translated)]
+        track._show(parse_tracking({"name": "#1", "fulfillments": []}))
+        found += [f"[rastrear] {item}" for item in leftovers_in(track, translated)]
+        track.close()
         view = OrderDialog(window, window.ctx, rows[0], orders.run_action, detail=detail)
         view._show(detail)
         found += [f"[ver pedido] {item}" for item in leftovers_in(view, translated)]

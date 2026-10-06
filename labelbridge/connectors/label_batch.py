@@ -42,6 +42,8 @@ def plan_for(row: OrderRow, *, batch: bool = False) -> tuple[str, str]:
         return SKIP, tr("Es de entrega local: no lleva guía de paquetería.")
     if row.kind == "none":
         return SKIP, tr("No lleva envío.")
+    if row.address_problem:  # nunca una guía sin sentido: sin a quién o adónde mandarlo
+        return SKIP, tr("No puede llevar guía: {0}.", row.address_problem)
     if row.shipped:
         if row.tracking:
             return SKIP, tr("Ya se envió con seguimiento {0}.", row.tracking[0][1])

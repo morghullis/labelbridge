@@ -272,7 +272,9 @@ def test_choosing_fedex_waits_for_shopify_and_prints_it_even_without_auto_buy(co
     assert service.ledger("3001")["state"] == "manual" and service.ledger("3001")["carrier"] == "FedEx"
     order = {"id": "gid://shopify/Order/3001", "legacyResourceId": "3001", "name": "#3001",
              "createdAt": "2020-01-01T00:00:00Z", "displayFinancialStatus": "PAID",
-             "displayFulfillmentStatus": "FULFILLED", "tags": [], "lineItems": {"nodes": []}}
+             "displayFulfillmentStatus": "FULFILLED", "tags": [], "lineItems": {"nodes": []},
+             "shippingAddress": {"name": "Ana", "address1": "1 Main St", "city": "Miami", "provinceCode": "FL",
+                                 "zip": "33101", "countryCodeV2": "US"}}
     service._process_order(object(), s, order, service.since_ts(), threading.Event())
     assert "3001" in service._to_fetch() and service.ledger("3001")["state"] == "resolved"
 
@@ -466,3 +468,82 @@ def test_bulk_dialog_buys_and_reprints_in_one_go(core, monkeypatch):
     assert "3 comprada(s)" in dialog.summary.text() and "US$15.75" in dialog.summary.text()
     assert dialog.table.item(1, 3).text().startswith("✓ USPS")
     dialog.close()
+
+
+# --- solo pedidos que se envían, con a quién y adónde mandarlos ----------------------------------------
+
+def test_only_orders_that_ship_to_a_full_address_can_take_a_label():
+    from labelbridge.connectors.orders_overview import shipping_problem
+
+    full = {"name": "Ana", "address1": "1 Main St", "city": "Miami", "provinceCode": "FL", "zip": "33101",
+            "countryCodeV2": "US"}
+    assert shipping_problem({"requiresShipping": True, "shippingAddress": full}) == ""
+    # Tal como llegan en una tienda real: retiro en tienda y venta en el local (sin dirección) y un pedido de Etsy.
+    assert "dirección" in shipping_problem({"requiresShipping": True, "shippingAddress": None})
+    assert shipping_problem({"requiresShipping": False, "shippingAddress": full}) == "no requiere envío"
+    assert "código postal" in shipping_problem({"shippingAddress": {**full, "zip": " "}})
+    assert "estado" in shipping_problem({"shippingAddress": {**full, "provinceCode": ""}})
+    assert "nombre" in shipping_problem({"shippingAddress": {**full, "name": ""}})
+    assert shipping_problem({"shippingAddress": {**full, "name": "", "company": "Joyería Oyá"}}) == ""
+    assert shipping_problem({"shippingAddress": {**full, "countryCodeV2": "PR", "provinceCode": "", "zip": "00623"}}) == ""
+    assert shipping_problem({"shippingAddress": {**full, "countryCodeV2": "HK", "provinceCode": "", "zip": ""}}) == ""
+
+
+def test_the_orders_tab_only_has_orders_that_ship(core, monkeypatch):
+    def node(number, **changes):
+        order = make_order(number, **{k: v for k, v in changes.items() if k in ("delivery", "cancelled", "labels")})
+        if "address" in changes:
+            order["shippingAddress"] = changes["address"]
+        return order
+
+    nodes = [
+        node(41),  # envío normal
+        node(42, delivery="PICK_UP", address=None),  # retiro en tienda
+        node(43, delivery="RETAIL", address=None),  # venta en el local
+        node(44, address=None),  # «envío» sin dirección (p. ej. un pedido de Etsy)
+        node(45, cancelled="2026-10-01T00:00:00Z"),  # cancelado sin guía
+        node(46, cancelled="2026-10-01T00:00:00Z", labels=(("9", "5,68"),)),  # cancelado con guía activa: anularla
+    ]
+
+    def fake(method, url, **kwargs):
+        if url.endswith("/admin/oauth/access_token"):
+            return net.Response(200, json.dumps({"access_token": "tok", "expires_in": 86399}).encode(), url)
+        body = {"data": {"orders": {"pageInfo": {"hasNextPage": False, "endCursor": None}, "nodes": nodes}}}
+        return net.Response(200, json.dumps(body).encode(), url)
+
+    monkeypatch.setattr("labelbridge.connectors.shopify.net.request", fake)
+    s = core.cfg.data.shopify
+    s.enabled, s.shop, s.client_id = True, "mi-tienda", "client-id"
+    core.secrets.set(SHOPIFY_CLIENT_SECRET, "secreto")
+    service = ShopifyService(core.cfg, core.secrets, core.store, core.engine, core.events)
+    rows = service.overview(days=30)
+    assert sorted(row.name for row in rows) == ["#41#", "#46#"]
+    assert next(row for row in rows if row.name == "#46#").action == "void"
+
+
+def test_no_label_is_ever_bought_without_an_address(store, core):
+    service, fake = store
+    original = fake.order
+
+    def without_address(number, created, **extra):
+        order = original(number, created, **extra)
+        order["shippingAddress"] = None  # como un pedido de otro canal sin dirección
+        return order
+
+    fake.order = without_address
+    with pytest.raises(ShopifyError, match="no puede llevar guía"):
+        service.buy_label_now("3001", wait=5)
+    s = core.cfg.data.shopify
+    s.print_order_label = True
+    service.reset_since(hours_back=1)
+    service.cycle(service.client(), s)
+    assert fake.purchases == [] and core.store.list() == []  # ni guía, ni etiqueta interna
+    assert not any(data.get("kind") == "new_order" for kind, data in core.received if kind == "notify")
+    plan, why = lb.plan_for(_no_address_row())
+    assert plan == lb.SKIP and "código postal" in why
+
+
+def _no_address_row():
+    order = make_order(48)
+    order["shippingAddress"] = {**order["shippingAddress"], "zip": ""}
+    return row_of(order)

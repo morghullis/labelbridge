@@ -194,17 +194,16 @@ class OrderDialog(QDialog):
             grid.addWidget(label(name, "Muted"), line, 0, alignment=Qt.AlignmentFlag.AlignTop)
             grid.addWidget(label(value, wrap=True, selectable=True), line, 1)
             line += 1
-        for company, number, url in d.tracking:
+        for company, number, _url in d.tracking:
             grid.addWidget(label(tr("Seguimiento"), "Muted"), line, 0)
             track = QHBoxLayout()
             track.addWidget(label(f"{company} {number}".strip(), selectable=True))
             copy = button("", "copy", "ghost", tr("Copiar el número de seguimiento"))
             copy.clicked.connect(lambda _=False, n=number: copy_to_clipboard(n))
             track.addWidget(copy)
-            if url:
-                open_btn = button(tr("Rastrear"), "truck", "ghost")
-                open_btn.clicked.connect(lambda _=False, u=url: QDesktopServices.openUrl(QUrl(u)))
-                track.addWidget(open_btn)
+            track_btn = button(tr("Rastrear"), "truck", "ghost")
+            track_btn.clicked.connect(self._track)  # en una ventana de LabelBridge, no en la web
+            track.addWidget(track_btn)
             track.addStretch(1)
             grid.addLayout(track, line, 1)
             line += 1
@@ -322,6 +321,11 @@ class OrderDialog(QDialog):
 
     def _open_in_shopify(self) -> None:
         QDesktopServices.openUrl(QUrl(admin_url(self.ctx.cfg.data.shopify.shop, f"orders/{self.row.legacy}")))
+
+    def _track(self) -> None:
+        from .tracking_dialog import open_tracking
+
+        open_tracking(self, self.ctx, self.row)
 
     def _action(self, action: str) -> None:
         if self.run_action is not None:

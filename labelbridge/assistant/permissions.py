@@ -15,7 +15,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..connectors.shipping_services import AUTO, service_name
+from ..connectors.shipping_services import AUTO as AUTO_SERVICE
+from ..connectors.shipping_services import service_name
 from ..i18n import N_, tr
 from ..system.platform import pick
 
@@ -184,7 +185,7 @@ def describe(name: str, args: dict) -> str:
     if name == "create_manual_order":
         return tr("Crear un pedido manual para {0} ({1}).", _value(args.get("name", "")), _value(args.get("city", "")))
     if name == "buy_shipping_label":
-        return tr("Comprar la guía del pedido {0} ({1}).", args.get("order"), service_name(args.get("service") or AUTO))
+        return tr("Comprar la guía del pedido {0} ({1}).", args.get("order"), service_name(args.get("service") or AUTO_SERVICE))
     return f"{name}:\n" + _fields(args)
 
 

@@ -28,9 +28,10 @@ query LabelBridgeOverview($first: Int!, $after: String, $query: String!) {
       displayFinancialStatus
       displayFulfillmentStatus
       tags
+      requiresShipping
       totalPriceSet { shopMoney { amount currencyCode } }
       currentSubtotalPriceSet { shopMoney { amount } }
-      shippingAddress { name city provinceCode countryCodeV2 }
+      shippingAddress { name company address1 city provinceCode zip countryCodeV2 }
       shippingLine { title }
       fulfillments(first: 5) {
         status createdAt displayStatus inTransitAt deliveredAt estimatedDeliveryAt
@@ -56,6 +57,14 @@ OVERVIEW_QUERY_BASIC = OVERVIEW_QUERY.replace(
 
 PAID_STATUSES = {"PAID", "PARTIALLY_REFUNDED", "AUTHORIZED"}
 REFUNDED_STATUSES = {"REFUNDED", "VOIDED"}
+# Países sin código postal (no se exige para que el pedido lleve guía) y países donde el estado es obligatorio.
+NO_POSTCODE = {
+    "AE", "AG", "AO", "AW", "BF", "BI", "BJ", "BO", "BS", "BW", "BZ", "CD", "CF", "CG", "CI", "CK", "CM", "DJ", "DM",
+    "ER", "FJ", "GA", "GD", "GH", "GM", "GQ", "GY", "HK", "IE", "JM", "KI", "KM", "KN", "KP", "LC", "ML", "MO", "MR",
+    "MS", "MW", "NR", "NU", "QA", "RW", "SB", "SC", "SL", "SO", "SR", "ST", "SY", "TF", "TK", "TL", "TO", "TT", "TV",
+    "TZ", "UG", "VU", "YE", "ZW",
+}
+NEEDS_PROVINCE = {"US", "CA", "MX", "AU"}
 # Lo que el registro de LabelBridge marca como pendiente de una persona (ver ShopifyService._note).
 ACTION_STATES = {"manual", "failed", "uncertain", "limit", "no_document"}
 WAIT_SECONDS = 600  # un pedido nuevo sin guía después de esto ya es raro
@@ -143,20 +152,45 @@ def delivery_text(row: "OrderRow") -> str:
     return text
 
 
+def shipping_problem(order: dict) -> str:
+    """Por qué un pedido no puede llevar guía de paquetería («» si puede): tiene que requerir envío y tener a quién y
+    adónde mandarlo. Así nunca se compra una guía sin sentido (retiro en tienda, venta en el local, un pedido de otro
+    canal sin dirección…). Los pedidos que no la cumplen no están en LabelBridge."""
+    if order.get("requiresShipping") is False:
+        return tr("no requiere envío")
+    address = order.get("shippingAddress") or {}
+    if not address:
+        return tr("no tiene dirección de envío")
+    name = " ".join(str(address.get(key) or "").strip() for key in ("firstName", "lastName")).strip()
+    if not (str(address.get("name") or "").strip() or name or str(address.get("company") or "").strip()):
+        return tr("falta el nombre de quien recibe")
+    if "address1" in address and not str(address.get("address1") or "").strip():
+        return tr("falta la dirección")
+    if not str(address.get("city") or "").strip():
+        return tr("falta la ciudad")
+    country = str(address.get("countryCodeV2") or "").strip().upper()
+    if not country:
+        return tr("falta el país")
+    if country in NEEDS_PROVINCE and not str(address.get("provinceCode") or address.get("province") or "").strip():
+        return tr("falta el estado")
+    if "zip" in address and country not in NO_POSTCODE and not str(address.get("zip") or "").strip():
+        return tr("falta el código postal")
+    return ""
+
+
 def friendly_reason(reason: str) -> str:
     """El motivo de Shopify con su código traducido («TOTAL_WEIGHT_ZERO …» → «Falta el peso del paquete»)."""
     text = (reason or "").strip()
     code = text.split(" ", 1)[0].strip(":;,.")
     return tr(PURCHASE_ERRORS[code]) if code in PURCHASE_ERRORS else text
 
-# Pestañas de la pantalla, en orden: (clave, título).
+# Pestañas de la pantalla, en orden: (clave, título). Solo hay pedidos que se envían (ver belongs).
 GROUPS = (
     ("action", N_("Necesitan acción")),
     ("delays", N_("Retrasos")),
     ("usps", N_("USPS")),
     ("fedex", N_("FedEx")),
     ("other", N_("Otras")),
-    ("pickup", N_("Retiro en tienda")),
     ("all", N_("Todos")),
 )
 
@@ -197,6 +231,7 @@ class OrderRow:
     alert_reason: str = ""
     waiting_days: int = 0  # días pagado y sin enviar (pedidos que necesitan acción)
     kind: str = "ship"  # ship | pickup | local | none (cómo se entrega)
+    address_problem: str = ""  # por qué no puede llevar guía (sin dirección, sin envío…); «» si puede
     country: str = ""  # país de destino (código de dos letras)
     shipped: bool = False  # Shopify ya lo marcó enviado (con o sin guía)
     paid: bool = True
@@ -385,6 +420,7 @@ def classify(
     row.shipped = shipped
     row.paid = (order.get("displayFinancialStatus") or "") in PAID_STATUSES
     row.country = str(address.get("countryCodeV2") or "")
+    row.address_problem = shipping_problem(order)
     row.printed, row.print_error = print_state(jobs or [])
     row.carrier = row.tracking[0][0] if row.tracking else ""
     _delivery(row, fulfillments, now or datetime.now().timestamp(), limits)
@@ -527,6 +563,12 @@ def classify(
         tr("Sigue sin guía: revisa que LabelBridge esté conectado a Shopify y pulsa «Imprimir guía»."),
         "retry",
     )
+
+
+def belongs(row: OrderRow) -> bool:
+    """Lo que está en LabelBridge: pedidos que se envían por paquetería con a quién y adónde mandarlos. Los cancelados
+    solo si todavía tienen una guía activa (para anularla y recuperar el dinero)."""
+    return row.kind == "ship" and not row.address_problem and row.state != "cancelled"
 
 
 @dataclass

@@ -57,6 +57,8 @@ Detalles de la compra automática:
 - Tiene un **límite diario** configurable y te avisa si se alcanza.
 - Shopify no permite comprar etiquetas de **FedEx** por API.
 - Desde **Pedidos → Imprimir guía** eliges el servicio (USPS Ground Advantage, Priority Mail, UPS Ground…) o dejas **Automático** (el que pagó el cliente o tu paquetería preferida en Shopify). Si Shopify no ofrece ese servicio para el envío, contesta `RATES_NOT_FOUND` y **no cobra nada**: elige otro. Con `read_shipping` la lista muestra solo lo que Shopify ofrece para ese envío.
+- LabelBridge solo trata pedidos que salen por paquetería con a quién y adónde mandarlos (nombre, dirección, ciudad, país, código postal y estado cuando corresponde): los de retiro en tienda, las ventas en el local y los pedidos de otros canales sin dirección (p. ej. de Etsy) no aparecen en Pedidos y nunca se les compra guía.
+- **Rastrear** muestra el seguimiento en una ventana de LabelBridge con los movimientos que Shopify recibe de la paquetería.
 - Con varios pedidos elegidos, **Imprimir N guías** reimprime los que ya tienen guía y compra los demás con una sola confirmación (hasta 25 por tanda).
 - Actívala **en un solo equipo**, y no la combines con la plantilla `02` de n8n: cada pedido se compraría dos veces.
 

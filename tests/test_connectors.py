@@ -89,7 +89,8 @@ class FakeShopify:
             "displayFinancialStatus": "PAID",
             "displayFulfillmentStatus": "UNFULFILLED",
             "tags": [],
-            "shippingAddress": {"name": "Cliente", "address1": "Calle 1", "city": "CDMX", "zip": "01000"},
+            "shippingAddress": {"name": "Cliente", "address1": "Calle 1", "city": "CDMX", "provinceCode": "CMX",
+                                "zip": "01000", "countryCodeV2": "MX"},
             "lineItems": {"nodes": [{"name": "Producto", "sku": "P1", "quantity": 1}]},
             "metafield": None,
         }
