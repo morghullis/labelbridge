@@ -14,6 +14,7 @@ from datetime import datetime
 from typing import Any
 
 from ..i18n import N_, date_text, tr
+from .shopify_orders import MANUAL_TAG
 
 OVERVIEW_QUERY = """
 query LabelBridgeOverview($first: Int!, $after: String, $query: String!) {
@@ -70,6 +71,8 @@ NEEDS_PROVINCE = {"US", "CA", "MX", "AU"}
 ACTION_STATES = {"manual", "failed", "uncertain", "limit", "no_document", "flow"}
 WAIT_SECONDS = 600  # un pedido nuevo sin guía después de esto ya es raro
 FLOW_WAIT_SECONDS = 15 * 60  # lo que se le da a Shopify Flow para comprar la FedEx antes de pedírsela a una persona
+# Retenido o programado en Shopify: no se puede preparar (ni comprarle guía) hasta que se libere.
+HELD_FULFILLMENT = {"ON_HOLD", "SCHEDULED"}
 TEST_TAGS = ("prueba", "test")
 
 # Por qué Shopify no compró una guía (código de su respuesta → en palabras de cualquiera).
@@ -319,11 +322,27 @@ def subtotal_of(order: dict) -> float:
         return 0.0
 
 
-def flow_buys(settings, rule) -> bool:
-    """La guía de este pedido la compra Shopify Flow sola: la regla manda FedEx y en Reglas de paquetería se eligió que
-    la compre Flow (un flujo de la tienda; Shopify no deja comprar FedEx por la API)."""
-    return (bool(getattr(settings, "fedex_by_flow", False)) and rule is not None and not rule.auto
-            and "fedex" in str(getattr(rule, "carrier", "") or "").lower())
+def flow_rule(settings):
+    """La regla que copia el flujo de Shopify Flow (Reglas de paquetería → «Shopify Flow, automáticamente»): la primera
+    regla de FedEx con alguna condición (una regla vacía no decide nada y un flujo sin condición compraría FedEx para
+    todos los pedidos). None si la FedEx no la compra Flow."""
+    if not getattr(settings, "fedex_by_flow", False):
+        return None
+    for rule in getattr(settings, "shipping_rules", None) or []:
+        has_condition = bool((getattr(rule, "method", "") or "").strip()) or float(getattr(rule, "over", 0) or 0) > 0
+        if "fedex" in str(getattr(rule, "carrier", "") or "").lower() and not rule.auto and has_condition:
+            return rule
+    return None
+
+
+def flow_buys(settings, method: str, subtotal: float, financial: str = "PAID", manual: bool = False) -> bool:
+    """La guía de este pedido la compra Shopify Flow: cumple la regla del flujo y está pagado del todo, como pide el
+    flujo (PAID; no es un pedido manual de LabelBridge). Va antes que las demás reglas, porque Flow no sabe en qué orden
+    las aplica LabelBridge: si el pedido cumple su regla, Flow compra la FedEx aunque otra regla anterior dijera otra
+    paquetería, y LabelBridge no le compra otra guía."""
+    rule = flow_rule(settings)
+    return (rule is not None and not manual and financial == "PAID"
+            and rule_for([rule], method, subtotal) is rule)
 
 
 def rule_text(rule) -> str:
@@ -450,6 +469,10 @@ def classify(
         kind = "none"
     row.kind = kind
     rule = rule_for(getattr(settings, "shipping_rules", []), method, row.subtotal)
+    flow = flow_buys(settings, method, row.subtotal, order.get("displayFinancialStatus") or "",
+                     manual=MANUAL_TAG.lower() in tags)
+    if flow:  # Shopify Flow compra la FedEx de este pedido, aunque otra regla anterior dijera otra paquetería
+        rule = flow_rule(settings)
     row.rule_carrier = rule.carrier if rule else getattr(settings, "default_carrier", "USPS")
     if kind == "ship":
         row.carrier = row.tracking[0][0] if row.tracking else (ledger.get("carrier") or row.rule_carrier)
@@ -548,9 +571,11 @@ def classify(
         )
     # Shopify Flow la está comprando (FedEx): nada que hacer todavía, y nunca un botón para comprar otra.
     current = now or datetime.now().timestamp()
-    if state == "flow" or (not state and flow_buys(s, rule) and created >= since
-                           and current - created < FLOW_WAIT_SECONDS):
+    if state == "flow" or (not state and flow and created >= since and current - created < FLOW_WAIT_SECONDS):
         row.issue = "flow"
+        if (order.get("displayFulfillmentStatus") or "") in HELD_FULFILLMENT:
+            return keep("waiting", tr("Retenido en Shopify: Shopify Flow comprará la guía {0} al liberarlo",
+                                      row.carrier or "FedEx"))
         return keep("waiting", tr("Shopify Flow está comprando la guía {0}…", row.carrier or "FedEx"))
     if (rule is not None and not rule.auto) or state == "manual":
         carrier = row.carrier or tr("Esta paquetería")

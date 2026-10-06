@@ -13,7 +13,7 @@ from PySide6.QtCore import Qt, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QDialog, QFrame, QGridLayout, QHBoxLayout, QVBoxLayout, QWidget
 
-from ..connectors.orders_overview import FLOW_WAIT_SECONDS, rule_text
+from ..connectors.orders_overview import FLOW_WAIT_SECONDS, flow_rule, rule_text
 from ..connectors.shopify import admin_url
 from ..connectors.shopify_orders import MANUAL_TAG
 from ..i18n import tr
@@ -21,9 +21,13 @@ from .widgets import button, copy_to_clipboard, fit_height, label, step_title
 
 
 def fedex_rule(rules) -> object | None:
-    """La regla de paquetería que manda FedEx (la que el flujo tiene que copiar), si hay."""
-    return next((rule for rule in rules or [] if "fedex" in str(getattr(rule, "carrier", "")).lower()
-                 and not getattr(rule, "auto", True)), None)
+    """La regla que el flujo tiene que copiar: la primera de FedEx con alguna condición (la misma que usa LabelBridge,
+    orders_overview.flow_rule). Sin ella no hay flujo posible: compraría FedEx para todos los pedidos."""
+    class _Settings:
+        fedex_by_flow = True
+        shipping_rules = rules
+
+    return flow_rule(_Settings())
 
 
 def flow_conditions(rule) -> list[tuple[str, str, str]]:
@@ -83,7 +87,16 @@ class FlowSetupDialog(QDialog):
 
         # 3 · Condición
         layout.addWidget(step_title(3, tr("Condición: agrega estas, unidas con «Y»")))
-        layout.addLayout(self._conditions(flow_conditions(rule)))
+        if rule is None:  # nunca un flujo sin condición: compraría FedEx para todos los pedidos
+            missing = label(tr("Falta la regla de FedEx: en Reglas de paquetería agrega una regla de FedEx con un valor "
+                               "(p. ej. piezas de más de US$1000) o un método de envío."), "Warning", wrap=True)
+            missing.setContentsMargins(34, 0, 0, 0)
+            layout.addWidget(missing)
+        else:
+            layout.addLayout(self._conditions(flow_conditions(rule)))
+            layout.addWidget(self._hint(tr("Con Shopify Flow, esta regla de FedEx va antes que las demás: Flow compra la "
+                                           "FedEx de todo pedido que la cumpla. Si tienes otra regla de FedEx, esa se "
+                                           "compra con la ventana «Guía FedEx».")))
 
         # 4 · Acción
         layout.addWidget(step_title(4, tr("Entonces: acción «Purchase shipping label»")))

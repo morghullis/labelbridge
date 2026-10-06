@@ -350,6 +350,16 @@ class ShippingRulesDialog(QDialog):
         super().showEvent(event)
         QTimer.singleShot(0, lambda: fit_height(self))
 
+    def accept(self) -> None:
+        from ..flow_setup_dialog import fedex_rule
+
+        if self.fedex_flow.currentData() and fedex_rule(self.rules()) is None:
+            error(self, tr("Reglas de paquetería"), tr(
+                "Para que Shopify Flow compre la FedEx hace falta una regla de FedEx con un valor (p. ej. piezas de más "
+                "de US$1000) o un método de envío. Sin ella, el flujo compraría FedEx para todos los pedidos."))
+            return
+        super().accept()
+
     def _fedex_mode(self) -> None:
         """Con Shopify Flow no hay firma ni seguro (Flow no los ofrece): solo cuenta el servicio."""
         flow = bool(self.fedex_flow.currentData())

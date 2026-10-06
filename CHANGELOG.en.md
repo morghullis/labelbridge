@@ -6,7 +6,7 @@ English version of [CHANGELOG.md](CHANGELOG.md). Each published version shows th
 
 - **Shopify Flow buys the FedEx label by itself.** In Orders → **Carrier rules** you choose who buys FedEx: **Shopify Flow, automatically**, or you, with the “FedEx label” window (as until now). With Flow, a workflow in your store buys the FedEx label as soon as the order comes in and LabelBridge does the rest: it doesn't ask you to buy it, it prints it as soon as it shows up and, if Shopify doesn't give it the PDF, it opens the order in Shopify so you click “Print label” (and stops asking once Shopify marks it printed). If Flow hasn't bought it within 15 minutes, it lets you know and the order moves to “Need action” with **Buy FedEx label**.
 - **How to set up the workflow, step by step:** when you choose Shopify Flow, LabelBridge shows you the trigger, the conditions (with your FedEx rule's value and copy buttons) and the action, with a button to open Flow. Flow doesn't offer a signature or extra insurance: if you need them, keep using the “FedEx label” window.
-- While Flow is buying a label, that order offers no buttons to buy another one (not even in **Print N labels**), so you never pay twice.
+- While Flow is buying a label, that order offers no buttons to buy another one (not in **Print N labels** or through the assistant either), so you never pay twice. With Flow, the FedEx rule comes before the others (as in the workflow), it only applies to fully paid orders and, if the order is on hold in Shopify, Flow buys it when it's released.
 
 ## 1.13.0
 

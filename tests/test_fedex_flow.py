@@ -4,8 +4,11 @@ hacía la PC con el sistema de la web) y avisa si Flow no la compró."""
 
 from __future__ import annotations
 
+import json
 import threading
 import time
+
+import pytest
 
 from PySide6.QtWidgets import QDialog, QLabel, QPushButton
 from test_orders import NOW, SINCE, _ui_context, make_order, row_of, settings
@@ -24,6 +27,18 @@ class FlowShopify(LabelsInShopify):
     def __init__(self, labels: dict | None = None, *, pdf: bool = True, status: str = "UNFULFILLED") -> None:
         super().__init__(labels or {})
         self.pdf, self.status, self.printed = pdf, status, False
+        self.financial, self.cancelled, self.failing, self.asked = "PAID", None, set(), []
+
+    def order(self, legacy, _namespace="", _key=""):
+        """El pedido como lo lee el ciclo (read_orders): estado, pago y si se canceló."""
+        self.asked.append(str(legacy))
+        if str(legacy) in self.failing:
+            from labelbridge.connectors.shopify import ShopifyError
+
+            raise ShopifyError("Shopify no contestó")
+        order = make_order(int(legacy), subtotal=1500, fulfillment=self.status, financial=self.financial,
+                           cancelled=self.cancelled)
+        return order
 
     def shipping_label(self, label_id):
         label = super().shipping_label(label_id)
@@ -33,9 +48,8 @@ class FlowShopify(LabelsInShopify):
 
     def graphql(self, query, variables=None, **_kwargs):
         if "LabelBridgeLabelPrinted" in query:
+            self.asked.append(variables["id"])
             return {"shippingLabel": {"id": variables["id"], "printed": self.printed}}
-        if "LabelBridgeFulfillments" in query:
-            return {"order": {"id": variables["id"], "displayFulfillmentStatus": self.status}}
         raise AssertionError(query)
 
 
@@ -125,11 +139,36 @@ def test_if_flow_does_not_buy_it_a_person_is_asked_after_15_minutes(core):
     assert notice["title"] == "Pedido #94#: Shopify Flow no compró la FedEx" and notice["kind"] == "action"
     row = row_of(make_order(94, subtotal=1500), settings=settings(fedex_by_flow=True), ledger=entry)
     assert row.action == "buy" and row.reason.startswith("Shopify Flow no la compró en 15 min.")
-    # Flow sí la compró, pero la vuelta no lo vio: se trae igual.
+    # Flow sí la compró (también si el pedido sigue «parcialmente preparado» porque otra parte se retira en tienda):
+    # se trae igual, sin aviso.
     service._note("95", "flow", name="#95#", carrier="FedEx", fetch=1, created=time.time() - FLOW_WAIT_SECONDS - 5)
-    shopify.status = "FULFILLED"
+    shopify.status, shopify.labels = "PARTIALLY_FULFILLED", {"7005": {"voided": False, "at": NOW}}
+    told = len(_notices(seen))
     service._check_flow_waits(shopify)
     assert service.ledger("95")["state"] == "resolved" and service._to_fetch()["95"]["flow"] == 1
+    assert len(_notices(seen)) == told
+
+
+def test_the_flow_watch_survives_errors_holds_and_refunds(core):
+    shopify = FlowShopify()
+    service, _bought, seen = _service(core, shopify)
+    old = time.time() - FLOW_WAIT_SECONDS - 60
+    for number in range(201, 213):  # 12 pedidos esperando: se revisan de a 10, el que falla no traba a los demás
+        service._note(str(number), "flow", name=f"#{number}#", carrier="FedEx", fetch=1, created=old + number - 200)
+    shopify.failing = {"201"}
+    shopify.status = "ON_HOLD"  # retenidos: Flow la compra al liberarlos y la cuenta vuelve a empezar
+    service._check_flow_waits(shopify)
+    assert shopify.asked == [str(n) for n in range(201, 211)]
+    assert service.ledger("201")["state"] == "flow" and time.time() - service.ledger("201")["created"] < 5
+    assert all(service.ledger(str(n))["state"] == "flow" for n in range(202, 211)) and _notices(seen) == []
+    shopify.asked.clear()
+    service._check_flow_waits(shopify)
+    assert shopify.asked == ["211", "212"]  # los que faltaban, no los mismos 10 de antes
+    # Reembolsado mientras se esperaba: ya no lleva guía ni aviso.
+    service._note("213", "flow", name="#213#", carrier="FedEx", fetch=1, created=old)
+    shopify.status, shopify.financial = "UNFULFILLED", "REFUNDED"
+    service._check_flow_waits(shopify)
+    assert service.ledger("213")["state"] == "resolved" and _notices(seen) == []
 
 
 def test_flow_fedex_works_even_with_labelbridge_auto_buy_off(core):
@@ -224,3 +263,109 @@ def test_the_tray_only_opens_shopify_admin_pages(core, monkeypatch):
     tray._on_event("open_url", {"url": "https://admin.shopify.com/store/demo/orders/93"})
     tray._on_event("open_url", {"url": "https://evil.example.com/phish"})
     assert opened == ["https://admin.shopify.com/store/demo/orders/93"]
+
+
+def test_the_flow_rule_goes_first_so_labelbridge_never_buys_another_label(core):
+    shopify = FlowShopify()
+    service, bought, _seen = _service(core, shopify)
+    s = core.cfg.data.shopify
+    s.shipping_rules = [ShippingRule("Express", "USPS", True, 0.0), ShippingRule("", "FedEx", False, 1000.0)]
+    express = make_order(301, subtotal=1500, method="Priority Express")  # cumple las dos: Flow compra la FedEx
+    _process(service, shopify, express)
+    assert service.ledger("301")["state"] == "flow" and bought == []
+    flow = settings(fedex_by_flow=True, shipping_rules=s.shipping_rules)
+    row = row_of(express, settings=flow, ledger=service.ledger("301"))
+    assert row.issue == "flow" and row.rule_carrier == "FedEx"
+    assert row_of(make_order(301, subtotal=1500, method="Priority Express", created=NOW - 60), settings=flow).issue \
+        == "flow"  # recién llegado y sin anotar todavía: tampoco ofrece comprar otra
+    _process(service, shopify, make_order(302, subtotal=200, method="Priority Express"))  # solo la de USPS
+    assert len(bought) == 1
+
+
+def test_without_a_fedex_rule_flow_never_takes_over(core):
+    shopify = FlowShopify()
+    service, bought, _seen = _service(core, shopify)
+    core.cfg.data.shopify.shipping_rules = [ShippingRule("", "FedEx", False, 0.0)]  # vacía: no decide nada
+    _process(service, shopify, make_order(303, subtotal=5000))
+    assert len(bought) == 1 and service.ledger("303") == {}  # la compra automática de siempre
+
+
+def test_a_fedex_order_not_fully_paid_goes_to_a_person_right_away(core):
+    shopify = FlowShopify()
+    service, bought, seen = _service(core, shopify)
+    _process(service, shopify, make_order(304, subtotal=1500, financial="AUTHORIZED"))  # el flujo pide PAID
+    assert service.ledger("304")["state"] == "manual" and bought == []
+    assert "compra la guía de FedEx" in _notices(seen)[-1]["title"]
+
+
+def test_nothing_can_buy_a_label_while_flow_is_buying(core):
+    from labelbridge.connectors.shopify import ShopifyError
+
+    shopify = FlowShopify()
+    service, bought, _seen = _service(core, shopify)
+    fresh = time.time() - 30
+    shopify.order = lambda legacy, *_args: make_order(int(legacy), subtotal=1500, created=fresh)
+    with pytest.raises(ShopifyError, match="Shopify Flow está comprando"):  # la vuelta todavía no lo vio
+        service.buy_label_now("305")
+    service._note("306", "flow", name="#306#", carrier="FedEx", fetch=1, created=fresh)
+    with pytest.raises(ShopifyError, match="Shopify Flow está comprando"):
+        service.buy_label_now("306")
+    with pytest.raises(ShopifyError, match="Shopify Flow está comprando"):
+        service.buy_in_shopify("306", "#306#")
+    assert bought == []
+
+
+def test_a_label_without_pdf_is_announced_once_and_keeps_waiting_for_the_print(core):
+    shopify = FlowShopify({"7006": {"voided": False, "at": NOW}}, pdf=False)
+    service, _bought, seen = _service(core, shopify)
+    done = make_order(307, subtotal=1500, fulfillment="FULFILLED", labels=(("7006", 31.5),))
+    for _ in range(4):  # en una tienda tranquila el último pedido vuelve en cada vuelta
+        _process(service, shopify, done)
+        service._fetch_bought_labels(shopify)
+    assert [kind for kind, _data in seen].count(ev.OPEN_URL) == 1 and len(_notices(seen)) == 1
+    assert service.ledger("307")["state"] == "no_document" and service.ledger("307")["flow"] == 1
+    assert "307" not in service._to_fetch()
+
+
+def test_an_order_on_hold_waits_for_flow_until_it_is_released(core):
+    shopify = FlowShopify({"7007": {"voided": False, "at": NOW}})
+    service, bought, _seen = _service(core, shopify)
+    _process(service, shopify, make_order(308, subtotal=1500, fulfillment="ON_HOLD"))
+    entry = service.ledger("308")
+    assert entry["state"] == "flow" and "308" not in service._to_fetch()
+    assert row_of(make_order(308, subtotal=1500, fulfillment="ON_HOLD"), settings=settings(fedex_by_flow=True),
+                  ledger=entry).status == "Retenido en Shopify: Shopify Flow comprará la guía FedEx al liberarlo"
+    _process(service, shopify, make_order(308, subtotal=1500, fulfillment="FULFILLED", labels=(("7007", 31.5),)))
+    assert service._fetch_bought_labels(shopify) == 1 and bought == []
+
+
+def test_printed_checks_rotate_beyond_ten_orders(core):
+    shopify = FlowShopify({"7008": {"voided": False, "at": NOW}})
+    service, _bought, _seen = _service(core, shopify)
+    for number in range(401, 413):
+        service._note(str(number), "no_document", name=f"#{number}#", flow=1)
+    service._check_flow_prints(shopify)
+    first = {asked.rsplit("/", 1)[-1] for asked in shopify.asked}
+    assert len(shopify.asked) == 10 and first == {"7008"}
+    shopify.asked.clear()
+    core.store.kv_set(service._key("flow_prints_at"), "0")
+    checked_before = json.loads(core.store.kv_get(service._key("flow_prints")))
+    service._check_flow_prints(shopify)
+    checked = json.loads(core.store.kv_get(service._key("flow_prints")))
+    assert {"411", "412"} - set(checked_before) == {"411", "412"} and {"411", "412"} <= set(checked)
+
+
+def test_rules_refuse_flow_without_a_fedex_rule(core, monkeypatch):
+    from labelbridge.ui import flow_setup_dialog as fsd
+    from labelbridge.ui.pages import orders as orders_page
+
+    errors: list = []
+    monkeypatch.setattr(orders_page, "error", lambda parent, title, text: errors.append(text))
+    rules = orders_page.ShippingRulesDialog(None, [], "USPS", by_flow=True, shop="demo.myshopify.com")
+    rules.accept()
+    assert errors and "regla de FedEx" in errors[0] and rules.result() != QDialog.DialogCode.Accepted
+    rules.close()
+    dialog = fsd.FlowSetupDialog(None, "demo.myshopify.com", None, "FedEx 2Day®")
+    texts = " ".join(item.text() for item in dialog.findChildren(QLabel))
+    assert "Falta la regla de FedEx" in texts and "fulfillmentOrder / order / tags" not in texts
+    dialog.close()
