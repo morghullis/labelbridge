@@ -2,8 +2,9 @@
 
 Cada pedido se reimprime (ya tiene guía), se compra e imprime con lo elegido (servicio, caja y aviso al cliente), se
 compra en Shopify (FedEx: LabelBridge la imprime sola al verla) o se omite con el porqué (retiro en tienda, cancelado,
-ya enviado…). Con varios, todo va con una sola confirmación, de uno en uno y con un tope por tanda. Aquí, sin
-pantalla, para poder probarlo.
+ya enviado, la compra automática lo está comprando…). Con varios, todo va con una sola confirmación, de uno en uno y
+con un tope por tanda. Cada compra toma el candado del ciclo automático: nunca se compra el mismo pedido dos veces.
+Aquí, sin pantalla, para poder probarlo.
 """
 
 from __future__ import annotations
@@ -50,6 +51,8 @@ def plan_for(row: OrderRow, *, batch: bool = False) -> tuple[str, str]:
         return SKIP, tr("Shopify ya lo marcó como enviado.")
     if row.issue in ("purchasing", "uncertain"):
         return SKIP, tr("Tiene una compra en curso o sin confirmar: revísala en Shopify antes de comprar otra.")
+    if row.issue == "auto":
+        return SKIP, tr("La compra automática la está comprando en este momento.")
     if row.action == "buy":  # FedEx (o una regla «en Shopify»): no se puede comprar por la API
         carrier = row.carrier or row.rule_carrier or "FedEx"
         return IN_SHOPIFY, tr("{0} se compra en Shopify (1 clic) y LabelBridge la imprime sola.", carrier)
@@ -98,8 +101,8 @@ def run_batch(
     shopify, items: list[BatchItem], options: BatchOptions, *,
     progress: Callable[[int, BatchItem], None] | None = None, stop: threading.Event | None = None,
 ) -> BatchSummary:
-    """Hace cada uno en orden (la compra automática espera mientras tanto). Una falla no frena a los demás: cada
-    pedido es independiente y una compra sin confirmar nunca se repite sola."""
+    """Hace cada uno en orden. Una falla no frena a los demás: cada pedido es independiente y una compra sin
+    confirmar nunca se repite sola. Si la compra automática se adelantó con uno, ese queda omitido (no fallido)."""
     from .shopify import ShopifyError
 
     summary = BatchSummary()
@@ -111,6 +114,11 @@ def run_batch(
             summary.stopped = True
             break
         if item.plan not in (REPRINT, BUY):
+            if item.plan == IN_SHOPIFY:  # que LabelBridge la imprima sola cuando se compre en Shopify
+                try:
+                    shopify.buy_in_shopify(item.row.legacy, item.row.name, item.row.carrier or item.row.rule_carrier)
+                except Exception as exc:  # ya tiene una compra o no se pudo marcar: solo se informa
+                    log.info("Imprimir guías: %s no quedó esperando su guía de Shopify: %s", item.row.name, exc)
             item.state, item.detail = "skipped", item.why
             summary.skipped += 1
             report(index, item)
@@ -125,8 +133,13 @@ def run_batch(
             else:
                 _buy(shopify, item, options, summary)
         except (ShopifyError, net.NetworkError, net.HttpError) as exc:
-            item.state, item.detail = "failed", str(exc)
-            summary.failed += 1
+            ahead = _bought_meanwhile(shopify, item.row.legacy) if item.plan == BUY else ""
+            if ahead:  # la compra automática se adelantó: no es un error
+                item.state, item.detail = "skipped", ahead
+                summary.skipped += 1
+            else:
+                item.state, item.detail = "failed", str(exc)
+                summary.failed += 1
         except Exception as exc:  # cualquier otro fallo: se informa y sigue con el siguiente pedido
             log.exception("Imprimir guías: fallo inesperado con %s", item.row.name)
             item.state, item.detail = "failed", str(exc)
@@ -136,6 +149,17 @@ def run_batch(
         report(index, item)
     summary.cost = round(sum(item.cost for item in items), 2)
     return summary
+
+
+def _bought_meanwhile(shopify, legacy: str) -> str:
+    """Si la compra automática compró (o está comprando) ese pedido mientras la tanda avanzaba."""
+    ledger = getattr(shopify, "ledger", None)
+    state = (ledger(legacy) or {}).get("state") if callable(ledger) else None
+    if state == "purchased":
+        return tr("La compra automática la compró mientras tanto.")
+    if state == "purchasing":
+        return tr("La compra automática la está comprando.")
+    return ""
 
 
 def _buy(shopify, item: BatchItem, options: BatchOptions, summary: BatchSummary) -> None:

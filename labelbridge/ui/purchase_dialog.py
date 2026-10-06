@@ -227,13 +227,23 @@ class ServicePicker(QObject):
                 self.combo.insertSeparator(self.combo.count())
                 carrier = service.carrier
             self.combo.addItem(service.label, service.key)
-        if self.with_fedex and (route is None or route.fedex or self.keep_fedex):
+        if self.with_fedex and (route is None or route.fedex or self.keep_fedex or current == ss.FEDEX):
             self.combo.insertSeparator(self.combo.count())
             self.combo.addItem(tr("FedEx · se compra en Shopify"), ss.FEDEX)
+        chosen = ss.by_key(current)
+        if self.combo.findData(current) < 0 and chosen is not None:
+            # Lo que eligió la persona nunca cambia solo: se queda, avisando que Shopify no lo ofrece aquí.
+            self.combo.insertSeparator(self.combo.count())
+            self.combo.addItem(tr("{0} · no disponible para este envío", chosen.name), current)
         index = self.combo.findData(current)
-        self.combo.setCurrentIndex(index if index >= 0 else 0)
+        self.combo.setCurrentIndex(max(index, 0))
         self.combo.blockSignals(False)
         self._changed()
+
+    def available(self) -> bool:
+        """Si se puede comprar con lo elegido: Automático y FedEx siempre; un servicio, si Shopify lo ofrece aquí."""
+        service = ss.by_key(self.key())
+        return service is None or self.route is None or self.route.allows(service)
 
     def set_loading(self, loading: bool) -> None:
         self.loading = loading
@@ -245,6 +255,8 @@ class ServicePicker(QObject):
         if key == ss.FEDEX:
             text = tr("Shopify no deja que ninguna app compre FedEx: se compra en el pedido en Shopify (1 clic) y "
                       "LabelBridge la imprime sola en cuanto la ve.")
+        elif service is not None and not self.available():
+            text = tr("Shopify no ofrece {0} para este envío: elige otro servicio o «Automático».", service.name)
         elif service is not None:
             text = tr("Entrega habitual: {0}. Si Shopify no ofrece este servicio para el envío, avisa y no cobra nada.",
                       tr(service.days))
@@ -285,7 +297,8 @@ class PurchaseDialog(QDialog):
         layout.addWidget(self.problem_label)
         if not row.paid:
             layout.addWidget(label(tr("Ojo: este pedido todavía no está pagado."), "Warning", wrap=True))
-        in_shopify = row.action == "buy"  # FedEx (o una regla «en Shopify»)
+        in_shopify = row.action == "buy"  # tus reglas: se compra en Shopify (FedEx u otra marcada así)
+        fedex_rule = in_shopify and (row.carrier or row.rule_carrier) == "FedEx"
         if in_shopify:
             layout.addWidget(label(tr("Según tus reglas, este pedido sale por {0}.", row.carrier or row.rule_carrier),
                                    "Small", wrap=True))
@@ -348,8 +361,9 @@ class PurchaseDialog(QDialog):
         buttons.addWidget(self.buy_btn)
         layout.addLayout(buttons)
 
-        self.services.keep_fedex = in_shopify
-        self.services.fill(ss.Route(domestic=_domestic(row)), prefer=ss.FEDEX if in_shopify else "")
+        self.bought_service = ss.AUTO
+        self.services.keep_fedex = fedex_rule
+        self.services.fill(ss.Route(domestic=_domestic(row)), prefer=ss.FEDEX if fedex_rule else "")
         self._update()
         self._load_route()
 
@@ -404,7 +418,7 @@ class PurchaseDialog(QDialog):
         self.details_box.setVisible(usable and not fedex)
         self.money_note.setVisible(usable and not fedex)
         self.buy_btn.setVisible(usable)
-        self.buy_btn.setEnabled(usable and not self.busy)
+        self.buy_btn.setEnabled(usable and not self.busy and self.services.available())
         self.buy_btn.setText(tr("Comprar en Shopify") if fedex else tr("Comprar e imprimir"))
         self.buy_btn.setIcon(icons.icon("link" if fedex else "printer", "#FFFFFF", 16))
         if self.isVisible():
@@ -424,14 +438,27 @@ class PurchaseDialog(QDialog):
             self._buy()
 
     def _buy_in_shopify(self) -> None:
-        """FedEx: el pedido se abre en Shopify y queda esperándola; LabelBridge la imprime al verla."""
-        self.ctx.services.shopify.buy_in_shopify(self.row.legacy, self.row.name, "FedEx")
-        self._open_in_shopify()
-        self.bought = True
-        self._show(tr("Cómprala en el pedido en Shopify (se abrió en tu navegador). En cuanto Shopify la tenga, "
-                      "LabelBridge la imprime sola."), "Hint")
-        self.cancel_btn.setText(tr("Cerrar"))
+        """FedEx: el pedido queda esperándola (si no tiene ya una compra) y se abre en Shopify; LabelBridge la imprime
+        al verla."""
+        self.busy = True
         self._update()
+
+        def marked(_result) -> None:
+            self.busy = False
+            self.bought = True
+            self._open_in_shopify()
+            self._show(tr("Cómprala en el pedido en Shopify (se abrió en tu navegador). En cuanto Shopify la tenga, "
+                          "LabelBridge la imprime sola."), "Hint")
+            self.cancel_btn.setText(tr("Cerrar"))
+            self._update()
+
+        def failed(message: str) -> None:
+            self.busy = False
+            self._show(message, "Warning")
+            self._update()
+
+        shopify = self.ctx.services.shopify
+        run_async(lambda: shopify.buy_in_shopify(self.row.legacy, self.row.name, "FedEx"), marked, failed)
 
     def _buy(self) -> None:
         problem = self.package.problem()
@@ -440,6 +467,7 @@ class PurchaseDialog(QDialog):
             return
         self.package.remember_box()
         chosen = self.options()
+        self.bought_service = chosen["service"]  # para explicar el resultado con lo que se compró de verdad
         self.busy = True
         self.cancel_btn.setEnabled(False)
         self.form_box.setEnabled(False)
@@ -480,7 +508,7 @@ class PurchaseDialog(QDialog):
             self.cancel_btn.setText(tr("Cerrar"))
         elif state == "failed":
             self._show(tr("Shopify no compró la guía: {0}.",
-                          ss.rejection(result.get("reason") or "", self.services.key()).rstrip(".")), "Warning")
+                          ss.rejection(result.get("reason") or "", self.bought_service).rstrip(".")), "Warning")
         else:  # sigue en curso: el ciclo de Shopify la imprime cuando termine
             self.bought = True
             self._show(tr("Shopify sigue procesando la compra. LabelBridge la imprimirá sola en cuanto termine."), "Hint")

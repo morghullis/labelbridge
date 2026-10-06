@@ -32,7 +32,7 @@ from ..printing.engine import PrintEngine
 from ..secret_store import SHOPIFY_ACCESS_TOKEN, SHOPIFY_CLIENT_SECRET, SecretStore
 from ..security.policy import PolicyDenied
 from .base import BackgroundService
-from .shipping_services import AUTO, Route, is_domestic, offered_services, selection
+from .shipping_services import AUTO, FEDEX, Route, by_key, is_domestic, offered_services, selection
 from .shopify_orders import MANUAL_TAG, ManualItem, ManualOrders, OrderDetail, ProductChoice, Recipient
 from .tracking import TRACKING_QUERY, Tracking, parse_tracking
 from .orders_overview import (
@@ -822,6 +822,8 @@ class ShopifyService(BackgroundService):
                            "LabelBridge la imprime sola.", rule.carrier),
                         "error", kind="action",
                     )
+            elif noted == "manual":
+                pass  # alguien eligió comprarla en Shopify (p. ej. FedEx): la compra automática no la toca
             else:
                 queued += self._buy_labels(client, s, order, meta, stop)
         return queued
@@ -973,7 +975,7 @@ class ShopifyService(BackgroundService):
             self._save_pending(pending)
             self._note(meta["order_id"], "purchasing", name=meta["order_name"])
             log.info("Shopify: compra de etiqueta iniciada para %s", meta["order_name"])
-            queued += self._check_pending_purchases(client, wait_seconds=wait, stop=stop)
+            queued += self._check_pending_purchases(client, wait_seconds=wait, stop=stop, until=result_id)
         return queued
 
     def _announce_since(self) -> float:
@@ -1010,6 +1012,10 @@ class ShopifyService(BackgroundService):
 
         Devuelve el registro del pedido: state purchased (carrier, tracking y, si Shopify ya lo anotó, cost), failed
         (reason) o purchasing."""
+        if service == FEDEX:
+            raise ShopifyError(tr("Shopify no deja que ninguna app compre FedEx: cómprala en el pedido en Shopify."))
+        if service not in ("", AUTO) and by_key(service) is None:
+            raise ShopifyError(tr("Servicio de envío desconocido: {0}", service))
         s = self.cfg.data.shopify
         client = self.client()
         options = {"package": package, "total_weight": total_weight, "service": service,
@@ -1104,8 +1110,11 @@ class ShopifyService(BackgroundService):
         self.store.kv_set(self._key("pending"), json.dumps(pending))
 
     def _check_pending_purchases(
-        self, client: ShopifyClient, wait_seconds: float = 0, stop: threading.Event | None = None
+        self, client: ShopifyClient, wait_seconds: float = 0, stop: threading.Event | None = None,
+        until: str | None = None,
     ) -> int:
+        """Revisa las compras en curso; con `wait_seconds`, espera (hasta ese tope) a que terminen o, con `until`, a
+        que termine esa compra (las demás se siguen revisando en cada vuelta del ciclo)."""
         stop = stop or threading.Event()
         pending = self._pending()
         if not pending:
@@ -1160,7 +1169,7 @@ class ShopifyService(BackgroundService):
                     )
                     pending.pop(result_id)
             self._save_pending(pending)
-            if not pending or time.time() >= deadline or stop.wait(2):
+            if not pending or (until is not None and until not in pending) or time.time() >= deadline or stop.wait(2):
                 break
         return queued
 
@@ -1247,25 +1256,39 @@ class ShopifyService(BackgroundService):
         return queued
 
     def reprint_label(self, legacy: str, name: str) -> int:
-        """«Imprimir guía» de un pedido que ya tiene guía: la última que imprimió LabelBridge (con su formulario de
-        aduana, si tiene) vuelve a la cola; si se compró en Shopify, se trae de ahí. Devuelve los trabajos en cola."""
-        latest: dict[str, list[dict]] = {}
-        for job in self.store.list(limit=3000):
-            meta = job.get("meta") or {}
-            external = str(job.get("external_id") or "")
-            if (job.get("source") != "shopify" or str(meta.get("order_id")) != str(legacy) or "tracking" not in meta
-                    or not external.startswith("shipping-")):
-                continue
-            latest.setdefault(external.split("-")[1], []).append(job)
-        if not latest:
-            return self.print_order_labels(legacy, name)
-        jobs = max(latest.values(), key=lambda group: max(job.get("created_at") or 0 for job in group))
-        queued = sum(1 for job in sorted(jobs, key=lambda job: job.get("external_id") or "")
-                     if self.store.reprint(job["id"]))
+        """«Imprimir guía» de un pedido que ya tiene guía: las guías que siguen activas en Shopify (nunca una anulada)
+        vuelven a la cola con sus documentos (formulario de aduana incluido); las que LabelBridge no tiene se traen de
+        Shopify. Devuelve los trabajos en cola."""
+        client = self.client()
+        meta = {"order_gid": self.order_gid(legacy), "order_name": name, "order_id": str(legacy)}
+        active = sorted((float(entry.get("at") or 0), label_id)
+                        for label_id, entry in client.order_labels(meta["order_gid"]).items()
+                        if not entry.get("voided") and str(label_id).isdigit())
+        if not active:
+            raise ShopifyError(tr("Ese pedido no tiene una guía activa en Shopify."))
+        queued = 0
+        for _at, label_id in active:
+            jobs = self._label_jobs(label_id)
+            if jobs:
+                queued += sum(1 for job in jobs if self.store.reprint(job["id"]))
+            else:  # comprada en Shopify y todavía sin imprimir aquí: se trae de ahí
+                _documents, new = self._enqueue_documents({"shippingLabels": [client.shipping_label(label_id)]}, meta)
+                queued += new
         if not queued:
-            raise ShopifyError(tr("No se pudo volver a poner la guía en la cola de impresión."))
+            raise ShopifyError(tr("No se pudo poner la guía en la cola de impresión: imprímela desde el pedido en "
+                                  "Shopify."))
         self.engine.wake()
         return queued
+
+    def _label_jobs(self, label_id: str) -> list[dict]:
+        """Los trabajos de impresión de una guía (la etiqueta y sus otros documentos), por su número en Shopify."""
+        jobs = []
+        for label_index in range(3):
+            for doc_index in range(4):
+                job = self.store.get_by_external("shopify", f"shipping-{label_id}-{label_index}-{doc_index}")
+                if job:
+                    jobs.append(job)
+        return jobs
 
     def tracking(self, legacy: str) -> Tracking:
         """«Rastrear»: los envíos del pedido con su estado y los movimientos que informó la paquetería."""
@@ -1275,9 +1298,17 @@ class ShopifyService(BackgroundService):
         return parse_tracking(order)
 
     def buy_in_shopify(self, legacy: str, name: str, carrier: str = "FedEx") -> None:
-        """La persona eligió una paquetería que se compra en Shopify (FedEx): el pedido queda esperándola y, cuando
-        Shopify lo marca preparado, LabelBridge trae la guía y la imprime sola."""
-        if self.ledger(legacy).get("state") not in ("purchasing", "uncertain", "purchased"):
+        """La persona eligió una paquetería que se compra en Shopify (FedEx): el pedido queda esperándola (la compra
+        automática ya no lo toca) y, cuando Shopify lo marca preparado, LabelBridge trae la guía y la imprime sola.
+        Nunca si el pedido ya tiene una compra hecha, en curso o sin confirmar: sería una segunda guía."""
+        client = self.client()
+        with self._cycle_lock:  # la compra automática no puede comprarlo a la vez
+            busy = any(str(info.get("order_id")) == str(legacy) for info in self._pending().values())
+            fos = [] if busy else client.fulfillment_orders(self.order_gid(legacy))
+            bought = any(self.store.seen(self._fo_key(fo)) for fo in fos if fo.get("status") in ("OPEN", "IN_PROGRESS"))
+            if busy or bought or self.ledger(legacy).get("state") in ("purchasing", "uncertain", "purchased"):
+                raise ShopifyError(tr("Ese pedido ya tiene una compra hecha, en curso o sin confirmar: revísalo en "
+                                      "Shopify antes de comprar otra guía."))
             self._note(legacy, "manual", name=name, carrier=carrier, fetch=1)
 
     def shipping_route(self, legacy: str) -> Route:

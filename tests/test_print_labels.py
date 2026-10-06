@@ -250,24 +250,50 @@ def _shipping_job(core, label: str, doc: int, order: str = "1601") -> dict:
     return job
 
 
-def test_reprint_puts_the_latest_label_and_its_customs_form_back(core, monkeypatch):
+class LabelsInShopify:
+    """Las guías del pedido según Shopify (las anuladas incluidas) y sus documentos."""
+
+    def __init__(self, labels: dict, fos: list | None = None) -> None:
+        self.labels, self.fos, self.fetched = labels, fos or [], []
+
+    def order_labels(self, _gid):
+        return self.labels
+
+    def shipping_label(self, label_id):
+        self.fetched.append(label_id)
+        return {"id": f"gid://shopify/ShippingLabel/{label_id}", "trackingInfo": {"number": "9400", "company": "USPS"},
+                "shippingDocuments": [{"documentType": "LABEL", "format": "PDF", "url": f"https://cdn.example.com/{label_id}.pdf"}]}
+
+    def fulfillment_orders(self, _gid):
+        return self.fos
+
+
+def test_reprint_uses_the_labels_still_active_in_shopify(core, monkeypatch):
     service = ShopifyService(core.cfg, core.secrets, core.store, core.engine, core.events)
-    old = _shipping_job(core, "8", 0)
+    _shipping_job(core, "8", 0)  # la guía 8 se anuló en Shopify: nunca se vuelve a imprimir
+    label, customs = _shipping_job(core, "9", 0), _shipping_job(core, "9", 1)
     calls: list = []
     original = core.store.reprint
     monkeypatch.setattr(core.store, "reprint", lambda job_id: calls.append(job_id) or original(job_id))
-    label, customs = _shipping_job(core, "9", 0), _shipping_job(core, "9", 1)
+    shopify = LabelsInShopify({"8": {"voided": True, "at": 1.0}, "9": {"voided": False, "at": 2.0}})
+    service.client = lambda: shopify
     assert service.reprint_label("1601", "#1601") == 2
-    assert calls == [label["id"], customs["id"]] and old["id"] not in calls
-    asked = []
-    monkeypatch.setattr(service, "print_order_labels", lambda legacy, name: asked.append(legacy) or 1)
-    assert service.reprint_label("1700", "#1700") == 1 and asked == ["1700"]  # comprada en Shopify: se trae de ahí
+    assert calls == [label["id"], customs["id"]]  # la guía activa con su formulario de aduana
+    # Comprada en el admin de Shopify y todavía sin imprimir aquí: se trae de Shopify.
+    shopify.labels = {"10": {"voided": False, "at": 3.0}}
+    assert service.reprint_label("1700", "#1700") == 1 and shopify.fetched == ["10"]
+    assert core.store.get_by_external("shopify", "shipping-10-0-0") is not None
+    shopify.labels = {"8": {"voided": True}}
+    with pytest.raises(ShopifyError, match="activa"):
+        service.reprint_label("1601", "#1601")
 
 
 def test_choosing_fedex_waits_for_shopify_and_prints_it_even_without_auto_buy(core):
     service = ShopifyService(core.cfg, core.secrets, core.store, core.engine, core.events)
     s = core.cfg.data.shopify
     s.shop, s.buy_shipping_label = "demo.myshopify.com", False
+    fo = {"id": "gid://shopify/FulfillmentOrder/71", "status": "OPEN", "deliveryMethod": {"methodType": "SHIPPING"}}
+    service.client = lambda: LabelsInShopify({}, [fo])
     service.buy_in_shopify("3001", "#3001")
     assert service.ledger("3001")["state"] == "manual" and service.ledger("3001")["carrier"] == "FedEx"
     order = {"id": "gid://shopify/Order/3001", "legacyResourceId": "3001", "name": "#3001",
@@ -277,6 +303,43 @@ def test_choosing_fedex_waits_for_shopify_and_prints_it_even_without_auto_buy(co
                                  "zip": "33101", "countryCodeV2": "US"}}
     service._process_order(object(), s, order, service.since_ts(), threading.Event())
     assert "3001" in service._to_fetch() and service.ledger("3001")["state"] == "resolved"
+    # Con una compra hecha o en curso, «comprarla en Shopify» sería una segunda guía: no se marca.
+    service.store.mark_seen(service._fo_key(fo))
+    with pytest.raises(ShopifyError, match="ya tiene una compra"):
+        service.buy_in_shopify("3002", "#3002")
+    assert service.ledger("3002") == {}
+
+
+def test_an_order_waiting_for_fedex_is_never_bought_automatically(store, core):
+    service, fake = store
+    s = core.cfg.data.shopify
+    service.reset_since(hours_back=1)
+    service._note("3001", "manual", name="#3001", carrier="FedEx", fetch=1)  # la persona eligió FedEx en Shopify
+    service.cycle(service.client(), s)
+    assert fake.purchases == [] and service.ledger("3001")["state"] == "manual"
+
+
+def test_in_progress_purchases_never_offer_another_label():
+    from labelbridge.config import ShopifySettings
+
+    s = ShopifySettings()
+    s.buy_shipping_label = True
+    fedex = make_order(51, subtotal=1500)  # la regla manda FedEx…
+    row = row_of(fedex, settings=s, ledger={"state": "purchasing"})  # …pero alguien la está comprando aquí
+    assert row.state == "waiting" and row.action == "" and lb.plan_for(row)[0] == lb.SKIP
+    row = row_of(fedex, settings=s, ledger={"state": "uncertain"})
+    assert row.action == "open" and row.status == "Compra sin confirmar"
+    fresh = row_of(make_order(52, created=NOW - 60), settings=s)  # la compra automática la está comprando
+    assert row.issue != "auto" and fresh.issue == "auto" and lb.plan_for(fresh)[0] == lb.SKIP
+
+
+def test_unknown_or_fedex_services_are_refused_before_buying(store):
+    service, fake = store
+    with pytest.raises(ShopifyError, match="desconocido"):
+        service.buy_label_now("3001", service="usps:Teleport", wait=5)
+    with pytest.raises(ShopifyError, match="FedEx"):
+        service.buy_label_now("3001", service=ss.FEDEX, wait=5)
+    assert fake.purchases == []
 
 
 # --- qué hace «Imprimir guía» con cada pedido -------------------------------------------------------------
@@ -431,8 +494,11 @@ def test_print_dialog_offers_services_and_fedex_in_shopify(core, monkeypatch):
     assert dialog.services.key() == ss.FEDEX and dialog.buy_btn.text() == "Comprar en Shopify"
     keys = [dialog.services.combo.itemData(i) for i in range(dialog.services.combo.count())]
     assert "ups_shipping:03" in keys and "dhl_express:P" not in keys  # solo lo que Shopify ofrece
+    marked: list = []
+    monkeypatch.setattr(shopify, "buy_in_shopify", lambda legacy, name, carrier="FedEx": marked.append((legacy, carrier)))
     dialog.buy_btn.click()
-    assert opened and shopify.ledger("31")["carrier"] == "FedEx" and dialog.bought
+    assert wait_for(lambda: (QApplication.processEvents(), dialog.bought)[1])
+    assert opened and marked == [("31", "FedEx")]
     dialog.close()
 
     bought: list = []
@@ -547,3 +613,74 @@ def _no_address_row():
     order = make_order(48)
     order["shippingAddress"] = {**order["shippingAddress"], "zip": ""}
     return row_of(order)
+
+
+def test_an_order_partly_shipped_and_partly_picked_up_still_takes_its_label():
+    order = make_order(49)
+    order["fulfillmentOrders"] = {"nodes": [{"status": "OPEN", "deliveryMethod": {"methodType": "PICK_UP"}},
+                                            {"status": "OPEN", "deliveryMethod": {"methodType": "SHIPPING"}}]}
+    row = row_of(order)
+    assert row.kind == "ship" and lb.plan_for(row)[0] == lb.BUY
+
+
+def test_the_chosen_service_never_changes_by_itself(core):
+    from test_orders import _ui_context
+
+    from labelbridge.ui.purchase_dialog import PurchaseDialog
+
+    ctx = _ui_context(core)
+    dialog = PurchaseDialog(None, ctx, row_of(make_order(61)))
+    dialog.services.combo.setCurrentIndex(dialog.services.combo.findData("ups_shipping:01"))
+    only_usps = ss.Route(True, "US", {"usps": {"ground advantage", "priority mail"}})
+    dialog.services.fill(only_usps)  # Shopify contesta después: UPS no se ofrece para este envío
+    assert dialog.services.key() == "ups_shipping:01" and not dialog.services.available()
+    assert not dialog.buy_btn.isEnabled() and "no ofrece" in dialog.services.hint.text()
+    dialog.services.combo.setCurrentIndex(dialog.services.combo.findData("usps:Priority"))
+    assert dialog.buy_btn.isEnabled()
+    dialog.close()
+
+
+def test_a_batch_leaves_out_what_auto_buy_got_first_and_marks_fedex():
+    from labelbridge.connectors.shopify import ShopifyError as Error
+
+    class Racing(FakeService):
+        marked: list = []
+
+        def buy_label_now(self, legacy, **options):
+            raise Error("Ese pedido ya tiene una compra hecha o sin confirmar")
+
+        def ledger(self, legacy):
+            return {"state": "purchased"}
+
+        def buy_in_shopify(self, legacy, name, carrier):
+            self.marked.append((legacy, carrier))
+
+    fake = Racing()
+    items = lb.make_batch([row_of(make_order(71)), row_of(make_order(72, subtotal=1500))])
+    summary = lb.run_batch(fake, items, lb.BatchOptions())
+    assert (summary.bought, summary.failed, summary.skipped) == (0, 0, 2)
+    assert "compra automática" in items[0].detail and fake.marked == [("72", "FedEx")]
+
+
+def test_a_purchase_waits_only_for_its_own_result(core):
+    import time as clock
+
+    from test_purchase_safety import FakeClient, fo
+
+    service = ShopifyService(core.cfg, core.secrets, core.store, core.engine, core.events)
+    s = core.cfg.data.shopify
+    s.enabled, s.shop = True, "demo.myshopify.com"
+    fake = FakeClient([fo(9)])
+    fake.results = {
+        "stuck": {"status": "PENDING"},  # otra compra que Shopify todavía no termina
+        "gid://shopify/ShippingLabelPurchaseResult/1": {"status": "PURCHASED", "errors": [], "shippingLabels": [{
+            "id": "gid://shopify/ShippingLabel/5", "trackingInfo": {"number": "9200", "company": "USPS"},
+            "shippingDocuments": [{"documentType": "LABEL", "format": "PDF", "url": "https://cdn.example.com/5.pdf"}]}]},
+    }
+    fake.order_labels = lambda _gid: {}
+    service.client = lambda: fake
+    service._save_pending({"stuck": {"order_id": "2", "order_name": "#1002", "started": clock.time()}})
+    started = clock.monotonic()
+    result = service.buy_label_now("1", wait=30)
+    assert result["state"] == "purchased" and clock.monotonic() - started < 10
+    assert "stuck" in service._pending()  # la otra sigue esperando su vuelta del ciclo

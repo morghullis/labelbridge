@@ -739,7 +739,12 @@ class OrdersPage(Page):
             self._print(row)
         elif action == "details":
             self._details(row)
-        elif action in ("open", "void", "buy"):
+        elif action == "buy":  # se compra en Shopify (FedEx): queda esperándola y LabelBridge la imprime al verla
+            QDesktopServices.openUrl(QUrl(admin_url(shop, f"orders/{row.legacy}")))
+            shopify = self.ctx.services.shopify
+            run_async(lambda: shopify.buy_in_shopify(row.legacy, row.name, row.carrier or row.rule_carrier),
+                      None, lambda message: info(self, tr("Comprar en Shopify"), message))
+        elif action in ("open", "void"):
             QDesktopServices.openUrl(QUrl(admin_url(shop, f"orders/{row.legacy}")))
         elif action == "track":  # en una ventana de LabelBridge, sin ir a la web de la paquetería
             if row.tracking:

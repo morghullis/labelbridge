@@ -429,12 +429,12 @@ def classify(
         (fo.get("deliveryMethod") or {}).get("methodType")
         for fo in ((order.get("fulfillmentOrders") or {}).get("nodes") or [])
     }
-    if "PICK_UP" in methods:
+    if methods & {"SHIPPING", "PICKUP_POINT"} or (not methods and address):
+        kind = "ship"  # algo sale por paquetería (aunque otra parte se retire en la tienda): lleva guía
+    elif "PICK_UP" in methods:
         kind = "pickup"
-    elif "LOCAL" in methods and not methods & {"SHIPPING", "PICKUP_POINT"}:
+    elif "LOCAL" in methods:
         kind = "local"
-    elif methods & {"SHIPPING", "PICKUP_POINT"} or (not methods and address):
-        kind = "ship"
     else:
         kind = "none"
     row.kind = kind
@@ -515,8 +515,17 @@ def classify(
     if financial not in PAID_STATUSES:
         return keep("waiting", tr("Esperando el pago"))
     state = ledger.get("state")
-    if state in ("purchasing", "uncertain"):
-        row.issue = state  # «Imprimir guía» no compra otra: primero hay que saber qué pasó con esa
+    # Una compra en curso o sin confirmar va antes que todo: nunca un botón para comprar otra guía mientras tanto.
+    if state == "purchasing":
+        row.issue = state
+        return keep("waiting", tr("Comprando la guía…"))
+    if state == "uncertain":
+        row.issue = state
+        return act(
+            tr("Compra sin confirmar"),
+            tr("No se sabe si la guía se compró (se cortó la conexión). Revísalo en Shopify antes de comprarla a mano."),
+            "open",
+        )
     if (rule is not None and not rule.auto) or state == "manual":
         carrier = row.carrier or tr("Esta paquetería")
         why = tr(" por la regla de {0}", rule_text(rule)) if rule is not None and rule_text(rule) else ""
@@ -531,12 +540,6 @@ def classify(
             tr("No se pudo comprar la guía"),
             tr("No se pudo comprar la guía: {0}. Pulsa «Imprimir guía», corrige los datos (servicio, caja, peso) y vuelve a intentarlo.", row.problem),
             "retry",
-        )
-    if state == "uncertain":
-        return act(
-            tr("Compra sin confirmar"),
-            tr("No se sabe si la guía se compró (se cortó la conexión). Revísalo en Shopify antes de comprarla a mano."),
-            "open",
         )
     if state == "limit":
         return act(
@@ -557,6 +560,7 @@ def classify(
             "retry",
         )
     if now - created < WAIT_SECONDS:
+        row.issue = "auto"  # la compra automática la está comprando: «Imprimir guía» no compra otra
         return keep("waiting", tr("Comprando la guía…"))
     return act(
         tr("Falta la guía"),
