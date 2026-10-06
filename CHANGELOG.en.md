@@ -2,6 +2,12 @@
 
 English version of [CHANGELOG.md](CHANGELOG.md). Each published version shows these notes in the app's update window when the app is in English, and on the English download page.
 
+## 1.12.0
+
+- **Guided FedEx label, in a few clicks.** Shopify doesn't let any app buy FedEx or pass it the signature or insurance, so the label is bought in Shopify, but LabelBridge does everything else: one click opens the order in Shopify and shows a card on top of the browser with what to choose, in the order of Shopify's screen (FedEx 2Day, signature required, insurance for the value of the items with a button to copy it, and your box). As soon as you buy it, LabelBridge detects it, prints it by itself and confirms it with the FedEx number; the order is fulfilled in Shopify.
+- In Orders, FedEx orders have **Buy FedEx label** (and **Print label** opens the same); **Another carrier…** is still available.
+- In **Carrier rules** you choose how FedEx is bought: the service, the signature (required, adult or none) and whether it's insured for the value of the items.
+
 ## 1.11.0
 
 - **Print label, with one button.** In Orders, choose an order and press **Print label**: if it already has a label it reprints it; if not, a short window opens to buy and print it with one click. Orders that don't take a label (store pickup, cancelled, already shipped) say why.

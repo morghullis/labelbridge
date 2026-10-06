@@ -531,7 +531,7 @@ def classify(
         why = tr(" por la regla de {0}", rule_text(rule)) if rule is not None and rule_text(rule) else ""
         return act(
             tr("Comprar guía {0} en Shopify", carrier),
-            tr("Sale por {0}{1} (piezas: {2}). Shopify no deja comprar esta guía automáticamente: cómprala en el pedido en Shopify (1 clic) y LabelBridge la imprime sola.", carrier, why, _money(row.subtotal)),
+            tr("Sale por {0}{1} (piezas: {2}). Shopify no deja que ninguna app compre esta guía: pulsa «Comprar guía {0}», cómprala en Shopify con lo que te indica LabelBridge (servicio, firma y seguro) y LabelBridge la imprime sola.", carrier, why, _money(row.subtotal)),
             "buy",
         )
     if state == "failed":

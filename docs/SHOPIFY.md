@@ -55,7 +55,7 @@ Detalles de la compra automática:
 - Si haces un pedido de prueba con la compra activa, se compra una guía real: si no la usas, anúlala desde el pedido en Shopify.
 - Solo compra para *fulfillment orders* en estado `OPEN`/`IN_PROGRESS` con método de envío. **Nunca compra dos veces** para el mismo fulfillment order, aunque reinicies el PC.
 - Tiene un **límite diario** configurable y te avisa si se alcanza.
-- Shopify no permite comprar etiquetas de **FedEx** por API.
+- Shopify no permite comprar etiquetas de **FedEx** por API (ni pasarle firma o seguro). Para esos pedidos, **Comprar guía FedEx** abre el pedido en Shopify y una ventana de LabelBridge dice qué elegir (servicio, firma, seguro por el valor de las piezas y la caja, según *Reglas de paquetería*); en cuanto la compras, LabelBridge la imprime sola.
 - Desde **Pedidos → Imprimir guía** eliges el servicio (USPS Ground Advantage, Priority Mail, UPS Ground…) o dejas **Automático** (el que pagó el cliente o tu paquetería preferida en Shopify). Si Shopify no ofrece ese servicio para el envío, contesta `RATES_NOT_FOUND` y **no cobra nada**: elige otro. Con `read_shipping` la lista muestra solo lo que Shopify ofrece para ese envío.
 - LabelBridge solo trata pedidos que salen por paquetería con a quién y adónde mandarlos (nombre, dirección, ciudad, país, código postal y estado cuando corresponde): los de retiro en tienda, las ventas en el local y los pedidos de otros canales sin dirección (p. ej. de Etsy) no aparecen en Pedidos y nunca se les compra guía.
 - **Rastrear** muestra el seguimiento en una ventana de LabelBridge con los movimientos que Shopify recibe de la paquetería.

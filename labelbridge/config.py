@@ -171,6 +171,13 @@ class ShippingRule:
 # Tipos de paquete que acepta Shopify Shipping para una caja propia.
 PACKAGE_TYPES = {"BOX": N_("Caja"), "SOFT_PACK": N_("Sobre acolchado o bolsa"), "ENVELOPE": N_("Sobre")}
 
+# FedEx se compra en Shopify (ninguna app puede comprarla por la API): sus servicios como los muestra Shopify y la
+# firma, para la ventana «Guía FedEx», que dice qué elegir.
+FEDEX_SERVICES = ("FedEx 2Day®", "FedEx 2Day® AM", "FedEx Priority Overnight®", "FedEx Standard Overnight®",
+                  "FedEx Express Saver®", "FedEx Ground®", "FedEx Home Delivery®", "FedEx Ground® Economy")
+FEDEX_SIGNATURES = {"signature": N_("Firma requerida"), "adult": N_("Firma de adulto requerida"),
+                    "none": N_("Sin firma")}
+
 
 @dataclass
 class PackageSettings:
@@ -212,6 +219,10 @@ class ShopifySettings:
     # Las piezas de más de US$1000 salen por FedEx, que se compra a mano.
     shipping_rules: list[ShippingRule] = field(default_factory=lambda: [ShippingRule("", "FedEx", False, 1000.0)])
     default_carrier: str = "USPS"
+    # Cómo se compra FedEx en Shopify (la ventana «Guía FedEx» lo dice paso a paso): servicio, firma y seguro.
+    fedex_service: str = "FedEx 2Day®"
+    fedex_signature: str = "signature"  # FEDEX_SIGNATURES
+    fedex_insure: bool = True  # asegurar por el valor de las piezas
     notify_customer: bool = False
     package: PackageSettings = field(default_factory=PackageSettings)
     max_labels_per_day: int = 50

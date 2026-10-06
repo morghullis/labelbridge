@@ -387,5 +387,9 @@ def run_manual_label(parent: QWidget, ctx: AppContext) -> bool:
     purchase = PurchaseDialog(parent, ctx, row)
     purchase.notify.setChecked(bool(dialog.recipient and dialog.recipient.email))
     run_dialog(purchase)
+    if purchase.fedex_requested:  # FedEx: se compra en Shopify con la ventana que dice qué elegir
+        from .fedex_dialog import open_fedex
+
+        open_fedex(parent, ctx, row)
     return True
 

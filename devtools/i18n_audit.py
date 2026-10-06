@@ -278,6 +278,19 @@ def visible_leftovers() -> list[str]:
             {"status": "CANCELLED", "createdAt": iso(now - 9000), "displayStatus": "LABEL_VOIDED",
              "trackingInfo": [{"company": "USPS", "number": "9200"}], "events": {"nodes": []}},
         ]})
+        # «Guía FedEx»: lo que hay que elegir en Shopify, esperando y ya impresa.
+        from labelbridge.ui.fedex_dialog import FedexDialog
+
+        window.ctx.services.shopify.collect_shopify_label = lambda legacy, name: {"state": "waiting"}
+        window.ctx.services.shopify.buy_in_shopify = lambda legacy, name, carrier: None
+        guide = FedexDialog(window, window.ctx, rows[0], open_shopify=False)
+        guide._waiting()
+        found += [f"[guía fedex] {item}" for item in leftovers_in(guide, translated)]
+        guide._show_result({"state": "printing", "carrier": "FedEx", "tracking": "7712"})
+        found += [f"[guía fedex] {item}" for item in leftovers_in(guide, translated)]
+        guide._show_result({"state": "no_document"})
+        found += [f"[guía fedex] {item}" for item in leftovers_in(guide, translated)]
+        guide.close()
         track = TrackingDialog(window, window.ctx, rows[0], tracking)
         track._show(tracking)
         found += [f"[rastrear] {item}" for item in leftovers_in(track, translated)]

@@ -20,6 +20,7 @@ from PySide6.QtCore import QAbstractTableModel, QModelIndex, QPoint, QSortFilter
 from PySide6.QtGui import QColor, QDesktopServices
 from PySide6.QtWidgets import (
     QButtonGroup,
+    QCheckBox,
     QComboBox,
     QDialog,
     QDoubleSpinBox,
@@ -36,8 +37,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ...config import CARRIERS, ShippingRule
+from ...config import CARRIERS, FEDEX_SERVICES, FEDEX_SIGNATURES, ShippingRule
 from ...connectors.label_batch import BUY, IN_SHOPIFY, REPRINT, plan_for
+from ...connectors.shipping_services import AUTO
 from ...connectors.orders_overview import CSV_COLUMNS, GROUPS, OrderRow, Summary, csv_rows, in_group, summarize
 from ...connectors.shopify import admin_url
 from ...i18n import N_, date_text, tr
@@ -184,12 +186,14 @@ class ActionItem(QFrame):
         actions = QHBoxLayout()
         actions.setSpacing(8)
         text, icon_name = ACTION_BUTTONS.get(row.action, ACTION_BUTTONS["open"])
+        if row.action == "buy":  # se compra en Shopify: la ventana dice qué elegir y la imprime sola
+            text, icon_name = tr("Comprar guía {0}", row.carrier or row.rule_carrier or "FedEx"), "truck"
         main = button(tr(text), icon_name, "primary")
         main.clicked.connect(lambda: page.run_action(row, "print" if row.action in PRINT_ACTIONS else row.action or "open"))
         actions.addWidget(main)
-        if row.action == "buy":  # FedEx: un clic en Shopify, o aquí con otra paquetería
-            other = button(tr("Otra paquetería…"), "truck")
-            other.clicked.connect(lambda: page.run_action(row, "print"))
+        if row.action == "buy":  # FedEx: guiada en Shopify, o aquí con otra paquetería
+            other = button(tr("Otra paquetería…"), "printer")
+            other.clicked.connect(lambda: page.run_action(row, "other"))
             actions.addWidget(other)
         elif row.action not in ("open", "void", ""):
             other = button(tr("Abrir en Shopify"), "link")
@@ -239,7 +243,8 @@ class DelayItem(QFrame):
 class ShippingRulesDialog(QDialog):
     """Por qué paquetería sale cada pedido: se aplica la primera regla que se cumple; si no, la predeterminada."""
 
-    def __init__(self, parent: QWidget, rules: list[ShippingRule], default_carrier: str) -> None:
+    def __init__(self, parent: QWidget, rules: list[ShippingRule], default_carrier: str,
+                 fedex: tuple[str, str, bool] = ("FedEx 2Day®", "signature", True)) -> None:
         super().__init__(parent)
         self.setWindowTitle(tr("Reglas de paquetería"))
         self.setMinimumWidth(720)
@@ -276,6 +281,25 @@ class ShippingRulesDialog(QDialog):
         rest.addWidget(label(tr("y LabelBridge compra la guía sola.")))
         rest.addStretch(1)
         outer.addLayout(rest)
+        # Cómo se compra FedEx en Shopify: lo que la ventana «Guía FedEx» dice que elijas.
+        outer.addWidget(label(tr("FedEx (se compra en Shopify): la ventana «Guía FedEx» te dice que elijas"), "Small",
+                              wrap=True))
+        prefs = QHBoxLayout()
+        prefs.setSpacing(8)
+        self.fedex_service = QComboBox()
+        for name in FEDEX_SERVICES:
+            self.fedex_service.addItem(name, name)
+        self.fedex_service.setCurrentIndex(max(0, self.fedex_service.findData(fedex[0])))
+        self.fedex_signature = QComboBox()
+        for code, text in FEDEX_SIGNATURES.items():
+            self.fedex_signature.addItem(tr(text), code)
+        self.fedex_signature.setCurrentIndex(max(0, self.fedex_signature.findData(fedex[1])))
+        self.fedex_insure = QCheckBox(tr("Seguro por el valor de las piezas"))
+        self.fedex_insure.setChecked(bool(fedex[2]))
+        for widget in (self.fedex_service, self.fedex_signature, self.fedex_insure):
+            prefs.addWidget(widget)
+        prefs.addStretch(1)
+        outer.addLayout(prefs)
         buttons = QHBoxLayout()
         buttons.addStretch(1)
         cancel = button(tr("Cancelar"))
@@ -739,11 +763,10 @@ class OrdersPage(Page):
             self._print(row)
         elif action == "details":
             self._details(row)
-        elif action == "buy":  # se compra en Shopify (FedEx): queda esperándola y LabelBridge la imprime al verla
-            QDesktopServices.openUrl(QUrl(admin_url(shop, f"orders/{row.legacy}")))
-            shopify = self.ctx.services.shopify
-            run_async(lambda: shopify.buy_in_shopify(row.legacy, row.name, row.carrier or row.rule_carrier),
-                      None, lambda message: info(self, tr("Comprar en Shopify"), message))
+        elif action == "buy":  # se compra en Shopify (FedEx): la ventana «Guía FedEx» guía y la imprime sola
+            self._fedex(row)
+        elif action == "other":  # otra paquetería en vez de la de la regla
+            self._retry(row, prefer=AUTO)
         elif action in ("open", "void"):
             QDesktopServices.openUrl(QUrl(admin_url(shop, f"orders/{row.legacy}")))
         elif action == "track":  # en una ventana de LabelBridge, sin ir a la web de la paquetería
@@ -766,7 +789,9 @@ class OrdersPage(Page):
         plan, why = plan_for(row)
         if plan == REPRINT:
             self._reprint(row)
-        elif plan in (BUY, IN_SHOPIFY):
+        elif plan == IN_SHOPIFY:
+            self._fedex(row)
+        elif plan == BUY:
             self._retry(row)
         else:
             info(self, tr("Imprimir guía"), tr("{0}: {1}", row.name, why))
@@ -794,22 +819,35 @@ class OrdersPage(Page):
         if run_manual_label(self, self.ctx):
             self.reload()
 
-    def _retry(self, row: OrderRow) -> None:
+    def _retry(self, row: OrderRow, prefer: str | None = None) -> None:
         """La compra de la guía: servicio, caja y aviso, un clic, y se compra, se imprime y Shopify queda al día."""
         from ..purchase_dialog import PurchaseDialog
 
-        dialog = PurchaseDialog(self, self.ctx, row)
+        dialog = PurchaseDialog(self, self.ctx, row, prefer=prefer)
         run_dialog(dialog)
-        if dialog.bought:
+        if dialog.fedex_requested:
+            self._fedex(row)
+        elif dialog.bought:
             self.reload()
+
+    def _fedex(self, row: OrderRow) -> None:
+        """«Guía FedEx»: abre el pedido en Shopify, dice qué elegir (servicio, firma, seguro) y la imprime sola."""
+        from ..fedex_dialog import open_fedex
+
+        dialog = open_fedex(self, self.ctx, row, on_other=lambda r: self._retry(r, prefer=AUTO))
+        dialog.finished.connect(lambda _r: self._reload_timer.start())
 
     def edit_rules(self) -> None:
         s = self.ctx.cfg.data.shopify
-        dialog = ShippingRulesDialog(self, s.shipping_rules, s.default_carrier)
+        dialog = ShippingRulesDialog(self, s.shipping_rules, s.default_carrier,
+                                     (s.fedex_service, s.fedex_signature, s.fedex_insure))
         if run_dialog(dialog) != QDialog.DialogCode.Accepted:
             return
         s.shipping_rules = dialog.rules()
         s.default_carrier = dialog.default.currentData() or "USPS"
+        s.fedex_service = dialog.fedex_service.currentData() or s.fedex_service
+        s.fedex_signature = dialog.fedex_signature.currentData() or s.fedex_signature
+        s.fedex_insure = dialog.fedex_insure.isChecked()
         self.ctx.cfg.save("shopify")
         self.reload()  # se vuelve a clasificar con las reglas nuevas
 

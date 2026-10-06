@@ -41,6 +41,7 @@ from .orders_overview import (
     OVERVIEW_QUERY_BASIC,
     OrderRow,
     belongs,
+    carrier_name,
     classify,
     friendly_reason,
     label_events,
@@ -1310,6 +1311,29 @@ class ShopifyService(BackgroundService):
                 raise ShopifyError(tr("Ese pedido ya tiene una compra hecha, en curso o sin confirmar: revísalo en "
                                       "Shopify antes de comprar otra guía."))
             self._note(legacy, "manual", name=name, carrier=carrier, fetch=1)
+
+    def collect_shopify_label(self, legacy: str, name: str) -> dict:
+        """La guía que se compró en Shopify para este pedido (p. ej. FedEx): si ya está, se pone en la cola de impresión
+        (una sola vez) y se dice cuál es. {"state": "waiting"} mientras Shopify no la tenga; "printing" con paquetería y
+        seguimiento cuando sí; "no_document" si Shopify no entrega el PDF."""
+        client = self.client()
+        gid = self.order_gid(legacy)
+        meta = {"order_gid": gid, "order_name": name, "order_id": str(legacy)}
+        active = sorted(((float(entry.get("at") or 0), label_id) for label_id, entry in client.order_labels(gid).items()
+                         if not entry.get("voided") and str(label_id).isdigit()), reverse=True)
+        if not active:
+            return {"state": "waiting"}
+        label = client.shipping_label(active[0][1])
+        documents, queued = self._enqueue_documents({"shippingLabels": [label]}, meta)
+        tracking = label.get("trackingInfo") or {}
+        if self.ledger(legacy).get("state") in ACTION_STATES:
+            self._note(legacy, "resolved", name=name)  # ya no espera a nadie (el ciclo no la vuelve a traer)
+        if not documents:
+            return {"state": "no_document"}
+        if queued:
+            self.engine.wake()
+        return {"state": "printing", "carrier": carrier_name(str(tracking.get("company") or "")) or "FedEx",
+                "tracking": str(tracking.get("number") or ""), "queued": queued}
 
     def shipping_route(self, legacy: str) -> Route:
         """Si el envío es nacional y qué servicios ofrece Shopify para él (con read_shipping). Sin ese permiso, la

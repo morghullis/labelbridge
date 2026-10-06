@@ -2,6 +2,12 @@
 
 Cada versión publicada muestra estas notas en la ventana de actualización de la app y en la página de descargas.
 
+## 1.12.0
+
+- **Guía FedEx, guiada y con pocos clics.** Shopify no deja que ninguna app compre FedEx ni le pase la firma o el seguro, así que la guía se compra en Shopify, pero LabelBridge hace todo lo demás: con un clic abre el pedido en Shopify y muestra una tarjeta encima del navegador con lo que hay que elegir, en el orden de la pantalla de Shopify (FedEx 2Day, firma requerida, el seguro por el valor de las piezas con botón para copiarlo y tu caja). En cuanto la compras, LabelBridge la detecta, la imprime sola y lo confirma con el número de FedEx; el pedido queda preparado en Shopify.
+- En Pedidos, los pedidos de FedEx tienen **Comprar guía FedEx** (y **Imprimir guía** abre lo mismo); **Otra paquetería…** sigue disponible.
+- En **Reglas de paquetería** eliges cómo se compra FedEx: el servicio, la firma (requerida, de adulto o sin firma) y si se asegura por el valor de las piezas.
+
 ## 1.11.0
 
 - **Imprimir guía, con un botón.** En Pedidos eliges un pedido y pulsas **Imprimir guía**: si ya tiene guía la reimprime; si no, abre una ventana corta para comprarla e imprimirla con un clic. Los pedidos sin guía (retiro en tienda, cancelados, ya enviados) dicen por qué.

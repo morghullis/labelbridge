@@ -494,11 +494,8 @@ def test_print_dialog_offers_services_and_fedex_in_shopify(core, monkeypatch):
     assert dialog.services.key() == ss.FEDEX and dialog.buy_btn.text() == "Comprar en Shopify"
     keys = [dialog.services.combo.itemData(i) for i in range(dialog.services.combo.count())]
     assert "ups_shipping:03" in keys and "dhl_express:P" not in keys  # solo lo que Shopify ofrece
-    marked: list = []
-    monkeypatch.setattr(shopify, "buy_in_shopify", lambda legacy, name, carrier="FedEx": marked.append((legacy, carrier)))
-    dialog.buy_btn.click()
-    assert wait_for(lambda: (QApplication.processEvents(), dialog.bought)[1])
-    assert opened and marked == [("31", "FedEx")]
+    dialog.buy_btn.click()  # FedEx: la ventana «Guía FedEx» se encarga (quien abrió esta la abre)
+    assert dialog.fedex_requested and dialog.result() == 1 and opened == []
     dialog.close()
 
     bought: list = []

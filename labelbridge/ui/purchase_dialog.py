@@ -274,11 +274,12 @@ class PurchaseDialog(QDialog):
     """«Imprimir guía» de un pedido sin guía (también el de una guía manual): servicio, caja, peso y aviso, y un
     clic para comprarla e imprimirla."""
 
-    def __init__(self, parent: QWidget, ctx: AppContext, row: OrderRow) -> None:
+    def __init__(self, parent: QWidget, ctx: AppContext, row: OrderRow, prefer: str | None = None) -> None:
         super().__init__(parent)
         self.ctx = ctx
         self.row = row
         self.bought = False
+        self.fedex_requested = False  # eligió FedEx: quien abrió esta ventana abre la de «Guía FedEx»
         self.busy = False  # comprando: la ventana no se cierra hasta saber el resultado
         s = ctx.cfg.data.shopify
         self.setWindowTitle(tr("Imprimir guía · {0}", row.name))
@@ -298,7 +299,7 @@ class PurchaseDialog(QDialog):
         if not row.paid:
             layout.addWidget(label(tr("Ojo: este pedido todavía no está pagado."), "Warning", wrap=True))
         in_shopify = row.action == "buy"  # tus reglas: se compra en Shopify (FedEx u otra marcada así)
-        fedex_rule = in_shopify and (row.carrier or row.rule_carrier) == "FedEx"
+        fedex_rule = in_shopify and (row.carrier or row.rule_carrier) == "FedEx" and prefer is None
         if in_shopify:
             layout.addWidget(label(tr("Según tus reglas, este pedido sale por {0}.", row.carrier or row.rule_carrier),
                                    "Small", wrap=True))
@@ -363,7 +364,7 @@ class PurchaseDialog(QDialog):
 
         self.bought_service = ss.AUTO
         self.services.keep_fedex = fedex_rule
-        self.services.fill(ss.Route(domestic=_domestic(row)), prefer=ss.FEDEX if fedex_rule else "")
+        self.services.fill(ss.Route(domestic=_domestic(row)), prefer=ss.FEDEX if fedex_rule else (prefer or ""))
         self._update()
         self._load_route()
 
@@ -432,33 +433,11 @@ class PurchaseDialog(QDialog):
 
     # --- acciones ------------------------------------------------------------------------------
     def _go(self) -> None:
-        if self.services.key() == ss.FEDEX:
-            self._buy_in_shopify()
+        if self.services.key() == ss.FEDEX:  # se compra en Shopify, guiado por la ventana «Guía FedEx»
+            self.fedex_requested = True
+            self.accept()
         else:
             self._buy()
-
-    def _buy_in_shopify(self) -> None:
-        """FedEx: el pedido queda esperándola (si no tiene ya una compra) y se abre en Shopify; LabelBridge la imprime
-        al verla."""
-        self.busy = True
-        self._update()
-
-        def marked(_result) -> None:
-            self.busy = False
-            self.bought = True
-            self._open_in_shopify()
-            self._show(tr("Cómprala en el pedido en Shopify (se abrió en tu navegador). En cuanto Shopify la tenga, "
-                          "LabelBridge la imprime sola."), "Hint")
-            self.cancel_btn.setText(tr("Cerrar"))
-            self._update()
-
-        def failed(message: str) -> None:
-            self.busy = False
-            self._show(message, "Warning")
-            self._update()
-
-        shopify = self.ctx.services.shopify
-        run_async(lambda: shopify.buy_in_shopify(self.row.legacy, self.row.name, "FedEx"), marked, failed)
 
     def _buy(self) -> None:
         problem = self.package.problem()
