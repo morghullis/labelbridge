@@ -130,8 +130,8 @@ def shipping_services(box, a: dict) -> dict:
         "checked_with_shopify": route.offered is not None,  # sin read_shipping: todos los del tipo de envío
         "services": [{"service": s.key, "name": s.name, "usual_delivery": tr(s.days)} for s in ss.choices(route)],
         "default": "auto: Shopify elige (el servicio que pagó el cliente o la paquetería preferida de la tienda)",
-        "fedex": "No se puede comprar por la API: el usuario la compra en el pedido en Shopify y LabelBridge la "
-                 "imprime sola." if route.fedex else None,
+        "fedex": "No se puede comprar por la API: la compra Shopify Flow sola (si así está en Reglas de paquetería) "
+                 "o el usuario en el pedido en Shopify, y LabelBridge la imprime." if route.fedex else None,
     }
 
 

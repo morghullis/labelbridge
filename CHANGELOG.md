@@ -2,6 +2,12 @@
 
 Cada versión publicada muestra estas notas en la ventana de actualización de la app y en la página de descargas.
 
+## 1.14.0
+
+- **La FedEx la compra Shopify Flow, sola.** En Pedidos → **Reglas de paquetería** eliges quién compra la FedEx: **Shopify Flow, automáticamente** o tú, con la ventana «Guía FedEx» (como hasta ahora). Con Flow, un flujo de tu tienda compra la guía FedEx en cuanto entra el pedido y LabelBridge hace el resto: no te pide que la compres, la imprime en cuanto aparece y, si Shopify no le da el PDF, abre el pedido en Shopify para que pulses «Imprimir etiqueta» (y deja de pedirlo cuando Shopify la marca impresa). Si en 15 minutos Flow no la compró, te avisa y el pedido pasa a «Necesitan acción» con **Comprar guía FedEx**.
+- **Cómo armar el flujo, paso a paso:** al elegir Shopify Flow, LabelBridge te muestra el disparador, las condiciones (con el valor de tu regla de FedEx y botones para copiar) y la acción, con un botón para abrir Flow. Flow no ofrece firma ni seguro adicional: si los necesitas, sigue con la ventana «Guía FedEx».
+- Mientras Flow compra una guía, ese pedido no ofrece botones para comprar otra (ni en **Imprimir N guías**), así nunca se pagan dos.
+
 ## 1.13.0
 
 - **Funciona siempre.** Por defecto, el equipo no se duerme solo mientras LabelBridge está abierto (la pantalla sí se apaga), así que sigue imprimiendo con la pantalla apagada. Si alguien lo suspende a mano o cierra la tapa, al despertar se pone al día enseguida. Se abre sola al encender el equipo y, en la Mac, si se cierra por un error se vuelve a abrir.

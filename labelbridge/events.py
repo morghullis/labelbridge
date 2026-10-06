@@ -17,6 +17,7 @@ NOTIFY = "notify"  # {"title", "message", "level"}
 PAUSED = "paused"  # bool
 CONFIG_EXTERNAL = "config_external"  # sección que cambió el asistente: las pantallas recargan sus campos
 ORDERS = "orders"  # {"order", "state"}: cambió lo que LabelBridge sabe de un pedido (pestaña Pedidos)
+OPEN_URL = "open_url"  # {"url"}: abrir una página del admin de Shopify (p. ej. el pedido para «Imprimir etiqueta»)
 
 
 class Events:

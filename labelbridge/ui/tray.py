@@ -5,7 +5,8 @@ from __future__ import annotations
 import time
 from typing import Callable
 
-from PySide6.QtGui import QAction
+from PySide6.QtCore import QUrl
+from PySide6.QtGui import QAction, QDesktopServices
 from PySide6.QtWidgets import QMenu, QSystemTrayIcon
 
 from .. import APP_NAME
@@ -85,6 +86,11 @@ class Tray(QSystemTrayIcon):
                 )
                 self.showMessage(data.get("title", APP_NAME), data.get("message", ""), icon, 6000)
             alerts.play_for(self.ctx.cfg, kind)  # el sonido va aparte: se puede tener sonido sin aviso
+        elif kind == "open_url" and isinstance(data, dict):
+            # Solo páginas del admin de Shopify (p. ej. el pedido para «Imprimir etiqueta» de la FedEx de Flow).
+            url = str(data.get("url") or "")
+            if url.startswith("https://admin.shopify.com/"):
+                QDesktopServices.openUrl(QUrl(url))
         elif kind == "connector" and isinstance(data, dict) and data.get("state") == "error":
             names = {"shopify": tr("Shopify"), "mqtt": tr("n8n (tiempo real)"), "local_api": tr("API local")}
             name = names.get(data.get("name"), data.get("name"))

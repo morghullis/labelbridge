@@ -18,7 +18,7 @@ from ..connectors.shopify import admin_url
 from ..i18n import tr
 from .context import AppContext
 from .purchase_dialog import box_text, has_saved_box
-from .widgets import button, copy_to_clipboard, label, run_async
+from .widgets import button, copy_to_clipboard, label, run_async, step_title
 
 CHECK_EVERY_MS = 10_000  # cada cuánto se mira si Shopify ya tiene la guía (solo con la ventana abierta)
 
@@ -140,17 +140,7 @@ class FedexDialog(QDialog):
     # --- piezas --------------------------------------------------------------------------------
     @staticmethod
     def _step(number: int, text: str) -> QWidget:
-        box = QWidget()
-        line = QHBoxLayout(box)
-        line.setContentsMargins(0, 6, 0, 0)
-        line.setSpacing(10)
-        badge = label(str(number))
-        badge.setFixedSize(24, 24)
-        badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        badge.setStyleSheet("QLabel { background: #4F46E5; color: white; border-radius: 12px; font-weight: 700; }")
-        line.addWidget(badge)
-        line.addWidget(label(text, "SectionTitle", wrap=True), 1)
-        return box
+        return step_title(number, text)
 
     def fit(self) -> None:
         """El alto justo para el contenido (con textos que ocupan dos líneas, p. ej. en inglés)."""

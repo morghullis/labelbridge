@@ -56,7 +56,19 @@ from ...connectors.shopify import admin_url
 from ...i18n import N_, date_text, tr
 from .. import icons
 from ..context import AppContext
-from ..widgets import Card, Page, button, confirm, copy_to_clipboard, error, info, label, run_async, run_dialog
+from ..widgets import (
+    Card,
+    Page,
+    button,
+    confirm,
+    copy_to_clipboard,
+    error,
+    fit_height,
+    info,
+    label,
+    run_async,
+    run_dialog,
+)
 
 PERIODS = (("today", N_("Hoy")), (7, N_("Últimos 7 días")), (30, N_("Últimos 30 días")), (60, N_("Últimos 60 días")))
 STALE_SECONDS = 60
@@ -251,8 +263,10 @@ class ShippingRulesDialog(QDialog):
     """Por qué paquetería sale cada pedido: se aplica la primera regla que se cumple; si no, la predeterminada."""
 
     def __init__(self, parent: QWidget, rules: list[ShippingRule], default_carrier: str,
-                 fedex: tuple[str, str, bool] = ("FedEx 2Day®", "signature", True)) -> None:
+                 fedex: tuple[str, str, bool] = ("FedEx 2Day®", "signature", True), *, by_flow: bool = False,
+                 shop: str = "") -> None:
         super().__init__(parent)
+        self.shop = shop
         self.setWindowTitle(tr("Reglas de paquetería"))
         self.setMinimumWidth(720)
         outer = QVBoxLayout(self)
@@ -260,8 +274,8 @@ class ShippingRulesDialog(QDialog):
         outer.setSpacing(12)
         outer.addWidget(label(tr("Por qué paquetería sale cada pedido"), "CardTitle"))
         outer.addWidget(label(
-            tr("Se aplica la primera regla que se cumple. Shopify no deja comprar guías de FedEx automáticamente: esos "
-               "pedidos aparecen en «Necesitan acción», la compras en Shopify con un clic y LabelBridge la imprime sola."),
+            tr("Se aplica la primera regla que se cumple. Shopify no deja que LabelBridge compre guías de FedEx: las "
+               "compra Shopify Flow automáticamente o tú en Shopify con un clic, y LabelBridge las imprime."),
             "Muted", wrap=True,
         ))
         self.grid = QGridLayout()
@@ -288,9 +302,22 @@ class ShippingRulesDialog(QDialog):
         rest.addWidget(label(tr("y LabelBridge compra la guía sola.")))
         rest.addStretch(1)
         outer.addLayout(rest)
-        # Cómo se compra FedEx en Shopify: lo que la ventana «Guía FedEx» dice que elijas.
-        outer.addWidget(label(tr("FedEx (se compra en Shopify): la ventana «Guía FedEx» te dice que elijas"), "Small",
-                              wrap=True))
+        # FedEx: quién la compra (Shopify Flow solo, o una persona con la ventana «Guía FedEx») y qué se elige.
+        outer.addWidget(label(tr("¿Quién compra la FedEx?"), "Small", wrap=True))
+        who = QHBoxLayout()
+        who.setSpacing(8)
+        self.fedex_flow = QComboBox()
+        self.fedex_flow.addItem(tr("Shopify Flow, automáticamente (sin firma ni seguro)"), True)
+        self.fedex_flow.addItem(tr("Yo, en Shopify con la ventana «Guía FedEx»"), False)
+        self.fedex_flow.setCurrentIndex(0 if by_flow else 1)
+        who.addWidget(self.fedex_flow)
+        self.flow_help = button(tr("Cómo armar el flujo…"), "book", "ghost")
+        self.flow_help.clicked.connect(self.show_flow_setup)
+        who.addWidget(self.flow_help)
+        who.addStretch(1)
+        outer.addLayout(who)
+        self.prefs_title = label(tr("La ventana «Guía FedEx» te dice que elijas"), "Small", wrap=True)
+        outer.addWidget(self.prefs_title)
         prefs = QHBoxLayout()
         prefs.setSpacing(8)
         self.fedex_service = QComboBox()
@@ -307,6 +334,8 @@ class ShippingRulesDialog(QDialog):
             prefs.addWidget(widget)
         prefs.addStretch(1)
         outer.addLayout(prefs)
+        self.fedex_flow.currentIndexChanged.connect(lambda _i: self._fedex_mode())
+        self._fedex_mode()
         buttons = QHBoxLayout()
         buttons.addStretch(1)
         cancel = button(tr("Cancelar"))
@@ -316,6 +345,25 @@ class ShippingRulesDialog(QDialog):
         buttons.addWidget(cancel)
         buttons.addWidget(save)
         outer.addLayout(buttons)
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        QTimer.singleShot(0, lambda: fit_height(self))
+
+    def _fedex_mode(self) -> None:
+        """Con Shopify Flow no hay firma ni seguro (Flow no los ofrece): solo cuenta el servicio."""
+        flow = bool(self.fedex_flow.currentData())
+        self.fedex_signature.setEnabled(not flow)
+        self.fedex_insure.setEnabled(not flow)
+        self.flow_help.setVisible(flow)
+        self.prefs_title.setText(tr("El servicio que compra Shopify Flow") if flow
+                                 else tr("La ventana «Guía FedEx» te dice que elijas"))
+
+    def show_flow_setup(self) -> None:
+        from ..flow_setup_dialog import FlowSetupDialog, fedex_rule
+
+        run_dialog(FlowSetupDialog(self, self.shop, fedex_rule(self.rules()),
+                                   self.fedex_service.currentData() or FEDEX_SERVICES[0]))
 
     def _add_row(self, rule: ShippingRule) -> None:
         over = QDoubleSpinBox()
@@ -930,16 +978,23 @@ class OrdersPage(Page):
     def edit_rules(self) -> None:
         s = self.ctx.cfg.data.shopify
         dialog = ShippingRulesDialog(self, s.shipping_rules, s.default_carrier,
-                                     (s.fedex_service, s.fedex_signature, s.fedex_insure))
+                                     (s.fedex_service, s.fedex_signature, s.fedex_insure),
+                                     by_flow=s.fedex_by_flow, shop=s.shop)
         if run_dialog(dialog) != QDialog.DialogCode.Accepted:
             return
+        was_flow = s.fedex_by_flow
         s.shipping_rules = dialog.rules()
         s.default_carrier = dialog.default.currentData() or "USPS"
         s.fedex_service = dialog.fedex_service.currentData() or s.fedex_service
         s.fedex_signature = dialog.fedex_signature.currentData() or s.fedex_signature
         s.fedex_insure = dialog.fedex_insure.isChecked()
+        s.fedex_by_flow = bool(dialog.fedex_flow.currentData())
         self.ctx.cfg.save("shopify")
         self.reload()  # se vuelve a clasificar con las reglas nuevas
+        if s.fedex_by_flow and not was_flow:  # recién elegido: cómo armar el flujo en Shopify
+            from ..flow_setup_dialog import FlowSetupDialog, fedex_rule
+
+            run_dialog(FlowSetupDialog(self, s.shop, fedex_rule(s.shipping_rules), s.fedex_service))
 
     def export_csv(self) -> None:
         if not self.all_rows:

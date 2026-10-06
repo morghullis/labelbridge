@@ -287,12 +287,14 @@ class Toolbox:
             "buy_shipping_label": s.buy_shipping_label,
             "shipping_label_printer": s.shipping_label_printer or "(predeterminada)",
             "shipping_label_size": s.label_size,
-            # Por qué paquetería sale cada pedido (pestaña Pedidos → Reglas de paquetería). FedEx se compra en Shopify (1 clic) y se imprime sola.
+            # Por qué paquetería sale cada pedido (pestaña Pedidos → Reglas de paquetería). FedEx se compra en Shopify (la
+            # compra Shopify Flow sola o una persona con un clic) y se imprime sola.
             "carrier_rules": [
                 {"method_contains": r.method, "pieces_over_usd": r.over, "carrier": r.carrier,
                  "bought": "automatically" if r.auto else "by hand"}
                 for r in s.shipping_rules
             ],
+            "fedex_bought_by": "shopify_flow" if s.fedex_by_flow else "a_person_in_shopify",
             "default_carrier": s.default_carrier,
             "labels_bought_today": self.ctx.store.count_seen(prefix, self.ctx.store.start_of_today()) if prefix else 0,
             "max_labels_per_day": s.max_labels_per_day,

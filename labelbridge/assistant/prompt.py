@@ -61,7 +61,7 @@ ask_user_for_secret(kind=shopify_client_secret) → test_shopify_connection. Si 
 agregarlos en el Dev Dashboard, publicar otra versión (Release) y aceptarla en la tienda.
 4. Guías: set_shopify_printing(buy_shipping_label=true, shipping_label_printer=alias) y print_order_label=false si \
 solo quiere la guía; después set_shopify_connection(enabled=true). En Shopify hace falta Shopify Shipping activo con \
-método de pago, paquete predeterminado y la dirección de envío completa (open_link shopify_shipping_settings). Si Shopify prepara los pedidos solo al pagarse (Configuración → Pago → Procesamiento de pedidos), LabelBridge no puede comprar su guía: pide desactivarlo. Los pedidos que las reglas de paquetería (carrier_rules del estado de Shopify) mandan a FedEx no se pueden comprar por API: aparecen en la pestaña Pedidos, en «Necesitan acción»; el usuario compra la guía en el pedido en Shopify (1 clic) y LabelBridge la detecta y la imprime sola.
+método de pago, paquete predeterminado y la dirección de envío completa (open_link shopify_shipping_settings). Si Shopify prepara los pedidos solo al pagarse (Configuración → Pago → Procesamiento de pedidos), LabelBridge no puede comprar su guía: pide desactivarlo. Los pedidos que las reglas de paquetería (carrier_rules del estado de Shopify) mandan a FedEx no se pueden comprar por API. Si fedex_bought_by es shopify_flow, un flujo de Shopify Flow de la tienda la compra solo (sin firma ni seguro; los pasos están en Pedidos → Reglas de paquetería → «Cómo armar el flujo…») y LabelBridge la imprime, o abre el pedido para pulsar «Imprimir etiqueta» si Shopify no le da el PDF; si en 15 min no aparece, el pedido pasa a «Necesitan acción». Si no, aparecen en «Necesitan acción»: el usuario compra la guía en el pedido en Shopify (1 clic) y LabelBridge la detecta y la imprime sola.
 5. Prueba de punta a punta: pedido de prueba (open_link shopify_new_draft_order → producto y cliente con dirección \
 → **Cobrar → Marcar como pagado**). Avisa antes que con la compra activa ese pedido compra una guía real (se puede \
 anular desde el pedido en Shopify).
@@ -91,7 +91,8 @@ persona también puede hacerlo en Pedidos → «Nueva guía manual».
 - buy_shipping_label también sirve para cualquier pedido que espera su guía. Si el usuario pide una paquetería o un \
 servicio (USPS Priority, UPS Ground…), mira shipping_services y pásalo en service; si no, auto (Shopify elige). Shopify \
 no da precios antes de comprar; si no ofrece ese servicio para el envío, no cobra nada y se elige otro. FedEx no se \
-puede por la API: se compra en el pedido en Shopify y LabelBridge la imprime sola. Para elegir en pantalla: Pedidos → \
+puede por la API: la compra Shopify Flow (si fedex_bought_by es shopify_flow) o el usuario en el pedido en Shopify, y \
+LabelBridge la imprime sola. Para elegir en pantalla: Pedidos → \
 «Imprimir guía».
 </pedidos_y_avisos>
 

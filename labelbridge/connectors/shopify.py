@@ -37,12 +37,14 @@ from .shopify_orders import MANUAL_TAG, ManualItem, ManualOrders, OrderDetail, P
 from .tracking import TRACKING_QUERY, Tracking, parse_tracking
 from .orders_overview import (
     ACTION_STATES,
+    FLOW_WAIT_SECONDS,
     OVERVIEW_QUERY,
     OVERVIEW_QUERY_BASIC,
     OrderRow,
     belongs,
     carrier_name,
     classify,
+    flow_buys,
     friendly_reason,
     label_events,
     rule_for,
@@ -54,6 +56,8 @@ log = logging.getLogger(__name__)
 
 PAID_STATUSES = {"PAID", "PARTIALLY_REFUNDED", "AUTHORIZED"}
 FETCH_TRIES = 10  # vueltas buscando una guía comprada en Shopify antes de darla por perdida
+FLOW_PRINT_CHECK_SECONDS = 120  # cada cuánto se mira si ya se imprimió en Shopify la guía FedEx de Flow sin PDF
+FLOW_PRINT_WATCH_SECONDS = 3 * 86400  # y durante cuánto (después queda «Guía sin PDF» para revisarla)
 DELIVERY_CHECK_SECONDS = 1800  # cada cuánto se revisan los envíos en camino (retrasos y problemas)
 OPEN_FULFILLMENT = {"UNFULFILLED", "PARTIALLY_FULFILLED", "OPEN", "IN_PROGRESS", "PENDING_FULFILLMENT"}
 SHIPPABLE_METHODS = {"SHIPPING", "PICKUP_POINT", None}
@@ -154,6 +158,13 @@ query LabelBridgeShippingLabel($id: ID!) {
     trackingInfo { number company url }
     shippingDocuments { documentType format url }
   }
+}
+"""
+
+# Si ya se imprimió desde Shopify (la FedEx que compró Shopify Flow cuando Shopify no entrega su PDF a otras apps).
+LABEL_PRINTED_QUERY = """
+query LabelBridgeLabelPrinted($id: ID!) {
+  shippingLabel(id: $id) { id printed }
 }
 """
 
@@ -759,7 +770,9 @@ class ShopifyService(BackgroundService):
                 self._key("resume"), json.dumps({"from": query_from, "after": next_after} if next_after else None)
             )
         queued += self._check_pending_purchases(client, stop=stop)
+        self._check_flow_waits(client, stop)
         queued += self._fetch_bought_labels(client, stop)
+        self._check_flow_prints(client, stop)
         self._flush_tags(client)
         if queued:
             self.engine.wake()
@@ -803,9 +816,24 @@ class ShopifyService(BackgroundService):
             # Se resolvió en Shopify (guía comprada ahí, p. ej. la de FedEx, o enviado): su guía se trae y se imprime.
             # También si la compra automática está apagada pero alguien eligió «comprarla en Shopify» en la app.
             if s.buy_shipping_label or entry.get("fetch"):
-                self._queue_fetch(legacy, meta)
+                self._queue_fetch(legacy, {**meta, "flow": 1} if noted == "flow" else meta)
             self._note(legacy, "resolved", name=name)
             noted = "resolved"
+
+        rule = rule_for(s.shipping_rules, (order.get("shippingLine") or {}).get("title") or "", subtotal_of(order))
+        if flow_buys(s, rule) and is_new and paid_ok and not manual:
+            # FedEx por Shopify Flow: la compra un flujo de la tienda (la API no puede). LabelBridge no le pide a nadie
+            # que la compre: espera la guía, la imprime al aparecer y avisa si no aparece (_check_flow_waits). No
+            # depende de la compra automática de LabelBridge: el dinero lo gasta el flujo, no esta app.
+            flow_key = self._key(f"order:{legacy}:flow")
+            if open_ok and not noted:
+                self._note(legacy, "flow", name=name, carrier=rule.carrier, fetch=1,
+                           created=_iso_to_ts(order.get("createdAt", "")))
+            elif not open_ok and not noted and not self.store.seen(flow_key):
+                # Flow fue más rápido que la primera vuelta: el pedido ya llegó preparado con su guía.
+                self._queue_fetch(legacy, {**meta, "flow": 1})
+                self._note(legacy, "resolved", name=name, carrier=rule.carrier)
+            self.store.mark_seen(flow_key)
 
         if s.print_order_label and is_new and paid_ok and open_ok and not manual:
             key = self._key(f"order:{legacy}:label")
@@ -840,11 +868,13 @@ class ShopifyService(BackgroundService):
                 self.store.mark_seen(key)
 
         if s.buy_shipping_label and is_new and paid_ok and open_ok and not manual:
-            rule = rule_for(s.shipping_rules, (order.get("shippingLine") or {}).get("title") or "", subtotal_of(order))
             if rule is not None and not rule.auto:
                 # FedEx (y lo que se marque «en Shopify»): Shopify no deja comprarla por API, nunca otra paquetería.
                 # Se compra en el pedido con un clic y LabelBridge la imprime sola al verla (_fetch_bought_labels).
-                if noted != "manual":
+                # Con Shopify Flow la compra el flujo (arriba): nadie tiene que comprarla.
+                if flow_buys(s, rule):
+                    pass
+                elif noted != "manual":
                     self._note(legacy, "manual", name=name, carrier=rule.carrier)
                     self.events.notify(
                         tr("Pedido {0}: compra la guía de {1} en Shopify", name, rule.carrier),
@@ -852,8 +882,8 @@ class ShopifyService(BackgroundService):
                            "LabelBridge la imprime sola.", rule.carrier),
                         "error", kind="action",
                     )
-            elif noted == "manual":
-                pass  # alguien eligió comprarla en Shopify (p. ej. FedEx): la compra automática no la toca
+            elif noted in ("manual", "flow"):
+                pass  # alguien eligió comprarla en Shopify, o Flow la está comprando: la compra automática no la toca
             else:
                 queued += self._buy_labels(client, s, order, meta, stop)
         return queued
@@ -1265,6 +1295,18 @@ class ShopifyService(BackgroundService):
         return queued
 
     def _no_document(self, legacy: str, meta: dict) -> None:
+        if meta.get("flow"):
+            # La FedEx de Shopify Flow: Shopify solo le da el PDF a quien la compró. Como hacía la PC con el sistema de
+            # la web, se abre el pedido en Shopify y basta «Imprimir etiqueta»; al imprimirla allí, el pedido se da por
+            # resuelto (_check_flow_prints).
+            self._note(legacy, "no_document", name=meta.get("order_name"), flow=1)
+            self.events.emit(ev.OPEN_URL, {"url": admin_url(self.cfg.data.shopify.shop, f"orders/{int(legacy)}")})
+            self.events.notify(
+                tr("Guía FedEx de {0} lista", meta.get("order_name")),
+                tr("Shopify Flow la compró. Se abrió el pedido en Shopify: pulsa «Imprimir etiqueta»."),
+                "info", kind="action",
+            )
+            return
         self._note(legacy, "no_document", name=meta.get("order_name"))  # Pedidos → «Guía sin PDF»
         self.events.notify(
             tr("Guía sin imprimir"),
@@ -1272,6 +1314,65 @@ class ShopifyService(BackgroundService):
                meta.get("order_name")),
             "error", kind="action",
         )
+
+    def _check_flow_waits(self, client: ShopifyClient, stop: threading.Event | None = None) -> None:
+        """FedEx por Shopify Flow: si pasados FLOW_WAIT_SECONDS desde el pedido sigue sin preparar, Flow no la compró
+        (flujo apagado o distinto, pago incompleto, sin tarifa…): se le pide a una persona, con «Comprar guía FedEx»."""
+        now = time.time()
+        late = [(legacy, entry) for legacy, entry in self.ledgers().items() if entry.get("state") == "flow"
+                and now - float(entry.get("created") or entry.get("at") or 0) >= FLOW_WAIT_SECONDS]
+        for legacy, entry in late[:10]:
+            if stop is not None and stop.is_set():
+                return
+            name = entry.get("name") or legacy
+            gid = self.order_gid(legacy)
+            try:
+                order = client.graphql(FULFILLMENTS_QUERY, {"id": gid}).get("order") or {}
+            except (ShopifyError, net.NetworkError, net.HttpError) as exc:
+                log.warning("Shopify: no se pudo revisar la FedEx de %s: %s", name, exc)
+                continue
+            if not order:
+                self._note(legacy, "resolved", name=name)  # el pedido ya no existe
+            elif order.get("displayFulfillmentStatus") in OPEN_FULFILLMENT:
+                self._note(legacy, "manual", name=name, carrier=entry.get("carrier") or "FedEx", fetch=1, flow_late=1)
+                log.info("Shopify: Shopify Flow no compró la FedEx de %s", name)
+                self.events.notify(
+                    tr("Pedido {0}: Shopify Flow no compró la FedEx", name),
+                    tr("Pasaron {0} min y la guía no aparece. Cómprala tú: Pedidos → {1} → «Comprar guía FedEx».",
+                       FLOW_WAIT_SECONDS // 60, name),
+                    "error", kind="action",
+                )
+            else:  # se preparó y la vuelta no lo vio: su guía se trae igual
+                self._queue_fetch(legacy, {"order_gid": gid, "order_name": name, "order_id": str(legacy), "flow": 1})
+                self._note(legacy, "resolved", name=name)
+
+    def _check_flow_prints(self, client: ShopifyClient, stop: threading.Event | None = None) -> None:
+        """La FedEx de Shopify Flow sin PDF se imprime desde Shopify: cuando Shopify la marca impresa, el pedido deja de
+        pedir acción en Pedidos. Se mira cada FLOW_PRINT_CHECK_SECONDS y durante unos días."""
+        now = time.time()
+        last = float(self.store.kv_get(self._key("flow_prints_at")) or 0)
+        if now - last < FLOW_PRINT_CHECK_SECONDS:
+            return
+        self.store.kv_set(self._key("flow_prints_at"), str(now))
+        watching = [(legacy, entry) for legacy, entry in self.ledgers().items()
+                    if entry.get("state") == "no_document" and entry.get("flow")
+                    and now - float(entry.get("at") or 0) < FLOW_PRINT_WATCH_SECONDS]
+        for legacy, entry in watching[:10]:
+            if stop is not None and stop.is_set():
+                return
+            name = entry.get("name") or legacy
+            try:
+                labels = client.order_labels(self.order_gid(legacy))
+                printed = [label_id for label_id, info in labels.items()
+                           if not info.get("voided") and str(label_id).isdigit()
+                           and (client.graphql(LABEL_PRINTED_QUERY, {"id": f"gid://shopify/ShippingLabel/{label_id}"})
+                                .get("shippingLabel") or {}).get("printed")]
+            except (ShopifyError, net.NetworkError, net.HttpError) as exc:
+                log.info("Shopify: no se pudo ver si la guía de %s ya se imprimió: %s", name, exc)
+                continue
+            if printed:
+                self._note(legacy, "resolved", name=name, printed_in_shopify=1)
+                log.info("Shopify: la guía FedEx de %s se imprimió desde Shopify", name)
 
     def print_order_labels(self, legacy: str, name: str) -> int:
         """«Imprimir guía» de un pedido cuya guía LabelBridge no tiene (p. ej. se compró en Shopify): se trae de ahí."""

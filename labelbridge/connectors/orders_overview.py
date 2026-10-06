@@ -65,9 +65,11 @@ NO_POSTCODE = {
     "TZ", "UG", "VU", "YE", "ZW",
 }
 NEEDS_PROVINCE = {"US", "CA", "MX", "AU"}
-# Lo que el registro de LabelBridge marca como pendiente de una persona (ver ShopifyService._note).
-ACTION_STATES = {"manual", "failed", "uncertain", "limit", "no_document"}
+# Lo que el registro de LabelBridge marca como pendiente de una persona o de Shopify Flow (ver ShopifyService._note):
+# cuando el pedido se prepara en Shopify, su guía se trae y se imprime.
+ACTION_STATES = {"manual", "failed", "uncertain", "limit", "no_document", "flow"}
 WAIT_SECONDS = 600  # un pedido nuevo sin guía después de esto ya es raro
+FLOW_WAIT_SECONDS = 15 * 60  # lo que se le da a Shopify Flow para comprar la FedEx antes de pedírsela a una persona
 TEST_TAGS = ("prueba", "test")
 
 # Por qué Shopify no compró una guía (código de su respuesta → en palabras de cualquiera).
@@ -317,6 +319,13 @@ def subtotal_of(order: dict) -> float:
         return 0.0
 
 
+def flow_buys(settings, rule) -> bool:
+    """La guía de este pedido la compra Shopify Flow sola: la regla manda FedEx y en Reglas de paquetería se eligió que
+    la compre Flow (un flujo de la tienda; Shopify no deja comprar FedEx por la API)."""
+    return (bool(getattr(settings, "fedex_by_flow", False)) and rule is not None and not rule.auto
+            and "fedex" in str(getattr(rule, "carrier", "") or "").lower())
+
+
 def rule_text(rule) -> str:
     """La condición de una regla, para explicar el porqué («piezas de más de US$1,000», «método Express»)."""
     parts = []
@@ -484,6 +493,13 @@ def classify(
     s = settings
     if active:
         if ledger.get("state") == "no_document" and row.printed != "yes":
+            if ledger.get("flow"):
+                return act(
+                    tr("Imprimir guía FedEx en Shopify"),
+                    tr("Shopify Flow compró la guía FedEx, pero Shopify solo le da el PDF a quien la compró: abre el "
+                       "pedido en Shopify y pulsa «Imprimir etiqueta»."),
+                    "open",
+                )
             return act(
                 tr("Guía sin PDF"),
                 tr("Shopify compró la guía pero no entregó el PDF para imprimir: imprímela desde el pedido en Shopify."),
@@ -499,6 +515,8 @@ def classify(
             return keep("waiting", tr("Imprimiendo la guía…"))
         if row.printed == "yes":
             return keep("done", tr("Guía comprada e impresa"))
+        if ledger.get("printed_in_shopify"):
+            return keep("done", tr("Guía impresa desde Shopify"))
         return keep("done", tr("Guía comprada en Shopify"))
     if shipped:
         if row.tracking:
@@ -528,12 +546,19 @@ def classify(
             tr("No se sabe si la guía se compró (se cortó la conexión). Revísalo en Shopify antes de comprarla a mano."),
             "open",
         )
+    # Shopify Flow la está comprando (FedEx): nada que hacer todavía, y nunca un botón para comprar otra.
+    current = now or datetime.now().timestamp()
+    if state == "flow" or (not state and flow_buys(s, rule) and created >= since
+                           and current - created < FLOW_WAIT_SECONDS):
+        row.issue = "flow"
+        return keep("waiting", tr("Shopify Flow está comprando la guía {0}…", row.carrier or "FedEx"))
     if (rule is not None and not rule.auto) or state == "manual":
         carrier = row.carrier or tr("Esta paquetería")
         why = tr(" por la regla de {0}", rule_text(rule)) if rule is not None and rule_text(rule) else ""
+        late = tr("Shopify Flow no la compró en {0} min. ", FLOW_WAIT_SECONDS // 60) if ledger.get("flow_late") else ""
         return act(
             tr("Comprar guía {0} en Shopify", carrier),
-            tr("Sale por {0}{1} (piezas: {2}). Shopify no deja que ninguna app compre esta guía: pulsa «Comprar guía {0}», cómprala en Shopify con lo que te indica LabelBridge (servicio, firma y seguro) y LabelBridge la imprime sola.", carrier, why, _money(row.subtotal)),
+            late + tr("Sale por {0}{1} (piezas: {2}). Shopify no deja que ninguna app compre esta guía: pulsa «Comprar guía {0}», cómprala en Shopify con lo que te indica LabelBridge (servicio, firma y seguro) y LabelBridge la imprime sola.", carrier, why, _money(row.subtotal)),
             "buy",
         )
     if state == "failed":

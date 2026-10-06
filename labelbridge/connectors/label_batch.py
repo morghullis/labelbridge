@@ -53,6 +53,8 @@ def plan_for(row: OrderRow, *, batch: bool = False) -> tuple[str, str]:
         return SKIP, tr("Tiene una compra en curso o sin confirmar: revísala en Shopify antes de comprar otra.")
     if row.issue == "auto":
         return SKIP, tr("La compra automática la está comprando en este momento.")
+    if row.issue == "flow":  # FedEx: Shopify Flow la compra sola; comprar otra sería pagar dos
+        return SKIP, tr("Shopify Flow la está comprando en este momento.")
     if row.action == "buy":  # FedEx (o una regla «en Shopify»): no se puede comprar por la API
         carrier = row.carrier or row.rule_carrier or "FedEx"
         return IN_SHOPIFY, tr("{0} se compra en Shopify (1 clic) y LabelBridge la imprime sola.", carrier)

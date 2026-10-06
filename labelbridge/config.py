@@ -225,6 +225,9 @@ class ShopifySettings:
     fedex_service: str = "FedEx 2Day®"
     fedex_signature: str = "signature"  # FEDEX_SIGNATURES
     fedex_insure: bool = True  # asegurar por el valor de las piezas
+    # La FedEx la compra Shopify Flow sola (un flujo en la tienda, sin firma ni seguro): LabelBridge espera la guía, la
+    # imprime (o abre el pedido para imprimirla) y avisa si Flow no la compró. Apagado: la ventana «Guía FedEx».
+    fedex_by_flow: bool = False
     notify_customer: bool = False
     package: PackageSettings = field(default_factory=PackageSettings)
     max_labels_per_day: int = 50

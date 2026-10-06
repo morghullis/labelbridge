@@ -346,3 +346,29 @@ def hrow(*widgets: QWidget | None, stretch_first: bool = False, spacing: int = 8
         else:
             row.addWidget(widget, 1 if (stretch_first and index == 0) else 0)
     return row
+
+
+def step_title(number: int, text: str) -> QWidget:
+    """Un paso numerado de una guía («1  Abre el pedido…»), como en las ventanas «Guía FedEx» y «Shopify Flow»."""
+    box = QWidget()
+    line = QHBoxLayout(box)
+    line.setContentsMargins(0, 6, 0, 0)
+    line.setSpacing(10)
+    badge = label(str(number))
+    badge.setFixedSize(24, 24)
+    badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    badge.setStyleSheet("QLabel { background: #4F46E5; color: white; border-radius: 12px; font-weight: 700; }")
+    line.addWidget(badge)
+    line.addWidget(label(text, "SectionTitle", wrap=True), 1)
+    return box
+
+
+def fit_height(window: QWidget) -> None:
+    """El alto justo para el contenido de una ventana con textos que ocupan varias líneas (Qt la deja apretada)."""
+    layout = window.layout()
+    if layout is None:
+        return
+    layout.activate()
+    width = max(window.minimumWidth(), window.width())
+    needed = layout.heightForWidth(width) if layout.hasHeightForWidth() else layout.sizeHint().height()
+    window.resize(width, max(needed, layout.minimumSize().height()))
