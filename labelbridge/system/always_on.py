@@ -54,6 +54,7 @@ WAKE_TIMER_COMMANDS = (("powercfg", "/setacvalueindex", "SCHEME_CURRENT", "SUB_S
 APPLY = ("powercfg", "/setactive", "SCHEME_CURRENT")  # los /setacvalueindex cuentan recién con esto
 # Lo que deja una tarea al terminar (LastTaskResult) que no es un error.
 TASK_OK = {0, 0x41301, 0x41303, 0x41306}  # bien · corriendo · todavía no corrió · se cortó al cerrarse
+DISABLED = -1  # la tarea existe pero está en pausa
 
 
 class AlwaysOnError(Exception):
@@ -169,7 +170,7 @@ def task_exists(name: str) -> bool:
 
 
 def task_result(name: str) -> int | None:
-    """Lo que dejó la tarea la última vez que corrió (0 = bien), o None si la tarea no existe."""
+    """Lo que dejó la tarea la última vez que corrió (0 = bien), DISABLED si está en pausa, o None si no existe."""
     import pywintypes
 
     try:
@@ -177,9 +178,27 @@ def task_result(name: str) -> int | None:
     except pywintypes.com_error:
         return None
     try:
+        if not task.Enabled:
+            return DISABLED
         return int(task.LastTaskResult) & 0xFFFFFFFF
     except (pywintypes.com_error, TypeError, ValueError):
         return 0
+
+
+def ensure_enabled() -> bool:
+    """Al abrir la app: si una instalación interrumpida dejó la tarea «sin sesión» en pausa, se reactiva. True si la
+    reactivó."""
+    import pywintypes
+
+    try:
+        task = _folder().GetTask(BACKGROUND_TASK)
+        if task.Enabled:
+            return False
+        task.Enabled = True
+    except pywintypes.com_error:
+        return False
+    log.info("Funcionar siempre: la tarea «%s» estaba en pausa y se reactivó", BACKGROUND_TASK)
+    return True
 
 
 def enable_wake() -> None:
@@ -244,6 +263,9 @@ def problem_text(result: int) -> str:
     """Lo que dejó la tarea, para la persona (vacío si no es un error)."""
     if result in TASK_OK:
         return ""
+    if result == DISABLED:
+        return tr("La tarea está en pausa (quedó así por una instalación interrumpida). Abre LabelBridge otra vez o "
+                  "quítala y vuelve a activarla.")
     if result in (WRONG_PASSWORD, 0x8007052F, 0x80070569):  # contraseña, restricción de cuenta, sin derecho
         return tr("Windows no pudo iniciar la tarea con tu cuenta (¿cambiaste la contraseña?). Quítala y vuelve a "
                   "activarla.")

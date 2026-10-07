@@ -934,6 +934,7 @@
  "{0}. Las integraciones que imprimen por la API local no podrán entrar hasta que se pueda leer: reinicia LabelBridge y acepta el permiso del almacén de contraseñas.": "{0}. Integrations that print through the local API can't get in until it can be read: restart LabelBridge and allow access to the password store.",
  "Sin conexión de red": "No network connection",
  "La última vez terminó con el código 0x{0:08X}. Revisa el Registro.": "Last time it ended with code 0x{0:08X}. Check the Log.",
+ "La tarea está en pausa (quedó así por una instalación interrumpida). Abre LabelBridge otra vez o quítala y vuelve a activarla.": "The task is paused (an interrupted installation left it that way). Open LabelBridge again, or remove it and turn it on again.",
  "Windows no pudo iniciar la tarea con tu cuenta (¿cambiaste la contraseña?). Quítala y vuelve a activarla.": "Windows couldn't start the task with your account (did you change your password?). Remove it and turn it on again.",
  "LabelBridge necesita la contraseña de tu cuenta de Windows para imprimir aunque nadie haya iniciado sesión. Windows la guarda en la tarea programada; LabelBridge no la guarda.": "LabelBridge needs your Windows account password to print even when nobody is signed in. Windows keeps it in the scheduled task; LabelBridge doesn't store it.",
  "Imprimir sin sesión iniciada": "Print without anyone signed in",

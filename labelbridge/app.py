@@ -204,6 +204,23 @@ def main(argv: list[str] | None = None) -> int:
         return 0  # ya se avisó: en la Mac, launchd no la vuelve a abrir en un bucle de ventanas
 
 
+def _reenable_background_task() -> None:
+    """«Funcionar siempre»: si una instalación interrumpida dejó en pausa la tarea «sin sesión», se reactiva (en otro
+    hilo: el Programador de tareas puede tardar)."""
+    from .system import always_on
+
+    if not always_on.supported():
+        return
+
+    def work() -> None:
+        try:
+            always_on.ensure_enabled()
+        except Exception:  # noqa: BLE001  queda anotado; la tarjeta de Ajustes también lo muestra
+            log.warning("Funcionar siempre: no se pudo revisar la tarea «sin sesión»", exc_info=True)
+
+    threading.Thread(target=work, name="funcionar-siempre", daemon=True).start()
+
+
 def _terms_pending(cfg, hints: dict) -> bool:
     """¿Falta aceptar los términos de uso y la privacidad de esta versión? Los aceptados en el instalador de Windows
     cuentan (y quedan anotados en la configuración)."""
@@ -342,11 +359,13 @@ def _run(app, argv: list[str], hints: dict, instance) -> int:
         app.quit()
 
     def quit_from_menu() -> None:
-        """«Salir» elegido por la persona: tampoco trabaja el segundo plano hasta abrirla otra vez o reiniciar."""
+        """«Salir» elegido por la persona: mientras siga esta sesión de Windows, tampoco trabaja el segundo plano. Si la
+        salida se cancela (una compra en curso), la pausa se quita."""
         from . import background
 
         background.hold()
         quit_app()
+        QTimer.singleShot(3000, background.release_hold)  # solo corre si la app siguió abierta
 
     def start_watchdog() -> None:
         # Si algo se queda colgado al cerrar, el proceso termina igual a los 20 s (la actualización espera a que la
@@ -419,6 +438,7 @@ def _run(app, argv: list[str], hints: dict, instance) -> int:
 
     engine.start()
     services.start()
+    _reenable_background_task()
     try:
         autostart.apply(cfg.data.general.start_with_windows)
     except OSError as exc:

@@ -147,21 +147,33 @@ end;
   cancela, la tarea vuelve a quedar activa. Si la tarea no existe, schtasks falla sin más. }
 procedure PauseBackground(Pause: Boolean);
 var
+  Service, Folder, Task: Variant;
   ResultCode: Integer;
-  TaskName: String;
 begin
-  TaskName := 'LabelBridge - Sin sesión (' + GetUserNameString + ')';
-  if Pause then
-  begin
-    Exec(ExpandConstant('{sys}\schtasks.exe'), '/Change /TN "' + TaskName + '" /DISABLE', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-    BackgroundPaused := ResultCode = 0;
-    Exec(ExpandConstant('{sys}\schtasks.exe'), '/End /TN "' + TaskName + '"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-    Exec(ExpandConstant('{sys}\taskkill.exe'), '/IM LabelBridge.exe /F /FI "SESSION eq 0"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  end
-  else if BackgroundPaused then
-  begin
-    Exec(ExpandConstant('{sys}\schtasks.exe'), '/Change /TN "' + TaskName + '" /ENABLE', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-    BackgroundPaused := False;
+  { Por COM (el Programador de tareas): pausar o reactivar no pide la contraseña guardada en la tarea. }
+  try
+    Service := CreateOleObject('Schedule.Service');
+    Service.Connect();
+    Folder := Service.GetFolder('\');
+    Task := Folder.GetTask('LabelBridge - Sin sesión (' + GetUserNameString + ')');
+  except
+    exit;  { sin la tarea: nada que pausar }
+  end;
+  try
+    if Pause then
+    begin
+      BackgroundPaused := Task.Enabled;
+      Task.Enabled := False;
+      Task.Stop(0);
+      Exec(ExpandConstant('{sys}\taskkill.exe'), '/IM LabelBridge.exe /F /FI "SESSION eq 0"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    end
+    else if BackgroundPaused then
+    begin
+      Task.Enabled := True;
+      BackgroundPaused := False;
+    end;
+  except
+    Log('No se pudo pausar o reactivar la tarea «sin sesión»: ' + GetExceptionMessage);
   end;
 end;
 
@@ -248,8 +260,13 @@ end;
 function InitializeSetup(): Boolean;
 begin
   Result := WaitForAppClosed(WizardSilent) and RemoveAdminInstall();
-  if Result then
-    PauseBackground(True);
+end;
+
+{ Recién al instalar (no al abrir el instalador): la copia de segundo plano se detiene y la tarea queda en pausa. }
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  PauseBackground(True);
+  Result := '';
 end;
 
 procedure DeinitializeSetup();

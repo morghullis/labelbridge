@@ -29,16 +29,17 @@ instance = SingleInstance(BACKGROUND, key={key!r}, lock_path=Path({lock!r}))
 assert instance.acquire()
 instance.handoff_requested.connect(app.quit)
 print("ready", flush=True)
+import time
 if {stuck!r}:
-    import time
     time.sleep(600)  # trabada: tiene el candado pero no atiende a nadie
+time.sleep({delay!r})  # arrancando: todavía sin contestar
 app.exec()
 instance.release()
 print("bye", flush=True)
 """
 
 
-def _holder(tmp_path, stuck: bool = False):
+def _holder(tmp_path, stuck: bool = False, delay: float = 0.0):
     """Una copia de segundo plano en otro proceso (con su candado); devuelve el proceso, la clave y el candado."""
     import queue
     import threading
@@ -46,7 +47,7 @@ def _holder(tmp_path, stuck: bool = False):
     key = f"LabelBridge-prueba-{os.getpid()}-{time.time_ns()}"
     lock = tmp_path / "trabajando.lock"
     env = {**os.environ, "QT_QPA_PLATFORM": "offscreen"}
-    process = subprocess.Popen([sys.executable, "-c", HOLDER.format(root=str(ROOT), key=key, lock=str(lock), stuck=stuck)],
+    process = subprocess.Popen([sys.executable, "-c", HOLDER.format(root=str(ROOT), key=key, lock=str(lock), stuck=stuck, delay=delay)],
                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
     lines: queue.Queue = queue.Queue()
     threading.Thread(target=lambda: [lines.put(line) for line in process.stdout], daemon=True).start()
@@ -84,6 +85,30 @@ def test_a_stuck_background_copy_is_closed_so_the_window_can_start(qapp, tmp_pat
     finally:
         if holder.poll() is None:
             holder.kill()
+
+
+def test_a_background_copy_still_starting_gets_the_handoff_once_it_answers(qapp, tmp_path, monkeypatch):
+    """Si la de segundo plano tarda en contestar (arrancando), la app sigue preguntando: no la cierra a la fuerza."""
+    from labelbridge.system import single_instance
+
+    monkeypatch.setattr(single_instance, "ANSWER_SECONDS", 1)
+    monkeypatch.setattr(single_instance, "HANDOFF_SECONDS", 20)
+    holder, key, lock, lines = _holder(tmp_path, delay=4)
+    try:
+        window = single_instance.SingleInstance(single_instance.APP, key=key, lock_path=lock)
+        assert window.acquire()
+        assert holder.wait(timeout=30) == 0 and lines.get(timeout=5).strip() == "bye"  # se cerró sola, no a la fuerza
+        window.release()
+    finally:
+        if holder.poll() is None:
+            holder.kill()
+
+
+def test_a_lock_file_that_cannot_be_opened_does_not_crash(tmp_path):
+    from labelbridge.system.single_instance import WorkLock
+
+    (tmp_path / "x.lock").mkdir()  # abrirlo falla (como con un antivirus que lo tiene tomado)
+    assert not WorkLock(tmp_path / "x.lock").try_acquire()
 
 
 def test_the_lock_is_the_real_guard(tmp_path):
@@ -226,6 +251,8 @@ def test_the_status_reads_windows_and_warns_when_the_task_fails(monkeypatch):
     assert "contraseña" in status.background_problem  # nunca un «Activo» engañoso
     results[always_on.BACKGROUND_TASK] = 0x41303  # todavía no corrió: no es un problema
     assert always_on.status().background_problem == ""
+    results[always_on.BACKGROUND_TASK] = always_on.DISABLED  # una instalación interrumpida la dejó en pausa
+    assert "en pausa" in always_on.status().background_problem
 
 
 def test_tasks_are_named_per_windows_account(monkeypatch):

@@ -12,6 +12,7 @@ por email. Tampoco instala actualizaciones: lo hace la app con ventana.
 from __future__ import annotations
 
 import logging
+import os
 import sys
 import time
 from pathlib import Path
@@ -98,10 +99,38 @@ def _boot_time() -> float:
     return time.time() - time.monotonic()
 
 
-def hold() -> None:
-    """La persona eligió «Salir» en la app: hasta que la abra otra vez o reinicie la PC, el segundo plano no trabaja."""
+def _session_id() -> int:
+    """La sesión de Windows de este proceso (0 fuera de Windows)."""
+    if sys.platform != "win32":
+        return 0
+    import ctypes
+
+    session = ctypes.c_ulong(0)
+    ctypes.windll.kernel32.ProcessIdToSessionId(os.getpid(), ctypes.byref(session))
+    return int(session.value)
+
+
+def _session_alive(session: int) -> bool:
+    """¿Sigue abierta esa sesión de Windows (el escritorio de la persona)? Con «Apagar» y el inicio rápido de Windows el
+    reloj de encendido no se reinicia, pero la sesión sí se cierra."""
+    if sys.platform != "win32" or not session:
+        return True
+    import subprocess
+
     try:
-        _hold_path().write_text(str(_boot_time()), encoding="ascii")
+        out = subprocess.run(["tasklist", "/FI", f"SESSION eq {session}", "/FI", "IMAGENAME eq explorer.exe", "/NH"],
+                             capture_output=True, text=True, timeout=15,
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
+    except (OSError, subprocess.SubprocessError):
+        return False  # ante la duda, el segundo plano trabaja (nunca dejar la PC sin imprimir)
+    return "explorer.exe" in out.lower()
+
+
+def hold() -> None:
+    """La persona eligió «Salir» en la app: mientras siga esa sesión (hasta abrirla otra vez, cerrar sesión o apagar), el
+    segundo plano no trabaja."""
+    try:
+        _hold_path().write_text(f"{_boot_time()} {_session_id()}", encoding="ascii")
     except OSError as exc:
         log.warning("No se pudo anotar la pausa del segundo plano: %s", exc)
 
@@ -115,10 +144,12 @@ def release_hold() -> None:
 
 def on_hold() -> bool:
     try:
-        boot = float(_hold_path().read_text(encoding="ascii"))
+        boot_text, _, session_text = _hold_path().read_text(encoding="ascii").strip().partition(" ")
+        boot, session = float(boot_text), int(session_text or 0)
     except (OSError, ValueError):
         return False
-    return abs(boot - _boot_time()) < 300  # misma sesión de la PC: tras reiniciar, vuelve a trabajar
+    # Misma vez encendida y la sesión de quien eligió «Salir» sigue abierta; si no, vuelve a trabajar.
+    return abs(boot - _boot_time()) < 300 and _session_alive(session)
 
 
 def _option(argv: list[str], name: str) -> str:

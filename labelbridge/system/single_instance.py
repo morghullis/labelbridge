@@ -54,8 +54,12 @@ class WorkLock:
     def try_acquire(self) -> bool:
         if self._file is not None:
             return True
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        handle = open(self.path, "a+b")  # noqa: SIM115  queda abierto mientras se tenga el candado
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            handle = open(self.path, "a+b")  # noqa: SIM115  queda abierto mientras se tenga el candado
+        except OSError as exc:  # p. ej. el antivirus lo tiene abierto un momento: cuenta como «no tomado»
+            log.warning("No se pudo abrir el candado de LabelBridge (%s): se reintenta", exc)
+            return False
         try:
             if sys.platform == "win32":
                 import msvcrt
@@ -143,22 +147,25 @@ class SingleInstance(QObject):
             return True
         if self.role == BACKGROUND:
             return False
-        deadline = time.monotonic() + ANSWER_SECONDS
-        while True:
-            peer = self._talk(self._command_for)
-            if peer == APP:
-                return False  # ya hay una ventana: se trajo al frente
-            if peer == BACKGROUND:
-                log.info("LabelBridge trabajaba en segundo plano: se le pidió el relevo")
-                break
-            if self.lock.try_acquire():  # la otra justo terminó de cerrarse
+        # Hasta que la otra suelte el candado: se le habla cada pocos segundos (si estaba arrancando, en cuanto
+        # contesta recibe el pedido de relevo; repetirlo no hace daño).
+        deadline = time.monotonic() + ANSWER_SECONDS + HANDOFF_SECONDS
+        next_talk = 0.0
+        asked = False
+        while time.monotonic() < deadline:
+            if self.lock.try_acquire():
                 self._listen()
                 return True
-            if time.monotonic() >= deadline:
-                log.warning("La copia que trabaja no contesta: se espera a que suelte el candado")
-                break
+            if time.monotonic() >= next_talk:
+                peer = self._talk(self._command_for)
+                if peer == APP:
+                    return False  # ya hay una ventana: se trajo al frente
+                if peer == BACKGROUND and not asked:
+                    log.info("LabelBridge trabajaba en segundo plano: se le pidió el relevo")
+                    asked = True
+                next_talk = time.monotonic() + 3.0
             time.sleep(0.5)
-        if not self.lock.wait(HANDOFF_SECONDS) and not self._close_stuck_holder():
+        if not self._close_stuck_holder():
             log.error("La otra copia de LabelBridge no se cerró: esta no arranca (nunca dos trabajando)")
             return False
         self._listen()
