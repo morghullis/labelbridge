@@ -220,7 +220,7 @@ def status() -> Status:
     from . import windows_admin
 
     try:
-        sleep_ac = int(windows_admin.power_settings()["sleep_ac"])
+        sleep_ac = int(windows_admin.power_settings()["sleep_after_minutes_plugged"])
     except Exception:  # noqa: BLE001  sin dato se muestra «no se pudo leer»
         log.warning("Funcionar siempre: no se pudo leer la energía de Windows", exc_info=True)
         sleep_ac = None

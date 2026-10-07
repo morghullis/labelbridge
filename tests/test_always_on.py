@@ -134,3 +134,13 @@ def test_outside_windows_there_is_nothing_to_configure():
     from labelbridge.system import always_on
 
     assert not always_on.supported()
+
+
+def test_the_status_reads_the_sleep_minutes_windows_gives(monkeypatch):
+    from labelbridge.system import always_on, windows_admin
+
+    monkeypatch.setattr(windows_admin, "power_settings", lambda: {"sleep_after_minutes_plugged": 0,
+                                                                  "sleep_after_minutes_battery": 15})
+    monkeypatch.setattr(always_on, "task_exists", lambda name: name == always_on.WAKE_TASK)
+    status = always_on.status()
+    assert status.never_sleeps and status.wake and not status.background
