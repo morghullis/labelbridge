@@ -521,3 +521,15 @@ def test_report_page_locks_the_week_while_loading_and_reloads_when_stale(shopify
     page.refresh()
     assert loads == [False, False]
     page.close()
+
+
+def test_percentages_from_a_handful_of_orders_are_not_judged_against_the_sector():
+    from labelbridge.ui.pages.report import _verdict
+
+    two = [order(day(1), 600, customer_orders=1, ship_after_hours=5), order(day(3), 590, ship_after_hours=5)]
+    by_key = {c.key: c for c in build_report(two, NOW, MIAMI).comparisons}
+    assert by_key["repeat"].store == 0 and by_key["repeat"].verdict == "few" and "2 pedido" in by_key["repeat"].note
+    assert by_key["returns"].verdict == "few" and _verdict(by_key["returns"])[1] == "Pocos pedidos"
+    assert by_key["aov_jewelry"].verdict == "above"  # un promedio de montos sí se compara
+    five = [order(day(i), 300, customer_orders=1, ship_after_hours=5) for i in range(5)]
+    assert {c.key: c for c in build_report(five, NOW, MIAMI).comparisons}["repeat"].verdict == "below"

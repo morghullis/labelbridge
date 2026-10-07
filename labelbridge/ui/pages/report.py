@@ -126,6 +126,8 @@ def _verdict(item: Comparison) -> tuple[str, str]:
     verdict = item.verdict
     if verdict == "unknown":
         return "off", tr("Sin dato")
+    if verdict == "few":
+        return "off", tr("Pocos pedidos")
     if verdict == "near":
         return "info", tr("Parecido")
     good = (verdict == "above") == (item.better == "up")

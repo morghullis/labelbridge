@@ -290,12 +290,15 @@ class Comparison:
     detail: str
     better: str = "up"
     note: str = ""  # p. ej. por qué no hay dato de la tienda
+    sample: int | None = None  # pedidos en que se basa un porcentaje: con menos de MIN_ORDERS no se juzga
 
     @property
     def verdict(self) -> str:
-        """above | below | near (±10 % de la referencia) | unknown."""
+        """above | below | near (±10 % de la referencia) | few (pocos pedidos para juzgar) | unknown."""
         if self.store is None or not self.reference:
             return "unknown"
+        if self.sample is not None and self.sample < MIN_ORDERS:
+            return "few"
         ratio = self.store / self.reference
         if 0.9 <= ratio <= 1.1:
             return "near"
@@ -631,10 +634,13 @@ def history_orders(history: list[WeekNumbers]) -> int:
 
 
 def _comparisons(current: WeekNumbers, currency: str = "USD") -> list[Comparison]:
-    def make(key: str, store: float | None, better: str = "up", note: str = "") -> Comparison:
+    def make(key: str, store: float | None, better: str = "up", note: str = "", sample: int | None = None) -> Comparison:
         b = BENCHMARKS[key]
+        if store is not None and sample is not None and sample < MIN_ORDERS:
+            note = tr("Con {0} pedido(s) este porcentaje todavía no dice mucho: se compara desde {1} pedidos.",
+                      sample, MIN_ORDERS)
         return Comparison(b.key, tr(b.title), store, b.value, b.unit, b.source, b.url, b.checked, tr(b.detail), better,
-                          note)
+                          note, sample)
 
     no_permission = tr("Para compararla hace falta el permiso de informes de Shopify (read_reports).")
     other_currency = tr("La referencia está en dólares y tu tienda vende en {0}: no se comparan.", currency)
@@ -643,8 +649,9 @@ def _comparisons(current: WeekNumbers, currency: str = "USD") -> list[Comparison
         make("aov_jewelry", aov, note="" if currency == "USD" else other_currency),
         make("aov_global", aov, note="" if currency == "USD" else other_currency),
         make("repeat", current.returning_share,
-             note="" if current.returning_share is not None else tr("Sin el permiso de clientes no se sabe quién vuelve.")),
-        make("returns", current.refund_share, better="down"),
+             note="" if current.returning_share is not None else tr("Sin el permiso de clientes no se sabe quién vuelve."),
+             sample=current.orders),
+        make("returns", current.refund_share, better="down", sample=current.orders),
         make("conversion_jewelry", None, note=no_permission),
         make("cart_abandonment", None, better="down", note=no_permission),
     ]
