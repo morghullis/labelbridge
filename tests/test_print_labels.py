@@ -464,7 +464,10 @@ def test_the_print_button_follows_the_selection(core, monkeypatch):
     assert not page.print_btn.isEnabled()  # nada elegido
     flags = QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows
     page.view.selectionModel().select(page.proxy.index(0, 0), flags)
-    assert page.print_btn.text() == "Imprimir guía" and page.details_btn.isEnabled()
+    first = page._selected_rows()[0]
+    # Con guía, el botón dice «Reimprimir guía» (es la misma: no se paga otra); sin guía, «Imprimir guía».
+    assert page.print_btn.text() == ("Reimprimir guía" if first.labels else "Imprimir guía")
+    assert page.details_btn.isEnabled()
     page.view.selectionModel().select(page.proxy.index(1, 0), flags)
     assert page.print_btn.text() == "Imprimir 2 guías" and not page.details_btn.isEnabled()
     told: list[str] = []

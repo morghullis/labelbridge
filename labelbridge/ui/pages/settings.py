@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from types import SimpleNamespace
 
 from PySide6.QtCore import Qt, QTime, QUrl
@@ -290,6 +291,21 @@ class SettingsPage(Page):
         form.addRow(tr("Reglas del dueño"), self.assistant_rules)
         form.addRow("", label(tr("Solo tú las cambias, aquí. No pueden saltarse las confirmaciones ni los límites de "
                                  "seguridad."), "Small", wrap=True))
+        # Acceso a la PC: solo Windows, apagado de fábrica y nunca lo cambia el asistente.
+        self.pc_tools = QCheckBox(tr("Herramientas de Windows"))
+        self.screen_control = QCheckBox(tr("Control de la pantalla (solo con Claude)"))
+        for box in (self.pc_tools, self.screen_control):
+            box.setEnabled(sys.platform == "win32")
+        form.addRow(tr("Acceso a la PC"), self.pc_tools)
+        form.addRow("", label(tr("Revisar y configurar impresoras, la cola de impresión, la red, la energía y la "
+                                 "Configuración de Windows."), "Small", wrap=True))
+        form.addRow("", self.screen_control)
+        form.addRow("", label(tr("Ver la pantalla y usar el mouse y el teclado para lo que no tenga herramienta (el "
+                                 "instalador de un driver, la página de la impresora)."), "Small", wrap=True))
+        form.addRow("", label(tr(
+            "Cada acción te pide permiso en una ventana y lo de administrador, además, el permiso de Windows. Con el "
+            "control de la pantalla, lo que se ve en ella se envía a tu proveedor de IA mientras dura la tarea.")
+            if sys.platform == "win32" else tr("Solo en Windows."), "Small", wrap=True))
         assistant.add(layout=form)
         tabs["assistant"].addWidget(assistant)
 
@@ -812,6 +828,8 @@ class SettingsPage(Page):
         self.assistant_budget.setValue(float(a.daily_budget_usd))
         self.assistant_rate.setValue(a.messages_per_hour)
         self.assistant_rules.setPlainText(a.rules)
+        self.pc_tools.setChecked(a.pc_tools)
+        self.screen_control.setChecked(a.screen_control)
         self.api_rate.setValue(s.api_requests_per_minute)
         self.api_failures.setValue(s.api_max_auth_failures)
         self.api_block.setValue(s.api_block_minutes)
@@ -842,6 +860,19 @@ class SettingsPage(Page):
         a.daily_budget_usd = round(self.assistant_budget.value(), 2)
         a.messages_per_hour = self.assistant_rate.value()
         a.rules = self.assistant_rules.toPlainText().strip()[:4000]
+        if sys.platform == "win32":
+            a.pc_tools = self.pc_tools.isChecked()
+            wants_screen = self.screen_control.isChecked()
+            if wants_screen and not a.screen_control and not confirm(self, tr("Control de la pantalla"), tr(
+                    "El asistente podrá ver tu pantalla y usar el mouse y el teclado para configurar la PC.\n\n"
+                    "• Cada acción te pide permiso en una ventana y puedes detenerlo cuando quieras.\n"
+                    "• Lo que se ve en la pantalla se envía a tu proveedor de IA (Claude) mientras dura la tarea: "
+                    "antes, cierra lo que tenga contraseñas o datos de clientes.\n"
+                    "• No puede usar las ventanas de LabelBridge ni aceptar el permiso de administrador de Windows: "
+                    "eso lo haces tú.\n\n¿Activar el control de la pantalla?")):
+                wants_screen = False
+                self.screen_control.setChecked(False)
+            a.screen_control = wants_screen
         s.api_requests_per_minute = self.api_rate.value()
         s.api_max_auth_failures = self.api_failures.value()
         s.api_block_minutes = self.api_block.value()

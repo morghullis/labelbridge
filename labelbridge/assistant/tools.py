@@ -99,6 +99,21 @@ class AssistantUI(Protocol):
 
     def config_changed(self, section: str) -> None: ...
 
+    # Control de la pantalla (assistant/screen.py), en el hilo de la interfaz.
+    def screen_consent(self) -> bool: ...
+
+    def screen_session(self, active: bool) -> None: ...
+
+    def capture_screen(self) -> Any: ...
+
+    def capture_region(self, rect: tuple[int, int, int, int]) -> bytes: ...
+
+    def blocked_areas(self) -> list[tuple[int, int, int, int]]: ...
+
+    def approve_screen(self, what: str, reason: str, frame: Any, points: list[tuple[int, int]]) -> str:
+        """"allow", "deny" o "stop" (detener todo)."""
+        ...
+
 
 @dataclass
 class Tool:
@@ -161,8 +176,24 @@ class Toolbox:
         self.ui = ui
         self.guard = guard
         self.cancel = cancel or threading.Event()
+        self.rebuild()
+
+    def rebuild(self) -> None:
+        """Arma la lista de herramientas con Ajustes de ahora (al empezar cada conversación)."""
         self.tools = self._build()
         self.by_name = {tool.name: tool for tool in self.tools}
+
+    def pc_tools_enabled(self) -> bool:
+        """Herramientas de Windows: encendidas por la persona en Ajustes → Asistente, y solo en Windows."""
+        from ..system import windows_admin
+
+        return bool(self.ctx.cfg.data.assistant.pc_tools) and windows_admin.supported()
+
+    def screen_enabled(self) -> bool:
+        """Control de la pantalla: encendido por la persona en Ajustes → Asistente, y solo en Windows."""
+        from ..system import screen_input
+
+        return bool(self.ctx.cfg.data.assistant.screen_control) and screen_input.supported()
 
     def definitions(self) -> list[dict]:
         """Definiciones para la API (orden fijo: el prefijo del prompt debe ser siempre idéntico)."""
@@ -1328,11 +1359,19 @@ class Toolbox:
                 self.copy_shopify_scopes,
                 N_("Copiando los permisos"),
             ),
-        ] + self._order_tools()
+        ] + self._order_tools() + self._pc_tools()
 
     def _order_tools(self) -> list[Tool]:
         """Pedidos, instrucciones, avisos a los dueños y pedidos manuales (assistant/order_tools.py)."""
         from .order_tools import definitions
+
+        return definitions(self)
+
+    def _pc_tools(self) -> list[Tool]:
+        """Herramientas de Windows (assistant/pc_tools.py), si la persona las encendió."""
+        if not self.pc_tools_enabled():
+            return []
+        from .pc_tools import definitions
 
         return definitions(self)
 

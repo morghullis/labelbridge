@@ -44,8 +44,10 @@ def connect(
     session: str = "",
     transport: Transport | None = None,
     sdk_factory=None,
+    computer: bool = False,
 ) -> ModelClient:
-    """Cliente para el proveedor del endpoint. La dirección pasa siempre por la política de seguridad."""
+    """Cliente para el proveedor del endpoint. La dirección pasa siempre por la política de seguridad. `computer`:
+    el control de la pantalla (solo Claude)."""
     base_url = check_base_url(endpoint.base_url)
     if base_url != endpoint.base_url:
         endpoint = Endpoint(endpoint.provider, base_url, endpoint.model, endpoint.effort)
@@ -54,7 +56,7 @@ def connect(
     if protocol == "anthropic":
         from .claude import ClaudeModel
 
-        return ClaudeModel(endpoint, key, system, tools, sdk_factory=sdk_factory)
+        return ClaudeModel(endpoint, key, system, tools, sdk_factory=sdk_factory, computer=computer)
     http = HttpJson(transport)
     if protocol == "openai-responses":
         from .openai_api import ResponsesModel

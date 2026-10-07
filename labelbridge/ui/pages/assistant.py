@@ -256,6 +256,42 @@ class QtAssistantUI:
     def config_changed(self, section: str) -> None:
         self.page.ctx.events.emit(CONFIG_EXTERNAL, section)
 
+    # --- control de la pantalla (assistant/screen.py) -------------------------------------------
+    def screen_consent(self) -> bool:
+        from ..screen_control import ScreenConsentDialog
+
+        return bool(self._asking(lambda: ScreenConsentDialog().exec() == QDialog.DialogCode.Accepted))
+
+    def screen_session(self, active: bool) -> None:
+        self.invoker.call(lambda: self.page.screen_session(active))
+
+    def capture_screen(self):
+        from ..screen_control import capture_screen
+
+        return self.invoker.call(capture_screen)
+
+    def capture_region(self, rect: tuple[int, int, int, int]) -> bytes:
+        from ..screen_control import capture_region
+
+        return self.invoker.call(lambda: capture_region(rect))
+
+    def blocked_areas(self) -> list[tuple[int, int, int, int]]:
+        from ..screen_control import blocked_areas
+
+        return self.invoker.call(blocked_areas)
+
+    def approve_screen(self, what: str, reason: str, frame, points: list[tuple[int, int]]) -> str:
+        from ..screen_control import ScreenActionDialog
+
+        def ask() -> str:
+            dialog = ScreenActionDialog(what, reason, frame, points)
+            dialog.exec()
+            if dialog.choice == "stop":
+                self.page.stop()
+            return dialog.choice
+
+        return str(self._asking(ask))
+
 
 # --- burbujas ----------------------------------------------------------------------------------------
 
@@ -433,6 +469,8 @@ class AssistantPage(QWidget):
         self.busy = False
         self.activity = ""  # lo que hace ahora (para la cabecera)
         self._worker: threading.Thread | None = None
+        self._screen_bar = None  # barra de arriba mientras el asistente usa la pantalla
+        self._screen_restore = False  # si la ventana estaba a la vista antes de minimizarse
         self.pending_notes: list[str] = []
         self._activities: dict[str, ActivityRow] = {}
         self._thinking: ActivityRow | None = None
@@ -895,6 +933,29 @@ class AssistantPage(QWidget):
 
         self._worker = threading.Thread(target=work, name="asistente", daemon=True)
         self._worker.start()
+
+    def screen_session(self, active: bool) -> None:
+        """Control de la pantalla: LabelBridge se minimiza (el asistente ve lo demás) y arriba queda la barra con
+        «Detener»; al terminar el turno, todo vuelve como estaba."""
+        from ..screen_control import ScreenBar
+
+        window = self.window()
+        if active:
+            self._screen_restore = window.isVisible() and not window.isMinimized()
+            if self._screen_bar is None:
+                self._screen_bar = ScreenBar(self.stop)
+            self._screen_bar.place()
+            self._screen_bar.show()
+            if self._screen_restore:
+                window.showMinimized()
+            return
+        if self._screen_bar is not None:
+            self._screen_bar.hide()
+        if self._screen_restore:
+            window.showNormal()
+            window.raise_()
+            window.activateWindow()
+        self._screen_restore = False
 
     def stop(self) -> None:
         self.cancel.set()

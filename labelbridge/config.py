@@ -344,6 +344,10 @@ class AssistantSettings:
     # Reglas del dueño: instrucciones permanentes que el asistente sigue siempre (Ajustes → Asistente). Solo las
     # escribe la persona; el asistente no tiene herramientas para cambiarlas.
     rules: str = ""
+    # Acceso a la PC (Ajustes → Asistente, solo Windows). Apagados de fábrica; solo la persona los enciende (el
+    # asistente no tiene herramientas para cambiarlos) y cada acción pide permiso en una ventana.
+    pc_tools: bool = False  # revisar y configurar impresoras, cola de impresión, red, energía y Configuración de Windows
+    screen_control: bool = False  # ver la pantalla y usar mouse y teclado (solo con Claude)
 
 
 @dataclass

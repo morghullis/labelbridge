@@ -19,6 +19,7 @@ from .permissions import ToolPermissions
 from .pricing import cost_of, price_for
 from .prompt import system_prompt
 from .providers import Endpoint, Entry, ProviderError, Reply, ToolResult, UserText, connect, resolve
+from .screen import NOT_EXECUTED, TOOLSET_NAME, ScreenControl
 from .tools import Toolbox
 from .usage import UsageMeter
 
@@ -26,6 +27,7 @@ log = logging.getLogger(__name__)
 
 DEFAULTS = AssistantSettings()
 MAX_STEPS = 24  # llamadas al modelo por cada mensaje del usuario
+MAX_SCREEN_STEPS = 60  # con el control de la pantalla cada paso es una tanda de acciones
 UNANSWERED = "(Mensaje anterior sin respuesta) "
 
 Emit = Callable[[str, dict], None]
@@ -99,7 +101,11 @@ class Conversation:
         self.connector = connector
         self.history: list[Entry] = []
         self.turns = 0
+        toolbox.rebuild()  # las herramientas de la PC dependen de Ajustes: se fijan al empezar la conversación
         self.tools = toolbox.definitions()
+        self.pc_tools = toolbox.pc_tools_enabled()
+        self.screen = ScreenControl(toolbox.ui, toolbox.ctx.engine.policy.audit, lambda: toolbox.cancel,
+                                    getattr(toolbox, "screen_backend", None)) if toolbox.screen_enabled() else None
         self.permissions = ToolPermissions(toolbox.ctx, toolbox.ui)
         self.meter = UsageMeter(toolbox.ctx.store)
         self.session = f"lb-{uuid.uuid4().hex[:16]}"  # agrupa las llamadas en la caché del proveedor
@@ -157,10 +163,17 @@ class Conversation:
         rules = self.settings.rules
         identity = (endpoint, key, rules)
         if self._client is None or identity != self._client_id:
-            self._client = self.connector(endpoint, key, system=system_prompt(rules), tools=self.tools,
-                                          session=self.session)
+            computer = self.uses_screen(endpoint)
+            self._client = self.connector(endpoint, key, system=system_prompt(rules, self.pc_tools, computer),
+                                          tools=self.tools, session=self.session,
+                                          **({"computer": True} if computer else {}))
             self._client_id = identity
         return self._client
+
+    def uses_screen(self, endpoint: Endpoint | None = None) -> bool:
+        """El control de la pantalla está encendido y el proveedor es Claude (el único con ese toolset)."""
+        endpoint = endpoint or self._endpoint or self.endpoint
+        return self.screen is not None and endpoint.provider.protocol == "anthropic"
 
     # --- turno -------------------------------------------------------------------------------
     def send(self, text: str, emit: Emit, cancel: threading.Event) -> None:
@@ -190,11 +203,13 @@ class Conversation:
                 log.exception("Asistente: error inesperado")
             emit("error", {"message": friendly_error(exc, self._endpoint)})
         finally:
+            if self.screen is not None:
+                self.screen.end()  # LabelBridge vuelve a la vista y se quita la barra del control de la pantalla
             self._settle(outcome)
 
     def _loop(self, emit: Emit, cancel: threading.Event) -> str:
         """Devuelve cómo terminó el turno: reply | stopped | refused."""
-        for _ in range(MAX_STEPS):
+        for _ in range(MAX_SCREEN_STEPS if self.uses_screen() else MAX_STEPS):
             reply = self._complete_cancellable(cancel)
             if reply is None:
                 emit("stopped", {})
@@ -216,7 +231,14 @@ class Conversation:
                 return "reply"
             if text:
                 emit("note", {"text": text})
+            screen_failed = False  # en una tanda de acciones de pantalla, la primera que falla corta las siguientes
             for call in reply.tool_calls:
+                if call.toolset == TOOLSET_NAME:
+                    output, images, is_error = self._screen_action(call, text, screen_failed, cancel, emit)
+                    screen_failed = screen_failed or is_error
+                    self.history.append(ToolResult(call.id, call.name, output, is_error, call.native_id,
+                                                   toolset=call.toolset, images=images))
+                    continue
                 if cancel.is_set():
                     output, is_error = "El usuario detuvo el asistente antes de ejecutar esta herramienta.", True
                 else:
@@ -235,6 +257,20 @@ class Conversation:
                 raise AssistantError(tr("Se alcanzó el límite diario de gasto del asistente (Ajustes → Asistente)."))
         raise AssistantError(tr("El asistente dio demasiados pasos seguidos. Dime cómo quieres seguir."))
 
+    def _screen_action(self, call, reason: str, failed: bool, cancel: threading.Event,
+                       emit: Emit) -> tuple[str, list[bytes], bool]:
+        if cancel.is_set():
+            return "El usuario detuvo el asistente antes de esta acción.", [], True
+        if self.screen is None:
+            return "El control de la pantalla no está activado (Ajustes → Asistente).", [], True
+        if failed:
+            return NOT_EXECUTED, [], True
+        self.screen.reason = reason
+        emit("tool", {"id": call.id, "name": call.name, "activity": tr("Usando la pantalla")})
+        output, images, is_error = self.screen.run(call.name, call.args)
+        emit("tool_done", {"id": call.id, "name": call.name, "ok": not is_error, "detail": output if is_error else ""})
+        return output, images, is_error
+
     def _settle(self, outcome: str) -> None:
         """Deja el historial listo para el siguiente mensaje.
 
@@ -247,7 +283,8 @@ class Conversation:
             answered = {e.call_id for e in self.history[last + 1 :] if isinstance(e, ToolResult)}
             for call in self.history[last].tool_calls:
                 if call.id not in answered:
-                    self.history.append(ToolResult(call.id, call.name, "Interrumpido.", True, call.native_id))
+                    self.history.append(ToolResult(call.id, call.name, "Interrumpido.", True, call.native_id,
+                                                   toolset=call.toolset))
         if outcome == "reply":
             return
         tail = self.history[last + 1 :]

@@ -2,6 +2,15 @@
 
 English version of [CHANGELOG.md](CHANGELOG.md). Each published version shows these notes in the app's update window when the app is in English, and on the English download page.
 
+## 1.15.0
+
+- **Reprinting never charges another label.** If an order already has a label, the button says **Reprint label**: it prints the same one (the copy saved on the computer or, if it's gone, the one Shopify has) and doesn't buy or pay for another.
+- **Right-click everywhere in the app:** on orders (the table and the “Need action” and “Delays” cards), in History (preview, reprint, retry, cancel, copy the tracking number, open the order in Shopify), in Printers (edit, default, test, delete; add detected ones or install them in Windows) and in Home's “Latest”.
+- **The assistant can set up the PC** (Settings → Assistant → **PC access**, Windows only and off by default):
+  - **Windows tools:** it checks how the PC is doing, the Windows print queue and whether the printer answers on the network; it clears stuck queues, restarts the print service, changes the Windows default printer or sleep settings, opens Windows Settings and prints the Windows test page.
+  - **Screen control (with Claude):** for what has no tool (a driver installer, the printer's web page), it sees the screen and uses the mouse and keyboard. First it asks permission for the task; then **each action** shows you a window with the spot marked or the exact text, and you can allow it, refuse it or **stop everything**. LabelBridge minimizes meanwhile and a bar with **Stop** stays at the top.
+  - Always with your permission: administrator tasks also open Windows' own permission, which only you can accept. The assistant never uses LabelBridge's windows with the mouse or keyboard, never types passwords and can't change these settings.
+
 ## 1.14.0
 
 - **Shopify Flow buys the FedEx label by itself.** In Orders → **Carrier rules** you choose who buys FedEx: **Shopify Flow, automatically**, or you, with the “FedEx label” window (as until now). With Flow, a workflow in your store buys the FedEx label as soon as the order comes in and LabelBridge does the rest: it doesn't ask you to buy it, it prints it as soon as it shows up and, if Shopify doesn't give it the PDF, it opens the order in Shopify so you click “Print label” (and stops asking once Shopify marks it printed). If Flow hasn't bought it within 15 minutes, it lets you know and the order moves to “Need action” with **Buy FedEx label**.

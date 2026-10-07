@@ -57,6 +57,16 @@ TOOL_CLASSES: dict[str, str] = {
     "notify_owners": AUTO,
     "create_manual_order": CRITICAL,
     "buy_shipping_label": CRITICAL,
+    # Herramientas de Windows (pc_tools.py): revisar se permite solo; cada cambio tiene su ventana de permiso.
+    "pc_overview": READ,
+    "windows_print_queue": READ,
+    "check_printer_network": READ,
+    "clear_print_queue": CRITICAL,
+    "restart_print_spooler": CRITICAL,
+    "set_windows_default_printer": CRITICAL,
+    "set_windows_sleep": CRITICAL,
+    "open_windows_settings": CRITICAL,
+    "print_windows_test_page": CRITICAL,
 }
 
 # Usos máximos por conversación.
@@ -80,6 +90,15 @@ LIMITS: dict[str, int] = {
     "notify_owners": 5,
     "create_manual_order": 3,
     "buy_shipping_label": 5,
+    "pc_overview": 6,
+    "windows_print_queue": 10,
+    "check_printer_network": 10,
+    "clear_print_queue": 3,
+    "restart_print_spooler": 2,
+    "set_windows_default_printer": 3,
+    "set_windows_sleep": 2,
+    "open_windows_settings": 8,
+    "print_windows_test_page": 3,
 }
 
 FIELD_NAMES = {

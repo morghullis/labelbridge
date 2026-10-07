@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QMenu,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -27,7 +28,7 @@ from ..actions import enqueue_test_label
 from .guide import guide_banner, update_guide_banner
 from ..context import AppContext
 from ..theme import job_state
-from ..widgets import Card, Page, Pill, ToggleSwitch, button, label
+from ..widgets import Card, Page, Pill, ToggleSwitch, button, context_menu, error, label
 
 
 class DayCard(QFrame):
@@ -152,7 +153,8 @@ class DashboardPage(Page):
         self.table.setHorizontalHeaderLabels([tr("Hora"), tr("Trabajo"), tr("Impresora"), tr("Estado")])
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+        self.table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setShowGrid(False)
         self.table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         header = self.table.horizontalHeader()
@@ -161,6 +163,7 @@ class DashboardPage(Page):
         header.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
         header.resizeSection(3, 130)
         self.table.setMinimumHeight(230)
+        context_menu(self.table, self._recent_menu)
         recent.add(self.table)
         self.empty = label(tr("Todavía no hay trabajos. Prueba con «Imprimir prueba»."), "Muted")
         recent.add(self.empty)
@@ -261,7 +264,9 @@ class DashboardPage(Page):
             source = tr(SOURCE_LABELS.get(job["source"], job["source"]))
             values = [clock, f"{job['title']} · {source}", job["printer_used"] or job["printer"] or tr("Predeterminada")]
             for col, value in enumerate(values):
-                self.table.setItem(row, col, QTableWidgetItem(value))
+                item = QTableWidgetItem(value)
+                item.setData(Qt.ItemDataRole.UserRole, job["id"])
+                self.table.setItem(row, col, item)
             pill = Pill(job_state(job), status_text(job))
             if job["error"]:
                 pill.setToolTip(job["error"])
@@ -274,6 +279,25 @@ class DashboardPage(Page):
             self.table.setRowHeight(row, 36)
         self.table.setVisible(bool(jobs))
         self.empty.setVisible(not jobs)
+
+    def _recent_menu(self) -> QMenu | None:
+        """Clic derecho en «Lo último»: reimprimir esa etiqueta o verla en Historial."""
+        item = self.table.item(self.table.currentRow(), 0)
+        job_id = item.data(Qt.ItemDataRole.UserRole) if item is not None else None
+        if not job_id:
+            return None
+        menu = QMenu(self)
+        menu.addAction(icons.icon("printer"), tr("Reimprimir (sin pagar otra guía)"), lambda: self._reprint(job_id))
+        menu.addAction(icons.icon("clock"), tr("Ver en Historial"), lambda: self.navigate("history"))
+        return menu
+
+    def _reprint(self, job_id: str) -> None:
+        new_job = self.ctx.store.reprint(job_id)
+        if new_job is None:
+            error(self, tr("Reimprimir"), tr("Esa etiqueta ya no está guardada: reimprímela desde Pedidos o Historial."))
+            return
+        self.ctx.events.emit("job", new_job)
+        self.ctx.engine.wake()
 
     def _print_test(self) -> None:
         enqueue_test_label(self.ctx)

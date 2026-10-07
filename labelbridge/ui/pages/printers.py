@@ -29,7 +29,7 @@ from ...system.platform import pick
 from .. import icons
 from ..context import AppContext
 from ..printer_dialog import PrinterDialog
-from ..widgets import Card, Page, button, confirm, error, info, label, run_async
+from ..widgets import Card, Page, button, confirm, context_menu, error, info, label, run_async
 
 
 def _table(headers: list[str], stretch_col: int) -> QTableWidget:
@@ -67,6 +67,7 @@ class PrintersPage(Page):
         )
         self.table = _table(["", tr("Alias"), tr("Tipo"), tr("Destino"), tr("Lenguaje"), tr("Tamaño"), tr("Estado")], 3)
         self.table.doubleClicked.connect(lambda _i: self._edit())
+        context_menu(self.table, self._mine_menu)
         mine.add(self.table)
         actions = QHBoxLayout()
         add = button(tr("Agregar"), "plus", "primary")
@@ -101,6 +102,7 @@ class PrintersPage(Page):
         installed_layout = QVBoxLayout(installed)
         installed_layout.setContentsMargins(0, 10, 0, 0)
         self.sys_table = _table([tr("Nombre"), tr("Modelo / driver"), tr("Puerto"), tr("Predeterminada")], 0)
+        context_menu(self.sys_table, self._system_menu)
         installed_layout.addWidget(self.sys_table)
         row = QHBoxLayout()
         refresh = button(tr("Actualizar"), "refresh")
@@ -129,6 +131,7 @@ class PrintersPage(Page):
         self.progress.setVisible(False)
         net_layout.addWidget(self.progress)
         self.net_table = _table(["IP", tr("Nombre / modelo"), tr("Protocolos"), tr("Sugerido")], 1)
+        context_menu(self.net_table, self._network_menu)
         net_layout.addWidget(self.net_table)
         row = QHBoxLayout()
         self.scan_btn = button(tr("Buscar en la red"), "search", "primary")
@@ -153,6 +156,34 @@ class PrintersPage(Page):
         self._load_system()
         if ctx.services.network.results:
             self._show_network(ctx.services.network.results, silent=True)
+
+    # --- clic derecho ---------------------------------------------------------------------
+    def _mine_menu(self) -> QMenu | None:
+        if self._selected() is None:
+            return None
+        menu = QMenu(self)
+        menu.addAction(icons.icon("edit"), tr("Editar"), self._edit)
+        menu.addAction(icons.icon("star"), tr("Usar como predeterminada"), self._make_default)
+        menu.addAction(icons.icon("printer"), tr("Imprimir prueba"), self._test)
+        menu.addSeparator()
+        menu.addAction(icons.icon("trash"), tr("Eliminar"), self._delete)
+        return menu
+
+    def _system_menu(self) -> QMenu | None:
+        if self.sys_table.currentRow() < 0:
+            return None
+        menu = QMenu(self)
+        menu.addAction(icons.icon("plus"), tr("Agregar a LabelBridge"), self._add_system)
+        return menu
+
+    def _network_menu(self) -> QMenu | None:
+        if self._selected_network() is None:
+            return None
+        menu = QMenu(self)
+        menu.addAction(icons.icon("plus"), tr("Agregar a LabelBridge"), self._add_network)
+        if windows_printers.supported():
+            menu.addAction(icons.icon("download"), tr("Instalar en Windows…"), self._install_windows)
+        return menu
 
     # --- lista configurada ----------------------------------------------------------------
     def refresh(self) -> None:

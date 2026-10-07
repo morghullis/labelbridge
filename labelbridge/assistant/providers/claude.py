@@ -3,6 +3,7 @@ respaldo del servidor si un filtro rechaza una petición legítima."""
 
 from __future__ import annotations
 
+import base64
 import logging
 from typing import Any, Callable
 
@@ -72,10 +73,15 @@ def provider_error(exc: Exception) -> ProviderError:
 
 
 class ClaudeModel:
-    def __init__(self, endpoint, key: str, system: str, tools: list[dict], sdk_factory: SdkFactory | None = None) -> None:
+    def __init__(self, endpoint, key: str, system: str, tools: list[dict], sdk_factory: SdkFactory | None = None,
+                 computer: bool = False) -> None:
         self.endpoint = endpoint
         self.client = (sdk_factory or default_sdk_client)(key, endpoint.base_url)
         self.system = [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
+        if computer:  # control de la pantalla (Ajustes → Asistente): el toolset de computer use de Claude
+            from ..screen import TOOLSET
+
+            tools = list(tools) + [TOOLSET]
         self.tools = tools
         self.use_fallbacks = True
         self.unsupported = _UNSUPPORTED.setdefault((endpoint.base_url, endpoint.model, endpoint.effort), set())
@@ -91,6 +97,14 @@ class ClaudeModel:
             for entry in item:  # los resultados de herramientas van primero, como pide la API
                 if isinstance(entry, ToolResult):
                     block = {"type": "tool_result", "tool_use_id": entry.call_id, "content": entry.output}
+                    if entry.images:  # capturas de pantalla
+                        block["content"] = [
+                            {"type": "image", "source": {"type": "base64", "media_type": "image/png",
+                                                         "data": base64.b64encode(image).decode("ascii")}}
+                            for image in entry.images
+                        ]
+                    if entry.toolset:
+                        block["toolset_name"] = entry.toolset
                     if entry.is_error:
                         block["is_error"] = True
                     content.append(block)
@@ -124,6 +138,13 @@ class ClaudeModel:
                 return self._reply(response)
             except anthropic.BadRequestError as exc:
                 text = str(exc).lower()
+                toolset = [tool for tool in params["tools"] if str(tool.get("type", "")).startswith("computer_")]
+                if toolset and ("computer_" in text or "tool type" in text):
+                    # Este modelo no tiene el control de la pantalla: se sigue sin él (lo dice al intentar usarlo).
+                    log.warning("Asistente: %s no admite el control de la pantalla; se sigue sin él (%s)",
+                                self.endpoint.model, exc)
+                    self.tools = params["tools"] = [tool for tool in params["tools"] if tool not in toolset]
+                    continue
                 if self.use_fallbacks and ("fallback" in text or "anthropic-beta" in text):
                     log.warning("Asistente: la cuenta no admite fallbacks del servidor; se sigue sin ellos (%s)", exc)
                     self.use_fallbacks = False
@@ -150,7 +171,8 @@ class ClaudeModel:
             return Reply(stop="refusal", usage=counted)
         # Una respuesta vacía no se puede reenviar: se guarda un texto mínimo para que el historial siga válido.
         content = _kept_after_fallback(response.content) or [BetaTextBlock(type="text", text=tr("Listo."))]
-        calls = [ToolCall(block.id, block.name, block.input) for block in content if block.type == "tool_use"]
+        calls = [ToolCall(block.id, block.name, block.input, toolset=getattr(block, "toolset_name", None) or "")
+                 for block in content if block.type == "tool_use"]
         text = "\n\n".join(block.text.strip() for block in content if block.type == "text" and block.text.strip())
         stop = {"max_tokens": "max_tokens", "pause_turn": "pause"}.get(response.stop_reason, "end")
         if calls and stop == "end":

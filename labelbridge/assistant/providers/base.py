@@ -19,6 +19,7 @@ class ToolCall:
     name: str
     args: Any  # dict; si el modelo mandó JSON inválido, el texto tal cual (se le devuelve como error)
     native_id: bool = True  # False si la API no dio un id y lo puso la app
+    toolset: str = ""  # "computer": una acción del control de la pantalla (toolset de Claude; name = la acción)
 
 
 @dataclass
@@ -60,6 +61,8 @@ class ToolResult:
     output: str
     is_error: bool = False
     native_id: bool = True
+    toolset: str = ""  # el de la llamada (la API exige devolverlo)
+    images: list[bytes] = field(default_factory=list)  # PNG: capturas del control de la pantalla
 
 
 Entry = Union[UserText, Reply, ToolResult]

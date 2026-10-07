@@ -372,3 +372,21 @@ def fit_height(window: QWidget) -> None:
     width = max(window.minimumWidth(), window.width())
     needed = layout.heightForWidth(width) if layout.hasHeightForWidth() else layout.sizeHint().height()
     window.resize(width, max(needed, layout.minimumSize().height()))
+
+
+def context_menu(view, build: Callable[[], Any]) -> None:
+    """Clic derecho en una tabla: elige la fila bajo el puntero (si no estaba elegida) y muestra el menú que arma
+    `build` (None o un menú vacío: no se muestra nada)."""
+    view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+
+    def show(pos) -> None:
+        index = view.indexAt(pos)
+        model = view.selectionModel()
+        if index.isValid() and model is not None and not model.isRowSelected(index.row(), index.parent()):
+            view.selectRow(index.row())
+        menu = build()
+        if menu is not None and not menu.isEmpty():
+            menu.exec(view.viewport().mapToGlobal(pos))
+
+    view.customContextMenuRequested.connect(show)
+

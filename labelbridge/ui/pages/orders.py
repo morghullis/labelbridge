@@ -39,7 +39,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...config import CARRIERS, FEDEX_SERVICES, FEDEX_SIGNATURES, ShippingRule
-from ...connectors.label_batch import BUY, IN_SHOPIFY, REPRINT, plan_for
+from ...connectors.label_batch import BUY, IN_SHOPIFY, REPRINT, SKIP, plan_for
 from ...connectors.shipping_services import AUTO
 from ...connectors.orders_overview import (
     CARRIER_FILTERS,
@@ -204,6 +204,8 @@ class ActionItem(QFrame):
         text, icon_name = ACTION_BUTTONS.get(row.action, ACTION_BUTTONS["open"])
         if row.action == "buy":  # se compra en Shopify: la ventana dice qué elegir y la imprime sola
             text, icon_name = tr("Comprar guía {0}", row.carrier or row.rule_carrier or "FedEx"), "truck"
+        elif row.action in PRINT_ACTIONS and row.labels:  # ya tiene guía: se reimprime la misma, sin pagar otra
+            text = N_("Reimprimir guía")
         main = button(tr(text), icon_name, "primary")
         main.clicked.connect(lambda: page.run_action(row, "print" if row.action in PRINT_ACTIONS else row.action or "open"))
         actions.addWidget(main)
@@ -220,6 +222,9 @@ class ActionItem(QFrame):
         why = label(f"<b style='color:{color}'>{escape(row.status)}</b> · {escape(row.reason)}", wrap=True)
         why.setTextFormat(Qt.TextFormat.RichText)
         column.addWidget(why)
+        # Clic derecho: lo mismo que en la tabla.
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(lambda pos: page.order_menu([row]).exec(self.mapToGlobal(pos)))
 
 
 class DelayItem(QFrame):
@@ -257,6 +262,8 @@ class DelayItem(QFrame):
         actions.addWidget(shopify)
         actions.addStretch(1)
         column.addLayout(actions)
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(lambda pos: page.order_menu([row]).exec(self.mapToGlobal(pos)))
 
 
 class ShippingRulesDialog(QDialog):
@@ -784,8 +791,12 @@ class OrdersPage(Page):
         return rows[0] if len(rows) == 1 else None
 
     def _selection_changed(self) -> None:
-        count = len(self._selected_rows())
-        self.print_btn.setText(tr("Imprimir {0} guías", count) if count > 1 else tr("Imprimir guía"))
+        rows = self._selected_rows()
+        count = len(rows)
+        reprint = count == 1 and bool(rows[0].labels)
+        self.print_btn.setText(tr("Imprimir {0} guías", count) if count > 1
+                               else tr("Reimprimir guía") if reprint else tr("Imprimir guía"))
+        self.print_btn.setToolTip(tr("Es la misma guía: no se compra ni se paga otra.") if reprint else "")
         self.print_btn.setEnabled(count > 0)
         self.details_btn.setEnabled(count == 1)
         self.more_btn.setEnabled(count == 1)
@@ -821,8 +832,11 @@ class OrdersPage(Page):
 
     def _menu(self, pos: QPoint) -> None:
         rows = self._selected_rows()
-        if not rows:
-            return
+        if rows:
+            self.order_menu(rows).exec(self.view.viewport().mapToGlobal(pos))
+
+    def order_menu(self, rows: list[OrderRow]) -> QMenu:
+        """El menú del clic derecho de uno o varios pedidos (tabla, «Necesitan acción» y «Retrasos»)."""
         menu = QMenu(self)
         if len(rows) > 1:
             menu.addAction(icons.icon("printer"), tr("Imprimir {0} guías", len(rows)), self.print_selected)
@@ -830,10 +844,21 @@ class OrdersPage(Page):
             if pending:
                 menu.addAction(icons.icon("check"), tr("Marcar {0} preparados en Shopify", len(pending)),
                                lambda: self._fulfill(pending))
-            menu.exec(self.view.viewport().mapToGlobal(pos))
-            return
+            return menu
         row = rows[0]
-        menu.addAction(icons.icon("printer"), tr("Imprimir guía"), lambda: self.run_action(row, "print"))
+        plan, why = plan_for(row)
+        if plan == REPRINT:  # la misma guía: nunca se compra otra
+            menu.addAction(icons.icon("printer"), tr("Reimprimir guía (sin pagar otra)"), lambda: self.run_action(row, "print"))
+        elif plan == IN_SHOPIFY:
+            menu.addAction(icons.icon("truck"), tr("Comprar guía {0}", row.carrier or row.rule_carrier or "FedEx"),
+                           lambda: self.run_action(row, "buy"))
+            menu.addAction(icons.icon("printer"), tr("Otra paquetería…"), lambda: self.run_action(row, "other"))
+        else:
+            printing = menu.addAction(icons.icon("printer"), tr("Imprimir guía"), lambda: self.run_action(row, "print"))
+            if plan == SKIP:  # se ve por qué no lleva guía, sin poder comprarla
+                printing.setEnabled(False)
+                printing.setToolTip(why)
+                menu.setToolTipsVisible(True)
         menu.addAction(icons.icon("eye"), tr("Ver pedido"), lambda: self.run_action(row, "details"))
         menu.addAction(icons.icon("link"), tr("Abrir en Shopify"), lambda: self.run_action(row, "open"))
         if row.tracking:
@@ -841,7 +866,7 @@ class OrdersPage(Page):
             menu.addAction(icons.icon("copy"), tr("Copiar el número de seguimiento"), lambda: self.run_action(row, "copy"))
         menu.addSeparator()
         self._add_state_action(menu, row)
-        menu.exec(self.view.viewport().mapToGlobal(pos))
+        return menu
 
     def print_selected(self) -> None:
         """«Imprimir guía» con lo elegido en la tabla: uno, o varios con una sola confirmación."""
@@ -947,8 +972,9 @@ class OrdersPage(Page):
     def _reprint(self, row: OrderRow) -> None:
         run_async(
             lambda: self.ctx.services.shopify.reprint_label(row.legacy, row.name),
-            lambda _queued: info(self, tr("Imprimir guía"), tr("La guía de {0} está en la cola de impresión.", row.name)),
-            lambda message: error(self, tr("Imprimir guía"), message),
+            lambda _queued: info(self, tr("Reimprimir guía"), tr("La guía de {0} está en la cola de impresión. Es la misma "
+                                                                "guía: no se compró ni se cobró otra.", row.name)),
+            lambda message: error(self, tr("Reimprimir guía"), message),
         )
 
     def _details(self, row: OrderRow) -> None:

@@ -7,8 +7,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, QTimer
-from PySide6.QtGui import QColor, QPixmap
+from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, QTimer, QUrl
+from PySide6.QtGui import QColor, QDesktopServices, QPixmap
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -16,12 +16,14 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLineEdit,
+    QMenu,
     QPlainTextEdit,
     QScrollArea,
     QTableView,
     QVBoxLayout,
 )
 
+from ...connectors.shopify import admin_url
 from ...i18n import N_, date_text, tr
 from ...jobstore import PayloadUnavailable
 from ...labels.order import normalize_order
@@ -29,9 +31,22 @@ from ...labels.qt_label import draw_order_label
 from ...models import SOURCE_LABELS, STATUS_LABELS, status_text
 from ...printing.detect import detect_format
 from ...printing.pages import ImageSource, PdfSource, VectorSource
+from .. import icons
 from ..context import AppContext
 from ..theme import STATE_COLORS, job_state
-from ..widgets import Card, Page, button, confirm, error, info, label, run_dialog
+from ..widgets import (
+    Card,
+    Page,
+    button,
+    confirm,
+    context_menu,
+    copy_to_clipboard,
+    error,
+    info,
+    label,
+    run_async,
+    run_dialog,
+)
 
 COLUMNS = [N_("Fecha"), N_("Trabajo"), N_("Origen"), N_("Impresora"), N_("Formato"), N_("Estado"), N_("Intentos"),
            N_("Detalle")]
@@ -123,6 +138,7 @@ class HistoryPage(Page):
         header.resizeSection(7, 260)
         self.view.setMinimumHeight(460)
         self.view.doubleClicked.connect(lambda _i: self._preview())
+        context_menu(self.view, self._menu)
         card.add(self.view, stretch=1)
 
         actions = QHBoxLayout()
@@ -172,13 +188,45 @@ class HistoryPage(Page):
         self.ctx.engine.wake()
         self.refresh()
 
+    def _menu(self) -> QMenu | None:
+        """Clic derecho: lo que se puede hacer con los trabajos elegidos."""
+        jobs = self._selected()
+        if not jobs:
+            return None
+        menu = QMenu(self)
+        if len(jobs) == 1:
+            menu.addAction(icons.icon("eye"), tr("Vista previa"), self._preview)
+        menu.addAction(icons.icon("printer"), tr("Reimprimir (sin pagar otra guía)"), self._reprint)
+        if any(job["status"] in ("failed", "canceled") for job in jobs):
+            menu.addAction(icons.icon("retry"), tr("Reintentar"), self._retry)
+        if any(job["status"] == "queued" for job in jobs):
+            menu.addAction(icons.icon("x"), tr("Cancelar"), self._cancel)
+        job = jobs[0]
+        meta = job.get("meta") or {}
+        if len(jobs) == 1 and meta.get("tracking"):
+            menu.addAction(icons.icon("copy"), tr("Copiar el número de seguimiento"),
+                           lambda: copy_to_clipboard(str(meta["tracking"])))
+        if len(jobs) == 1 and job.get("source") == "shopify" and str(meta.get("order_id") or "").isdigit():
+            menu.addAction(icons.icon("link"), tr("Abrir el pedido en Shopify"), lambda: QDesktopServices.openUrl(
+                QUrl(admin_url(self.ctx.cfg.data.shopify.shop, f"orders/{meta['order_id']}"))))
+        menu.addSeparator()
+        menu.addAction(icons.icon("trash"), tr("Eliminar del historial"), self._delete)
+        return menu
+
     def _reprint(self) -> None:
         for job in self._require():
             new_job = self.ctx.store.reprint(job["id"])
-            if new_job is None:
-                error(self, tr("Reimprimir"), tr("El contenido de «{0}» ya no está disponible.", job['title']))
-            else:
+            meta = job.get("meta") or {}
+            if new_job is not None:
                 self.ctx.events.emit("job", new_job)
+            elif job.get("source") == "shopify" and str(meta.get("order_id") or "").isdigit():
+                # La copia guardada ya no está: la misma guía se vuelve a traer de Shopify (nunca se compra otra).
+                order_id, name = str(meta["order_id"]), str(meta.get("order_name") or meta["order_id"])
+                run_async(lambda: self.ctx.services.shopify.reprint_label(order_id, name),
+                          lambda _queued: self._after_change(),
+                          lambda message: error(self, tr("Reimprimir"), message))
+            else:
+                error(self, tr("Reimprimir"), tr("El contenido de «{0}» ya no está disponible.", job['title']))
         self._after_change()
 
     def _retry(self) -> None:

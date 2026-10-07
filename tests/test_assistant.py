@@ -504,7 +504,9 @@ def test_buying_labels_is_not_double_confirmed(core):
     assert ui.approvals == [] and ui.confirmations == ["Comprar guías de Shopify Shipping automáticamente"]
 
 
-def test_assistant_cannot_touch_its_own_limits(toolbox):
+def test_assistant_cannot_touch_its_own_limits(toolbox, monkeypatch):
+    monkeypatch.setattr(type(toolbox), "pc_tools_enabled", lambda self: True)  # también las de Windows
+    toolbox.rebuild()
     names = set(toolbox.by_name)
     assert not any("assistant" in name or "security" in name or "budget" in name for name in names)
     from labelbridge.assistant.permissions import TOOL_CLASSES

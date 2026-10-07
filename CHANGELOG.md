@@ -2,6 +2,15 @@
 
 Cada versión publicada muestra estas notas en la ventana de actualización de la app y en la página de descargas.
 
+## 1.15.0
+
+- **Reimprimir nunca cobra otra guía.** Si un pedido ya tiene guía, el botón dice **Reimprimir guía**: imprime la misma (la copia guardada en el equipo o, si ya no está, la que tiene Shopify) y no compra ni paga otra.
+- **Clic derecho en toda la app:** en los pedidos (la tabla y las tarjetas de «Necesitan acción» y «Retrasos»), en Historial (vista previa, reimprimir, reintentar, cancelar, copiar el seguimiento, abrir el pedido en Shopify), en Impresoras (editar, predeterminada, prueba, eliminar; agregar las detectadas o instalarlas en Windows) y en «Lo último» de Inicio.
+- **El asistente puede configurar la PC** (Ajustes → Asistente → **Acceso a la PC**, solo Windows y apagado de fábrica):
+  - **Herramientas de Windows:** revisa cómo está la PC, la cola de impresión de Windows y si la impresora responde en la red; vacía colas atascadas, reinicia el servicio de impresión, cambia la impresora predeterminada de Windows o la suspensión, abre la Configuración de Windows e imprime la página de prueba de Windows.
+  - **Control de la pantalla (con Claude):** para lo que no tiene herramienta (el instalador de un driver, la página de la impresora), ve la pantalla y usa el mouse y el teclado. Primero pide permiso para la tarea; después, **cada acción** te muestra una ventana con el punto marcado o el texto exacto, y la puedes aprobar, rechazar o **detener todo**. LabelBridge se minimiza mientras tanto y arriba queda una barra con **Detener**.
+  - Siempre con tu permiso: lo de administrador abre además el permiso de Windows, que solo tú puedes aceptar. El asistente nunca usa las ventanas de LabelBridge con el mouse ni el teclado, no escribe contraseñas y no puede cambiar estos ajustes.
+
 ## 1.14.0
 
 - **La FedEx la compra Shopify Flow, sola.** En Pedidos → **Reglas de paquetería** eliges quién compra la FedEx: **Shopify Flow, automáticamente** o tú, con la ventana «Guía FedEx» (como hasta ahora). Con Flow, un flujo de tu tienda compra la guía FedEx en cuanto entra el pedido y LabelBridge hace el resto: no te pide que la compres, la imprime en cuanto aparece y, si Shopify no le da el PDF, abre el pedido en Shopify para que pulses «Imprimir etiqueta» (y deja de pedirlo cuando Shopify la marca impresa). Si en 15 minutos Flow no la compró, te avisa y el pedido pasa a «Necesitan acción» con **Comprar guía FedEx**.

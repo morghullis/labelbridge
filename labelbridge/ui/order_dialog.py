@@ -111,7 +111,9 @@ class OrderDialog(QDialog):
         close.clicked.connect(self.accept)
         buttons.addWidget(close)
         # «Imprimir guía»: la reimprime o abre la compra (si el pedido lleva guía).
-        self.print_btn = button(tr("Imprimir guía"), "printer", "primary")
+        self.print_btn = button(tr("Reimprimir guía") if row.labels else tr("Imprimir guía"), "printer", "primary")
+        if row.labels:
+            self.print_btn.setToolTip(tr("Es la misma guía: no se compra ni se paga otra."))
         self.print_btn.clicked.connect(lambda: self._action("print"))
         self.print_btn.setVisible(run_action is not None and plan_for(row)[0] != SKIP)
         buttons.addWidget(self.print_btn)
