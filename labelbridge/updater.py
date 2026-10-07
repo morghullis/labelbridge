@@ -42,10 +42,27 @@ CHECK_EVERY = 6 * 3600
 CHECK_FAILURES_NOTICE = 4  # búsquedas seguidas que fallan (un día) antes de avisar
 UPDATE = "update"  # evento con UpdateInfo
 MAX_INSTALLER_BYTES = 300 * 1024 * 1024
+DOWNLOAD_ATTEMPTS = 5  # una conexión que se corta sigue donde quedó (Range), con esperas de 2, 4, 8… s
+VIRUS_ERRORS = {225, 226}  # ERROR_VIRUS_INFECTED / ERROR_VIRUS_DELETED: el antivirus bloqueó o borró el archivo
 
 
 class UpdateError(Exception):
     pass
+
+
+class BlockedByAntivirus(UpdateError):
+    """El antivirus (normalmente Microsoft Defender) bloqueó el instalador mientras se descargaba o al abrirlo."""
+
+    def __init__(self) -> None:
+        super().__init__(tr(
+            "Windows (Microsoft Defender) bloqueó el instalador de la versión nueva. Pasa con programas nuevos que "
+            "todavía no tienen firma digital: no es un virus. Para permitirlo: abre Seguridad de Windows → "
+            "Protección antivirus y contra amenazas → Historial de protección, elige el bloqueo de LabelBridge → "
+            "Acciones → Permitir, y vuelve a pulsar «Reintentar»."))
+
+
+def blocked_by_antivirus(exc: BaseException) -> bool:
+    return getattr(exc, "winerror", None) in VIRUS_ERRORS
 
 
 class NotForThisSystem(UpdateError):
@@ -129,8 +146,13 @@ def download(
     progress: Callable[[int, int], None] | None = None,
     cancel: threading.Event | None = None,
     folder: Path | None = None,
+    attempts: int = DOWNLOAD_ATTEMPTS,
 ) -> Path:
-    """Descarga el instalador en bloques (con progreso) y comprueba su huella SHA-256 (sin huella no se instala)."""
+    """Descarga el instalador en bloques (con progreso) y comprueba su huella SHA-256 (sin huella no se instala).
+
+    Si la conexión se corta, sigue desde donde quedó (hasta `attempts` intentos). Si el antivirus bloquea el archivo,
+    lo dice con los pasos para permitirlo (BlockedByAntivirus) en vez de un error técnico.
+    """
     if not re.fullmatch(r"[0-9a-f]{64}", info.sha256 or ""):
         raise UpdateError(tr("La versión publicada no trae su huella SHA-256: por seguridad no se instala."))
     folder = folder or Path(tempfile.gettempdir()) / "LabelBridge-actualizacion"
@@ -138,12 +160,73 @@ def download(
     name = re.sub(r"[^\w.\-]", "_", info.url.rsplit("/", 1)[-1]) or f"LabelBridge-Setup-{info.version}.exe"
     target = folder / name
     partial = target.with_suffix(target.suffix + ".part")
-    digest = hashlib.sha256()
-    received = 0
-    request = urllib.request.Request(info.url, headers={"User-Agent": net.USER_AGENT})
+    partial.unlink(missing_ok=True)
+    received, digest = 0, hashlib.sha256()
     try:
-        with net._get_opener().open(request, timeout=60) as response, open(partial, "wb") as out:
-            total = int(response.headers.get("Content-Length") or info.size or 0)
+        for attempt in range(1, attempts + 1):
+            try:
+                received, digest = _resume_point(partial)  # lo que de verdad quedó en el disco
+                received, digest = _download_into(info, partial, received, digest, progress, cancel)
+                break
+            except UpdateError:
+                raise
+            except (OSError, ValueError) as exc:
+                if blocked_by_antivirus(exc):
+                    raise BlockedByAntivirus() from None
+                if attempt == attempts:
+                    raise UpdateError(tr("No se pudo descargar la actualización: {0}", exc)) from None
+                log.warning("Actualización: la descarga se cortó en %s bytes (%s); intento %s de %s",
+                            partial.stat().st_size if partial.exists() else 0, exc, attempt + 1, attempts)
+                if cancel is not None and cancel.wait(2 ** attempt):
+                    raise UpdateError(tr("Descarga cancelada")) from None
+                if cancel is None:
+                    time.sleep(2 ** attempt)
+    except UpdateError:
+        partial.unlink(missing_ok=True)
+        raise
+    if info.size and received != info.size:
+        partial.unlink(missing_ok=True)
+        raise UpdateError(tr("La descarga quedó incompleta; vuelve a intentarlo"))
+    if info.sha256 and digest.hexdigest() != info.sha256:
+        partial.unlink(missing_ok=True)
+        raise UpdateError(tr("El archivo descargado no coincide con el publicado (SHA-256); no se instalará"))
+    try:
+        os.replace(partial, target)
+        with open(target, "rb") as check:  # el antivirus lo revisa al abrirlo: si lo bloquea, se sabe aquí
+            check.read(1)
+    except OSError as exc:
+        partial.unlink(missing_ok=True)
+        if blocked_by_antivirus(exc) or not target.exists():
+            raise BlockedByAntivirus() from None
+        raise UpdateError(tr("No se pudo guardar la actualización: {0}", exc)) from None
+    return target
+
+
+def _resume_point(partial: Path) -> tuple[int, Any]:
+    """Cuánto ya se bajó (lo que hay en el archivo a medias) y su huella, para seguir desde ahí."""
+    digest = hashlib.sha256()
+    if not partial.exists():
+        return 0, digest
+    with open(partial, "rb") as existing:
+        for block in iter(lambda: existing.read(1024 * 1024), b""):
+            digest.update(block)
+    return partial.stat().st_size, digest
+
+
+def _download_into(info: UpdateInfo, partial: Path, received: int, digest: Any,
+                   progress: Callable[[int, int], None] | None, cancel: threading.Event | None) -> tuple[int, Any]:
+    """Un intento: sigue desde `received` si el servidor lo permite (206), o empieza de cero. Devuelve lo recibido y
+    la huella acumulada."""
+    headers = {"User-Agent": net.USER_AGENT}
+    if received:
+        headers["Range"] = f"bytes={received}-"
+    request = urllib.request.Request(info.url, headers=headers)
+    with net._get_opener().open(request, timeout=60) as response:
+        if received and getattr(response, "status", 200) != 206:  # no deja seguir: desde el principio
+            received, digest = 0, hashlib.sha256()
+        length = int(response.headers.get("Content-Length") or 0)
+        total = (received + length) if length else int(info.size or 0)
+        with open(partial, "ab" if received else "wb") as out:
             while True:
                 if cancel is not None and cancel.is_set():
                     raise UpdateError(tr("Descarga cancelada"))
@@ -157,22 +240,9 @@ def download(
                 out.write(chunk)
                 if progress:
                     progress(received, total)
-    except (OSError, ValueError) as exc:
-        partial.unlink(missing_ok=True)
-        if isinstance(exc, UpdateError):
-            raise
-        raise UpdateError(tr("No se pudo descargar la actualización: {0}", exc)) from None
-    except UpdateError:
-        partial.unlink(missing_ok=True)
-        raise
-    if info.size and received != info.size:
-        partial.unlink(missing_ok=True)
-        raise UpdateError(tr("La descarga quedó incompleta; vuelve a intentarlo"))
-    if info.sha256 and digest.hexdigest() != info.sha256:
-        partial.unlink(missing_ok=True)
-        raise UpdateError(tr("El archivo descargado no coincide con el publicado (SHA-256); no se instalará"))
-    os.replace(partial, target)
-    return target
+    if info.size and received < info.size:
+        raise OSError(tr("la conexión se cerró a los {0} de {1} bytes", received, info.size))
+    return received, digest
 
 
 def can_install() -> bool:

@@ -306,3 +306,57 @@ def test_old_mac_downloads_are_capped(tmp_path, monkeypatch):
     entries = publish_update.archived(tmp_path, "9.9.9")
     assert [e["version"] for e in entries if e["mac"]] == ["1.9.2"]  # la actual + 1 anterior de Mac
     assert [e["version"] for e in entries] == ["1.9.2", "1.9.1", "1.9.0"]  # las de Windows siguen todas
+
+
+def test_a_cut_download_resumes_where_it_stopped(tmp_path):
+    installer = b"MZ" + bytes(range(256)) * 2000
+    requests: list[str] = []
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def do_GET(self):  # noqa: N802
+            ranged = self.headers.get("Range")
+            requests.append(ranged or "")
+            if ranged:  # el segundo intento pide lo que falta
+                start = int(ranged.split("=")[1].rstrip("-"))
+                body = installer[start:]
+                self.send_response(206)
+                self.send_header("Content-Range", f"bytes {start}-{len(installer) - 1}/{len(installer)}")
+            else:  # el primero se corta a la mitad
+                body = installer[: len(installer) // 2]
+                self.send_response(200)
+            self.send_header("Content-Length", str(len(body) if ranged else len(installer)))
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.write(body)
+            self.wfile.flush()
+            self.close_connection = True
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        info = updater.UpdateInfo("99.0.0", f"http://127.0.0.1:{server.server_address[1]}/LabelBridge-Setup.exe",
+                                  len(installer), hashlib.sha256(installer).hexdigest())
+        cancel = threading.Event()
+        path = updater.download(info, folder=tmp_path, cancel=cancel)
+        assert path.read_bytes() == installer
+        assert requests == ["", f"bytes={len(installer) // 2}-"]
+    finally:
+        server.shutdown()
+
+
+def test_an_antivirus_block_is_explained_not_shown_as_a_code(tmp_path, monkeypatch):
+    def blocked(*args, **kwargs):
+        error = OSError(22, "La operación no se completó correctamente porque el archivo contiene un virus")
+        error.winerror = 225
+        raise error
+
+    monkeypatch.setattr(updater, "_download_into", blocked)
+    info = updater.UpdateInfo("99.0.0", "http://127.0.0.1:9/LabelBridge-Setup.exe", 10, "a" * 64)
+    with pytest.raises(updater.BlockedByAntivirus, match="Historial de protección"):
+        updater.download(info, folder=tmp_path)
+    assert not list(tmp_path.glob("*.part"))

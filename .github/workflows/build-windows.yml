@@ -89,6 +89,34 @@ jobs:
           choco install innosetup -y --no-progress
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=$version" packaging\installer.iss
 
+      # Microsoft Defender con firmas al día: si marca el instalador o la app (falso positivo de programas nuevos sin
+      # firma digital), la actualización no llega a las PCs. Por ahora informa (no frena la versión).
+      - name: Revisión con Microsoft Defender
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $mp = Join-Path $env:ProgramFiles 'Windows Defender\MpCmdRun.exe'
+          & $mp -SignatureUpdate | Out-Host
+          Get-MpComputerStatus | Format-List AMServiceEnabled, AntivirusEnabled, RealTimeProtectionEnabled,
+            AntivirusSignatureVersion, AntivirusSignatureLastUpdated | Out-Host
+          $published = Join-Path $env:RUNNER_TEMP 'publicado'
+          New-Item -ItemType Directory -Force $published | Out-Null
+          $latest = Invoke-RestMethod 'https://morghullis.github.io/labelbridge-updates/latest.json'
+          $old = Join-Path $published ([IO.Path]::GetFileName($latest.installer.url))
+          Invoke-WebRequest $latest.installer.url -OutFile $old
+          $targets = @((Get-ChildItem dist\installer\*.exe).FullName, $old,
+                       (Get-ChildItem dist\LabelBridge\LabelBridge.exe).FullName, (Resolve-Path dist\LabelBridge).Path)
+          $found = @()
+          foreach ($target in $targets) {
+            "== $target"
+            & $mp -Scan -ScanType 3 -File $target -DisableRemediation | Out-Host
+            if ($LASTEXITCODE -eq 2) { $found += $target; '   -> Defender lo marca como amenaza' }
+          }
+          Get-MpThreatDetection | Format-List | Out-Host
+          Get-MpThreat | Format-List ThreatName, SeverityID, Resources | Out-Host
+          if ($found) { throw "Microsoft Defender marca como amenaza: $($found -join ', ')" }
+          'Defender no encontró nada.'
+
       - name: Publicar en Releases (solo al crear un tag vX.Y.Z)
         if: startsWith(github.ref, 'refs/tags/v')
         shell: pwsh
