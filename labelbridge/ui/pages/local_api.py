@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from PySide6.QtWidgets import QCheckBox, QFormLayout, QHBoxLayout, QLineEdit, QPlainTextEdit, QSpinBox
+from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QLineEdit, QPlainTextEdit, QSpinBox
 
 from ...discovery import local_ipv4_addresses
 from ...i18n import N_, tr
@@ -12,7 +12,7 @@ from ...secret_store import LOCAL_API_KEY
 from ...services import generate_key
 from ...system.platform import pick
 from ..context import AppContext
-from ..widgets import Card, Page, Pill, SecretField, SwitchRow, button, confirm, copy_to_clipboard
+from ..widgets import Card, Page, Pill, SecretField, SwitchRow, button, confirm, copy_to_clipboard, form_layout
 
 
 class LocalApiPage(Page):
@@ -29,7 +29,7 @@ class LocalApiPage(Page):
         card = Card(tr("Servidor"))
         self.enabled = SwitchRow(tr("API local activa"), tr("Escucha en este equipo. Requiere la clave en cada petición."), s.enabled)
         card.add(self.enabled)
-        form = QFormLayout()
+        form = form_layout()
         form.setSpacing(10)
         self.port = QSpinBox()
         self.port.setRange(1024, 65535)

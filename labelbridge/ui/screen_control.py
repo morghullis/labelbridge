@@ -178,7 +178,7 @@ class ScreenBar(QFrame):
         super().__init__(None, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint
                          | Qt.WindowType.WindowStaysOnTopHint)
         self.setObjectName("ScreenBar")
-        self.setStyleSheet("QFrame#ScreenBar { background: #312E81; border-radius: 10px; }"
+        self.setStyleSheet("QFrame#ScreenBar { background: #1F1F1F; border-radius: 10px; }"
                            " QLabel { color: white; font-weight: 600; }")
         row = QHBoxLayout(self)
         row.setContentsMargins(14, 6, 8, 6)

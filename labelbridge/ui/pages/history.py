@@ -37,6 +37,7 @@ from ..theme import STATE_COLORS, job_state
 from ..widgets import (
     Card,
     Page,
+    SplitRow,
     button,
     confirm,
     context_menu,
@@ -141,7 +142,8 @@ class HistoryPage(Page):
         context_menu(self.view, self._menu)
         card.add(self.view, stretch=1)
 
-        actions = QHBoxLayout()
+        # Los botones a la izquierda y la cuenta a la derecha; en una ventana angosta, la cuenta pasa debajo.
+        actions = SplitRow()
         for text, icon_name, slot, variant in (
             (tr("Vista previa"), "eye", self._preview, None),
             (tr("Reimprimir"), "printer", self._reprint, "primary"),
@@ -151,11 +153,10 @@ class HistoryPage(Page):
         ):
             btn = button(text, icon_name, variant)
             btn.clicked.connect(slot)
-            actions.addWidget(btn)
-        actions.addStretch(1)
+            actions.add_start(btn)
         self.count = label("", "Muted")
-        actions.addWidget(self.count)
-        card.add(layout=actions)
+        actions.add_end(self.count)
+        card.add(actions)
         self.add(card, stretch=1)
 
         self._timer = QTimer(self)
@@ -327,7 +328,7 @@ class PreviewDialog(QDialog):
             pixmap.setDevicePixelRatio(2.0)
             holder = label()
             holder.setPixmap(pixmap)
-            holder.setStyleSheet("background: white; border: 1px solid #E2E8F0;")
+            holder.setStyleSheet("background: white; border: none;")
             scroll = QScrollArea()
             scroll.setWidget(holder)
             scroll.setAlignment(Qt.AlignmentFlag.AlignHCenter)

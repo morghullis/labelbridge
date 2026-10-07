@@ -15,7 +15,6 @@ from PySide6.QtGui import QDesktopServices, QFont, QKeyEvent, QPixmap, QTextCurs
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
-    QFormLayout,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -39,7 +38,7 @@ from ...system.platform import pick
 from .. import icons
 from ..context import AppContext
 from ..mascot import mascot_pixmap
-from ..widgets import Card, SecretField, button, copy_to_clipboard, label, repolish, run_async
+from ..widgets import Card, SecretField, button, copy_to_clipboard, form_layout, label, repolish, run_async
 
 BUBBLE_MAX = 292  # ancho máximo de una burbuja dentro del panel
 AVATAR = 28
@@ -129,7 +128,7 @@ class ApprovalDialog(QDialog):
         layout.addLayout(head)
         detail = label(text, wrap=True, selectable=True)
         detail.setStyleSheet(
-            "QLabel { background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 8px; padding: 10px 12px; }"
+            "QLabel { background: #F7F7F7; border: none; border-radius: 8px; padding: 10px 12px; }"
         )
         layout.addWidget(detail)
         layout.addWidget(label(tr("¿Le das permiso? Puedes permitir solo esto o todos los cambios de esta conversación."),
@@ -172,7 +171,7 @@ class SecretDialog(QDialog):
         layout.setSpacing(10)
         head = QHBoxLayout()
         lock = QLabel()
-        lock.setPixmap(icons.pixmap("lock", "#4F46E5", 22))
+        lock.setPixmap(icons.pixmap("lock", "#303030", 22))
         head.addWidget(lock)
         self.title = label(title, "CardTitle")
         head.addWidget(self.title, 1)
@@ -377,9 +376,9 @@ def bubble(text: str, role: str) -> QWidget:
         body.setTextFormat(Qt.TextFormat.PlainText)
         body.setText(text)
     styles = {
-        "user": "background: #4F46E5; color: white; border: none;",
-        "assistant": "background: #F8FAFC; color: #0F172A; border: 1px solid #E2E8F0;",
-        "error": "background: #FEF2F2; color: #991B1B; border: 1px solid #FECACA;",
+        "user": "background: #303030; color: white; border: none;",
+        "assistant": "background: #FFFFFF; color: #303030; border: none;",
+        "error": "background: #FEE1DE; color: #8E1F0B; border: none;",
     }
     body.setStyleSheet(f"QLabel {{ {styles[role]} border-radius: 14px; padding: 10px 14px; }}")
     # Tamaño justo para el texto: las burbujas cortas no ocupan toda la fila ni sobra alto.
@@ -407,7 +406,7 @@ class ActivityRow(QWidget):
         layout.setContentsMargins(40, 0, 0, 0)
         layout.setSpacing(8)
         self.icon = QLabel()
-        self.icon.setPixmap(icons.pixmap("refresh", "#6366F1", 14))
+        self.icon.setPixmap(icons.pixmap("refresh", "#616161", 14))
         self.text = label(f"{text}…", "Muted")
         self.text.setWordWrap(True)
         layout.addWidget(self.icon, 0, Qt.AlignmentFlag.AlignTop)
@@ -427,7 +426,7 @@ class ActivityRow(QWidget):
     def finish(self, ok: bool, detail: str = "") -> None:
         if self._timer:
             self._timer.stop()
-        self.icon.setPixmap(icons.pixmap("check" if ok else "x", "#16A34A" if ok else "#DC2626", 14))
+        self.icon.setPixmap(icons.pixmap("check" if ok else "x", "#29845A" if ok else "#C70A24", 14))
         detail = " ".join(detail.split())
         self.text.setText(self.base if ok else f"{self.base} — {detail[:220]}")
 
@@ -602,7 +601,7 @@ class AssistantPage(QWidget):
             tr("Elige tu IA y usa tu propia clave: pagas por uso a tu proveedor. Los permisos y límites son los mismos "
                "con cualquiera."),
         )
-        self.key_form = QFormLayout()
+        self.key_form = form_layout()
         self.key_form.setSpacing(10)
         self.provider_combo = _narrow(QComboBox())
         for provider in PROVIDERS.values():
@@ -617,7 +616,7 @@ class AssistantPage(QWidget):
         self.key_form.addRow(tr("Modelo"), self.model_field)
         card.add(layout=self.key_form)
         self.key_steps = label("", wrap=True)
-        self.key_steps.setStyleSheet("font-size: 12px; color: #334155;")
+        self.key_steps.setStyleSheet("font-size: 12px; color: #303030;")
         card.add(self.key_steps)
         self.key_field = SecretField("", copyable=False)
         card.add(self.key_field)

@@ -18,7 +18,6 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDoubleSpinBox,
-    QFormLayout,
     QHBoxLayout,
     QHeaderView,
     QLineEdit,
@@ -40,7 +39,7 @@ from ..connectors.shopify_orders import ManualItem, ProductChoice, Recipient, ma
 from ..i18n import tr
 from .context import AppContext
 from .purchase_dialog import WEIGHT_UNITS, _units
-from .widgets import button, confirm, copy_to_clipboard, label, run_async
+from .widgets import button, confirm, copy_to_clipboard, form_layout, label, run_async
 
 COUNTRIES = {"US": "Estados Unidos", "PR": "Puerto Rico", "MX": "México", "CA": "Canadá", "ES": "España",
              "CO": "Colombia", "DO": "República Dominicana"}
@@ -71,7 +70,7 @@ class ManualLabelDialog(QDialog):
 
         # --- destinatario ---------------------------------------------------------------------
         layout.addWidget(label(tr("Destinatario"), "SectionTitle"))
-        form = QFormLayout()
+        form = form_layout()
         form.setSpacing(8)
         self.name = QLineEdit()
         form.addRow(tr("Nombre"), self.name)

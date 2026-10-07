@@ -56,9 +56,12 @@ from ...connectors.shopify import admin_url
 from ...i18n import N_, date_text, tr
 from .. import icons
 from ..context import AppContext
+from ..theme import Color
 from ..widgets import (
     Card,
+    FlowRow,
     Page,
+    SplitRow,
     button,
     confirm,
     copy_to_clipboard,
@@ -74,12 +77,12 @@ PERIODS = (("today", N_("Hoy")), (7, N_("Últimos 7 días")), (30, N_("Últimos 
 STALE_SECONDS = 60
 COLUMNS = [N_("Pedido"), N_("Fecha"), N_("Cliente · destino"), N_("Envío · piezas"), N_("Paquetería"), N_("Guía"),
            N_("Estado")]
-STATE_COLORS = {
-    "action": "#B45309",
-    "waiting": "#3730A3",
-    "done": "#166534",
-    "cancelled": "#64748B",
-    "info": "#475569",
+STATE_COLORS = {  # color del texto del estado de cada fila
+    "action": "#8A5A00",
+    "waiting": "#00418A",
+    "done": "#0C5132",
+    "cancelled": Color.TEXT_SECONDARY,
+    "info": Color.ICON,
 }
 CARRIER_COLORS = {  # (fondo, texto)
     "USPS": ("#DBEAFE", "#1E3A8A"),
@@ -103,11 +106,11 @@ def money(value: float) -> str:
 
 def carrier_chip(carrier: str) -> QWidget:
     text = carrier or tr("Sin envío")
-    bg, fg = CARRIER_COLORS.get(carrier, ("#F1F5F9", "#334155"))
+    bg, fg = CARRIER_COLORS.get(carrier, (Color.SURFACE_SELECTED, Color.ICON))
     chip = label(text)
     chip.setAlignment(Qt.AlignmentFlag.AlignCenter)
     chip.setStyleSheet(
-        f"QLabel {{ background: {bg}; color: {fg}; border-radius: 9px; padding: 2px 9px; font-weight: 700;"
+        f"QLabel {{ background: {bg}; color: {fg}; border-radius: 6px; padding: 2px 8px; font-weight: 600;"
         " font-size: 11px; }"
     )
     return chip
@@ -167,7 +170,7 @@ class OrdersModel(QAbstractTableModel):
         if role == Qt.ItemDataRole.UserRole:  # para ordenar
             return (row.name, row.created, row.customer, row.subtotal, row.carrier, row.cost, row.state)[col]
         if role == Qt.ItemDataRole.ForegroundRole and col == 6:
-            return QColor("#BE123C" if row.alert else STATE_COLORS.get(row.state, "#334155"))
+            return QColor(Color.CRITICAL if row.alert else STATE_COLORS.get(row.state, Color.TEXT))
         if role == Qt.ItemDataRole.ToolTipRole:
             if col == 2:
                 return " · ".join(part for part in (row.customer, row.destination) if part)
@@ -196,7 +199,7 @@ class ActionItem(QFrame):
         who = [row.customer, row.destination, row.method]
         if row.subtotal:
             who.append(tr("{0} en piezas", money(row.subtotal)))
-        head.addWidget(label(" · ".join(part for part in who if part), "Muted"), 1)
+        head.addWidget(label(" · ".join(part for part in who if part), "Muted", wrap=True), 1)  # se parte si no cabe
         overdue = max(1, int(page.ctx.cfg.data.notifications.unshipped_days or 0))
         if row.waiting_days >= overdue:
             head.addWidget(label(tr("{0} días sin enviar", row.waiting_days), "Overdue"))
@@ -241,7 +244,7 @@ class DelayItem(QFrame):
         head.addWidget(carrier_chip(row.carrier))
         head.addWidget(label(row.name, "CardTitle"))
         who = " · ".join(part for part in (row.customer, row.destination) if part)
-        head.addWidget(label(who, "Muted"), 1)
+        head.addWidget(label(who, "Muted", wrap=True), 1)
         if row.tracking:
             head.addWidget(label(row.tracking[0][1], "Muted", selectable=True))
         column.addLayout(head)
@@ -476,14 +479,13 @@ class OrdersPage(Page):
 
         # Los números, en una sola franja.
         strip = Card()
-        stats = QHBoxLayout()
-        stats.setSpacing(0)
-        self.stat_action = self._stat(stats, tr("NECESITAN ACCIÓN"))
-        self.stat_delays = self._stat(stats, tr("RETRASOS"))
-        self.stat_orders = self._stat(stats, tr("PEDIDOS"))
-        self.stat_labels = self._stat(stats, tr("GUÍAS COMPRADAS"))
-        self.stat_carriers = self._stat(stats, tr("PROMEDIO POR GUÍA"), last=True)
-        strip.add(layout=stats)
+        stats = FlowRow(min_column=150)
+        self.stat_action = self._stat(stats, tr("Necesitan acción"))
+        self.stat_delays = self._stat(stats, tr("Retrasos"))
+        self.stat_orders = self._stat(stats, tr("Pedidos"))
+        self.stat_labels = self._stat(stats, tr("Guías compradas"))
+        self.stat_carriers = self._stat(stats, tr("Promedio por guía"))
+        strip.add(stats)
         self.add(strip)
 
         self.action_card = Card(tr("Necesitan acción"))
@@ -500,8 +502,8 @@ class OrdersPage(Page):
         self.add(self.delay_card)
 
         table_card = Card(tr("Todos los pedidos"))
-        tabs = QHBoxLayout()
-        tabs.setSpacing(6)
+        # Filtros a la izquierda y búsqueda a la derecha; en una ventana angosta, la búsqueda pasa debajo.
+        filters = SplitRow(spacing=6)
         # Filtro principal: procesado = «Preparado» en Shopify (por defecto, todos, como siempre).
         self.status = "all"
         self.status_group = QButtonGroup(self)
@@ -513,24 +515,22 @@ class OrdersPage(Page):
             tab.clicked.connect(lambda _=False, k=key: self._set_status(k))
             self.status_group.addButton(tab)
             self.status_tabs[key] = tab
-            tabs.addWidget(tab)
+            filters.add_start(tab)
         self.status_tabs["all"].setChecked(True)
-        tabs.addSpacing(10)
-        tabs.addWidget(label(tr("Paquetería"), "Muted"))
+        filters.add_end(label(tr("Paquetería"), "Muted"))
         self.carrier_filter = QComboBox()
         for key, text in CARRIER_FILTERS:
             self.carrier_filter.addItem(tr(text), key)
         self.carrier_filter.currentIndexChanged.connect(
             lambda _i: self._set_group(self.carrier_filter.currentData() or "all"))
-        tabs.addWidget(self.carrier_filter)
-        tabs.addStretch(1)
+        filters.add_end(self.carrier_filter)
         self.search = QLineEdit()
         self.search.setPlaceholderText(tr("Buscar pedido, cliente o seguimiento…"))
         self.search.setClearButtonEnabled(True)
         self.search.setMinimumWidth(240)
         self.search.textChanged.connect(lambda _t: self._fill_table())
-        tabs.addWidget(self.search)
-        table_card.add(layout=tabs)
+        filters.add_end(self.search, 1)
+        table_card.add(filters)
 
         self.model = OrdersModel()
         self.proxy = QSortFilterProxyModel(self)
@@ -595,23 +595,19 @@ class OrdersPage(Page):
         QTimer.singleShot(1500, self.reload)  # al abrir la app: el aviso de la barra lateral sin entrar aquí
 
     # --- piezas --------------------------------------------------------------------------------------
-    def _stat(self, row: QHBoxLayout, title: str, last: bool = False):
-        """Un número de la franja de arriba: título, valor y detalle (separados por una línea fina)."""
-        block = QVBoxLayout()
-        block.setSpacing(2)
-        block.setContentsMargins(14, 2, 14, 2)
-        block.addWidget(label(title, "StatLabel"))
+    def _stat(self, row: FlowRow, title: str):
+        """Un número de la franja de arriba: título, valor y detalle (separados por líneas finas)."""
+        block = QWidget()
+        column = QVBoxLayout(block)
+        column.setSpacing(2)
+        column.setContentsMargins(14, 2, 14, 2)
+        column.addWidget(label(title, "StatLabel"))
         value = label("—", "StripValue")
-        block.addWidget(value)
+        column.addWidget(value)
         detail = label("", "Small", wrap=True)
-        block.addWidget(detail)
-        block.addStretch(1)
-        row.addLayout(block, 1)
-        if not last:
-            line = QFrame()
-            line.setFrameShape(QFrame.Shape.VLine)
-            line.setStyleSheet("color: #E2E8F0;")
-            row.addWidget(line)
+        column.addWidget(detail)
+        column.addStretch(1)
+        row.add_block(block)
         return value, detail
 
     def _connected(self) -> bool:
@@ -723,8 +719,15 @@ class OrdersPage(Page):
     def _render_actions(self, rows: list[OrderRow]) -> None:
         self._clear_actions()
         self.action_card.title_label.setText(tr("Necesitan acción  {0}", len(rows)) if rows else tr("Necesitan acción"))
-        if not rows:
-            ok = label(tr("✓ Nada pendiente: las guías se compran e imprimen solas."), "Hint", wrap=True)
+        if not rows:  # todo en orden: una línea tranquila, sin caja
+            ok = QWidget()
+            line = QHBoxLayout(ok)
+            line.setContentsMargins(0, 2, 0, 2)
+            line.setSpacing(8)
+            mark = label()
+            mark.setPixmap(icons.pixmap("check", Color.SUCCESS, 16))
+            line.addWidget(mark)
+            line.addWidget(label(tr("Nada pendiente: las guías se compran e imprimen solas."), "Muted", wrap=True), 1)
             self.action_list.addWidget(ok)
             return
         for row in rows[:20]:

@@ -9,7 +9,6 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QFileDialog,
-    QFormLayout,
     QHBoxLayout,
     QLineEdit,
     QSpinBox,
@@ -21,7 +20,7 @@ from ..config import MEDIA_PRESETS, PRINTER_KINDS, PrinterProfile
 from ..i18n import N_, tr
 from ..system.platform import pick
 from .context import AppContext
-from .widgets import button, error, info, label, run_async
+from .widgets import button, error, form_layout, info, label, run_async
 
 
 class PrinterDialog(QDialog):
@@ -38,7 +37,7 @@ class PrinterDialog(QDialog):
         layout.setSpacing(14)
         layout.addWidget(label(tr("Tipo: {0}", tr(PRINTER_KINDS.get(profile.kind, profile.kind))), "SectionTitle"))
 
-        form = QFormLayout()
+        form = form_layout()
         form.setSpacing(10)
         self.alias = QLineEdit(profile.alias)
         self.alias.setPlaceholderText(tr("etiquetas"))

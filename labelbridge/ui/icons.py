@@ -57,7 +57,7 @@ PATHS = {
 
 
 @lru_cache(maxsize=512)
-def pixmap(name: str, color: str = "#334155", size: int = 18, ratio: float = 2.0) -> QPixmap:
+def pixmap(name: str, color: str = "#4A4A4A", size: int = 18, ratio: float = 2.0) -> QPixmap:
     body = PATHS.get(name, PATHS["file"])
     svg = (
         '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" '
@@ -73,7 +73,7 @@ def pixmap(name: str, color: str = "#334155", size: int = 18, ratio: float = 2.0
     return px
 
 
-def icon(name: str, color: str = "#334155", size: int = 18) -> QIcon:
+def icon(name: str, color: str = "#4A4A4A", size: int = 18) -> QIcon:
     return QIcon(pixmap(name, color, size))
 
 
@@ -105,15 +105,15 @@ def app_icon_pixmap(size: int = 256) -> QPixmap:
 
 
 def generic_icon_pixmap(size: int = 256) -> QPixmap:
-    """Icono genérico de LabelBridge: etiqueta con código de barras sobre degradado índigo."""
+    """Icono genérico de LabelBridge (si falta el logo): etiqueta con código de barras sobre negro y oro."""
     px = QPixmap(size, size)
     px.fill(Qt.GlobalColor.transparent)
     p = QPainter(px)
     p.setRenderHint(QPainter.RenderHint.Antialiasing)
     s = size / 256.0
     gradient = QLinearGradient(0, 0, size, size)
-    gradient.setColorAt(0, QColor("#6366F1"))
-    gradient.setColorAt(1, QColor("#4338CA"))
+    gradient.setColorAt(0, QColor("#2A2A2A"))
+    gradient.setColorAt(1, QColor("#121212"))
     p.setBrush(gradient)
     p.setPen(Qt.PenStyle.NoPen)
     p.drawRoundedRect(QRectF(8 * s, 8 * s, 240 * s, 240 * s), 56 * s, 56 * s)
@@ -122,14 +122,14 @@ def generic_icon_pixmap(size: int = 256) -> QPixmap:
     label.addRoundedRect(QRectF(58 * s, 40 * s, 140 * s, 176 * s), 16 * s, 16 * s)
     p.setBrush(QColor("white"))
     p.drawPath(label)
-    p.setBrush(QColor("#4338CA"))
+    p.setBrush(QColor("#B98A2C"))
     p.drawEllipse(QRectF(116 * s, 56 * s, 24 * s, 24 * s))
-    p.setBrush(QColor("#1E1B4B"))
+    p.setBrush(QColor("#1A1A1A"))
     x = 78.0
     for w in (6, 3, 9, 3, 6, 12, 3, 6, 3, 9, 6, 3):
         p.drawRect(QRectF(x * s, 104 * s, w * s, 64 * s))
         x += w + 4.2
-    p.setBrush(QColor("#A5B4FC"))
+    p.setBrush(QColor("#E8B04B"))
     p.drawRoundedRect(QRectF(78 * s, 182 * s, 100 * s, 12 * s), 6 * s, 6 * s)
     p.end()
     return px

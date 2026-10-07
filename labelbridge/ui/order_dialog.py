@@ -221,7 +221,7 @@ class OrderDialog(QDialog):
             photo = label("")
             photo.setFixedSize(THUMB, THUMB)
             photo.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            photo.setStyleSheet("QLabel { background: #F1F5F9; border-radius: 8px; }")
+            photo.setStyleSheet("QLabel { background: #F7F7F7; border-radius: 8px; }")
             if item.image:
                 self.images.setdefault(item.image, []).append(photo)
             row.addWidget(photo, alignment=Qt.AlignmentFlag.AlignTop)

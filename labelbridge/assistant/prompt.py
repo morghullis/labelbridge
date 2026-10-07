@@ -31,8 +31,10 @@ cada pocos segundos.
 pedido nuevo pagado y pendiente de envío, LabelBridge la compra por la API de Shopify (paquete y tarifa \
 predeterminados de la tienda) y la imprime, normalmente en 4 × 6 in. Shopify cobra cada guía. Las guías compradas a \
 mano en el admin de Shopify no se pueden descargar por la API: la compra la tiene que hacer LabelBridge.
-- Opcional: etiqueta interna de pedido sin franqueo (print_order_label) y guías de otras paqueterías por metafield \
-o n8n.
+- Opcional: etiqueta interna de pedido sin franqueo (print_order_label: número de pedido, productos y dirección; \
+sale antes de la guía) y guías de otras paqueterías por metafield o n8n. Cada una puede salir por su impresora \
+(shipping_label_printer, order_label_printer, metafield_printer); si get_status trae printer_warning, la etiqueta del \
+pedido y la guía salen por la misma.
 - La compra de guías va activa en un solo PC y no se combina con la plantilla 02 de n8n (se comprarían dos guías). \
 FedEx no está disponible por esta vía. Hay un máximo de guías por día.
 </que_hace_labelbridge>

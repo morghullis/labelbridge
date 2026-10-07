@@ -30,7 +30,7 @@ from ...system.platform import pick
 from ...updater import UPDATES_PAGE
 from ..actions import enqueue_test_label
 from ..context import AppContext
-from ..widgets import Card, Page, Pill, button, copy_to_clipboard, label, run_dialog
+from ..widgets import Card, Page, Pill, ScaledImage, button, copy_to_clipboard, label, repolish, run_dialog
 
 @dataclass
 class Step:
@@ -348,10 +348,10 @@ def is_complete(ctx: AppContext) -> bool:
 
 # --- interfaz ------------------------------------------------------------------------------
 
-CODE_STYLE = "font-family: Consolas, Menlo, monospace; color: #3730A3; background-color: #EEF2FF;"
+CODE_STYLE = "font-family: Consolas, Menlo, monospace; color: #1A1A1A; background-color: #EBEBEB;"
 
 
-BADGE_STYLE = "background-color: #F59E0B; color: #1E1B4B; font-weight: 700;"
+BADGE_STYLE = "background-color: #E8B04B; color: #1A1A1A; font-weight: 600;"
 CIRCLED = "①②③④⑤⑥⑦⑧⑨"
 
 
@@ -364,10 +364,10 @@ def _highlight_code(html: str) -> str:
 
 
 BADGE_STYLES = {
-    "done": "background: #16A34A; color: white;",
-    "current": "background: #4F46E5; color: white;",
-    "pending": "background: #E2E8F0; color: #475569;",
-    "optional": "background: #F1F5F9; color: #64748B; border: 1px dashed #94A3B8;",
+    "done": "background: #29845A; color: white;",
+    "current": "background: #303030; color: white;",
+    "pending": "background: #EBEBEB; color: #616161;",
+    "optional": "background: transparent; color: #616161;",
 }
 
 
@@ -429,22 +429,12 @@ class GuideImage(QWidget):
         if self.pixmap.isNull():
             return
         self.pixmap.setDevicePixelRatio(2.0)
-        logical = self.pixmap.size() / 2.0
-        scale = min(1.0, self.MAX_WIDTH / max(1, logical.width()))
-        shown = self.pixmap.scaled(
-            int(self.pixmap.width() * scale),
-            int(self.pixmap.height() * scale),
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        )
-        shown.setDevicePixelRatio(2.0)
-        picture = QLabel()
-        picture.setPixmap(shown)
+        # Hasta MAX_WIDTH de ancho y más chica si la ventana es angosta (sin deformarse ni ensanchar la página).
+        picture = ScaledImage(self.pixmap, self.MAX_WIDTH)
         picture.setCursor(Qt.CursorShape.PointingHandCursor)
         picture.setToolTip(tr("Clic para ver en grande"))
-        picture.setStyleSheet("QLabel { border: 1px solid #E2E8F0; border-radius: 8px; background: white; }")
-        picture.mousePressEvent = lambda _event: run_dialog(ImageViewer(self.window(), self.pixmap, caption))
-        layout.addWidget(picture, 0, Qt.AlignmentFlag.AlignLeft)
+        picture.clicked.connect(lambda: run_dialog(ImageViewer(self.window(), self.pixmap, caption)))
+        layout.addWidget(picture)
         layout.addWidget(label(tr("▲ {0} · clic para ampliar", caption), "Small"))
 
 
@@ -473,7 +463,7 @@ class StepCard(QFrame):
         body.addWidget(label(tr(step.summary), "Muted", wrap=True))
 
         self.toggle = button(tr("Ver instrucciones"), None, "ghost")
-        self.toggle.setStyleSheet("color: #4F46E5; font-weight: 600; text-align: left; padding-left: 0;")
+        self.toggle.setStyleSheet("color: #005BD3; font-weight: 600; text-align: left; padding-left: 0;")
         self.toggle.clicked.connect(lambda: self.set_expanded(not self.details.isVisible()))
         body.addWidget(self.toggle, 0, Qt.AlignmentFlag.AlignLeft)
 
@@ -486,8 +476,8 @@ class StepCard(QFrame):
         instructions.setTextFormat(Qt.TextFormat.RichText)
         instructions.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         instructions.setStyleSheet(
-            "QLabel { background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 8px; padding: 10px 14px;"
-            " color: #0F172A; line-height: 150%; }"
+            "QLabel { background: #F7F7F7; border: none; border-radius: 8px; padding: 10px 14px;"
+            " color: #303030; line-height: 150%; }"
         )
         details_layout.addWidget(instructions)
         for file_name, caption in step.images:
@@ -593,8 +583,11 @@ class GuidePage(Page):
         done, total = progress(self.ctx)
         self.bar.setRange(0, total)
         self.bar.setValue(done)
+        if self.bar.property("complete") != (done == total):  # completa: la barra pasa a verde
+            self.bar.setProperty("complete", done == total)
+            repolish(self.bar)
         if done == total:
-            self.summary_title.setText(tr("✓ ¡Todo listo! LabelBridge ya imprime solo"))
+            self.summary_title.setText(tr("¡Todo listo! LabelBridge ya imprime solo"))
             self.summary_text.setText(
                 tr("Los pedidos nuevos de tu tienda se imprimen automáticamente. Puedes volver a esta guía cuando "
                    "quieras, por ejemplo al instalar en otro equipo.")

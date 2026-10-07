@@ -26,6 +26,7 @@ from ..config import LABEL_SIZES, MEDIA_PRESETS, PrinterProfile, slugify
 from ..connectors.shopify import DEV_DASHBOARD_URL, SCOPES_BASIC, SCOPES_LABELS, ShopifyError, admin_url, normalize_shop
 from ..discovery import discover
 from ..models import SOURCE_LABELS, status_text
+from ..printing import routing
 from ..printing.hints import looks_like_label_printer, looks_like_zpl, suggest_alias
 from ..printing.outputs import list_system_printers
 from ..secret_store import MQTT_PASSWORD, SHOPIFY_ACCESS_TOKEN, SHOPIFY_CLIENT_SECRET
@@ -305,6 +306,15 @@ class Toolbox:
             }
         return result
 
+    def _order_label_clash(self) -> str:
+        """Si la etiqueta del pedido sale por la misma impresora que la guía, el aviso para el usuario («quiero la
+        orden en otra impresora»: se arregla con set_shopify_printing(order_label_printer=otro alias))."""
+        shared = routing.order_label_clash(self.ctx.cfg)
+        if shared is None:
+            return ""
+        return (f"La etiqueta del pedido y la guía salen por la misma impresora ({shared.display_name()}). Para "
+                "separarlas: set_shopify_printing(order_label_printer=<alias de otra impresora>).")
+
     def _shopify_status(self, full: bool) -> dict:
         s = self.ctx.cfg.data.shopify
         service = self.ctx.services.shopify
@@ -330,7 +340,11 @@ class Toolbox:
             "labels_bought_today": self.ctx.store.count_seen(prefix, self.ctx.store.start_of_today()) if prefix else 0,
             "max_labels_per_day": s.max_labels_per_day,
             "print_order_label": s.print_order_label,
+            "order_label_printer": s.order_label_printer or "(predeterminada)",
         }
+        clash = self._order_label_clash()
+        if clash:
+            status["printer_warning"] = clash
         if full:
             status.update(
                 auth_mode=s.auth_mode,
@@ -339,7 +353,6 @@ class Toolbox:
                 access_token_saved=bool(self.ctx.secrets.get(SHOPIFY_ACCESS_TOKEN)),
                 api_version=s.api_version,
                 notify_customer=s.notify_customer,
-                order_label_printer=s.order_label_printer or "(predeterminada)",
                 metafield_label=s.metafield_label,
                 only_paid=s.only_paid,
                 only_unfulfilled=s.only_unfulfilled,
@@ -720,6 +733,9 @@ class Toolbox:
                 "tag_after_print": s.tag_after_print,
             }
         )
+        clash = self._order_label_clash()
+        if clash:
+            result["printer_warning"] = clash
         if s.buy_shipping_label:
             result["reminder"] = (
                 "Para comprar guías la app de Shopify necesita los permisos write_orders y "
@@ -1201,7 +1217,8 @@ class Toolbox:
                 "automáticamente la guía de envío de Shopify Shipping (con franqueo, Shopify cobra cada guía) e "
                 "imprime su PDF: es la etiqueta que va pegada en el paquete. Activarla abre una ventana de "
                 "confirmación; si el usuario no acepta, no se activa. print_order_label es una etiqueta interna de "
-                "LabelBridge sin franqueo (opcional, útil para empacar).",
+                "LabelBridge sin franqueo (número de pedido, productos y dirección; opcional, útil para empacar) que "
+                "sale antes de la guía; con order_label_printer sale por otra impresora que la guía.",
                 _obj(
                     {
                         "buy_shipping_label": _b("Comprar e imprimir la guía de Shopify Shipping de cada pedido."),

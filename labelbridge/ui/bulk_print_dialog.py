@@ -33,7 +33,7 @@ from .context import AppContext
 from .purchase_dialog import ServicePicker, box_text, has_saved_box
 from .widgets import button, label, run_async
 
-RESULT_COLORS = {"done": "#166534", "failed": "#BE123C", "skipped": "#64748B", "working": "#3730A3"}
+RESULT_COLORS = {"done": "#0C5132", "failed": "#C70A24", "skipped": "#616161", "working": "#00418A"}
 
 
 class _Signals(QObject):
@@ -213,7 +213,7 @@ class BulkPrintDialog(QDialog):
         if cell is not None:
             cell.setText(texts.get(item.state, ""))
             cell.setToolTip(cell.text())
-            cell.setForeground(QColor(RESULT_COLORS.get(item.state, "#334155")))
+            cell.setForeground(QColor(RESULT_COLORS.get(item.state, "#303030")))
         if item.state in ("done", "failed", "skipped"):
             self.progress.setValue(min(self.progress.maximum(), index + 1))
         self.table.scrollToItem(self.table.item(index, 0), QTableWidget.ScrollHint.EnsureVisible)

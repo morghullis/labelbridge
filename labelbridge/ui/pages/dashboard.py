@@ -27,29 +27,26 @@ from .. import icons
 from ..actions import enqueue_test_label
 from .guide import guide_banner, update_guide_banner
 from ..context import AppContext
-from ..theme import job_state
-from ..widgets import Card, Page, Pill, ToggleSwitch, button, context_menu, error, label
+from ..theme import Color, job_state
+from ..widgets import Card, Page, Pill, ToggleSwitch, button, context_menu, divider, error, label, link_button
 
 
 class DayCard(QFrame):
-    """Un número del día (pedidos, impresas, por hacer, impresora), con su detalle; clic para ir a verlo."""
+    """Un número del día (pedidos, impresas, por hacer, impresora), con su detalle; clic para ir a verlo. Van juntos
+    en una sola tarjeta, separados por líneas finas."""
 
-    def __init__(self, title: str, icon_name: str, on_click: Callable[[], None] | None = None) -> None:
+    def __init__(self, title: str, on_click: Callable[[], None] | None = None) -> None:
         super().__init__()
-        self.setObjectName("Card")
+        self.setObjectName("DayCell")
+        self.setStyleSheet(f"QFrame#DayCell {{ background: transparent; border-radius: 8px; }}"
+                           f" QFrame#DayCell:hover {{ background: {Color.SURFACE_HOVER}; }}")
         self.on_click = on_click
         if on_click is not None:
             self.setCursor(Qt.CursorShape.PointingHandCursor)
         column = QVBoxLayout(self)
-        column.setContentsMargins(18, 14, 18, 14)
-        column.setSpacing(4)
-        head = QHBoxLayout()
-        head.addWidget(label(title, "StatLabel"))
-        head.addStretch(1)
-        ico = label()
-        ico.setPixmap(icons.pixmap(icon_name, "#94A3B8", 18))
-        head.addWidget(ico)
-        column.addLayout(head)
+        column.setContentsMargins(14, 10, 14, 10)
+        column.setSpacing(2)
+        column.addWidget(label(title, "StatLabel"))
         self.value = label("—", "StatValue")
         column.addWidget(self.value)
         self.detail = label("", "Small", wrap=True)
@@ -102,27 +99,34 @@ class DashboardPage(Page):
         banner.add(layout=row)
         self.add(banner)
 
-        # El día en cuatro números.
+        # El día en cuatro números, en una sola tarjeta.
+        day_card = Card()
+        day_card.body.setContentsMargins(8, 8, 8, 8)
         day = QHBoxLayout()
-        day.setSpacing(16)
-        self.card_orders = DayCard(tr("PEDIDOS HOY"), "package", lambda: navigate("orders"))
-        self.card_printed = DayCard(tr("IMPRESAS HOY"), "check", lambda: navigate("history"))
-        self.card_pending = DayCard(tr("POR HACER"), "alert", lambda: navigate("orders"))
-        self.card_printer = DayCard(tr("IMPRESORA"), "printer", lambda: navigate("printers"))
-        for card in (self.card_orders, self.card_printed, self.card_pending, self.card_printer):
+        day.setSpacing(6)
+        self.card_orders = DayCard(tr("Pedidos hoy"), lambda: navigate("orders"))
+        self.card_printed = DayCard(tr("Impresas hoy"), lambda: navigate("history"))
+        self.card_pending = DayCard(tr("Por hacer"), lambda: navigate("orders"))
+        self.card_printer = DayCard(tr("Impresora"), lambda: navigate("printers"))
+        for index, card in enumerate((self.card_orders, self.card_printed, self.card_pending, self.card_printer)):
+            if index:
+                day.addWidget(divider(vertical=True))
             day.addWidget(card, 1)
-        self.add(layout=day)
+        day_card.add(layout=day)
+        self.add(day_card)
 
         # Conexiones de un vistazo (clic: su pantalla).
         conns = Card(tr("Conexiones"))
         strip = QHBoxLayout()
         strip.setSpacing(10)
         self.conn: dict[str, tuple[Pill, Any]] = {}
-        for key, title, icon_name, page in (
+        for index, (key, title, icon_name, page) in enumerate((
             ("shopify", "Shopify", "shop", "shopify"),
             ("mqtt", "n8n", "flow", "n8n"),
             ("local_api", "API local", "server", "api"),
-        ):
+        )):
+            if index:
+                strip.addWidget(divider(vertical=True))
             item = QPushButton()
             item.setObjectName("ConnItem")
             item.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -131,7 +135,7 @@ class DashboardPage(Page):
             inside.setContentsMargins(12, 8, 12, 8)
             inside.setSpacing(8)
             ico = label()
-            ico.setPixmap(icons.pixmap(icon_name, "#4F46E5", 18))
+            ico.setPixmap(icons.pixmap(icon_name, Color.ICON, 18))
             inside.addWidget(ico)
             inside.addWidget(label(tr(title), "ItemTitle"))
             inside.addStretch(1)
@@ -145,8 +149,7 @@ class DashboardPage(Page):
 
         # Lo último que pasó.
         recent = Card(tr("Lo último"))
-        see_all = button(tr("Ver historial"), None, "ghost")
-        see_all.setStyleSheet("color: #4F46E5; font-weight: 600;")
+        see_all = link_button(tr("Ver historial"))
         see_all.clicked.connect(lambda: self.navigate("history"))
         recent.header.addWidget(see_all)
         self.table = QTableWidget(0, 4)
@@ -200,11 +203,11 @@ class DashboardPage(Page):
         self.auto_switch.blockSignals(False)
         awake = tr(" Este equipo no se dormirá mientras LabelBridge esté abierto.") if g.keep_awake else ""
         if paused:
-            self.banner_icon.setPixmap(icons.pixmap("pause", "#B45309", 28))
+            self.banner_icon.setPixmap(icons.pixmap("pause", Color.WARNING, 28))
             self.banner_title.setText(tr("Impresión automática en pausa"))
             self.banner_desc.setText(tr("Los trabajos se siguen recibiendo y quedan en cola hasta que la reanudes."))
         else:
-            self.banner_icon.setPixmap(icons.pixmap("zap", "#4F46E5", 28))
+            self.banner_icon.setPixmap(icons.pixmap("zap", Color.GOLD, 28))
             self.banner_title.setText(tr("Impresión automática activa"))
             self.banner_desc.setText(
                 tr("Equipo «{0}». Las etiquetas se imprimen apenas llegan.", g.agent_name) + awake
@@ -225,22 +228,22 @@ class DashboardPage(Page):
         counts = ctx.store.counts()
         failed = counts["failed_today"]
         self.card_printed.set(str(counts["done_today"]), tr("{0} con error", failed) if failed else tr("Sin errores"),
-                              "#BE123C" if failed and not counts["done_today"] else "")
+                              Color.CRITICAL if failed and not counts["done_today"] else "")
         if self.attention:
-            self.card_pending.set(str(self.attention), tr("Míralos en Pedidos, con el porqué"), "#B45309")
+            self.card_pending.set(str(self.attention), tr("Míralos en Pedidos, con el porqué"), Color.WARNING)
         else:
             self.card_pending.set("0", tr("Todo va solo"))
         printers = [p for p in ctx.cfg.data.printers if p.enabled]
         default = ctx.cfg.default_printer()
         if not printers:
-            self.card_printer.set("—", tr("Agrega tu impresora de etiquetas"), "#B45309")
+            self.card_printer.set("—", tr("Agrega tu impresora de etiquetas"), Color.WARNING)
         else:
             name = default.display_name() if default else printers[0].display_name()
             state = tr("En pausa") if ctx.cfg.data.general.paused else tr("Lista")
             queued = counts["queued"]
             detail = state + (" · " + tr("{0} en cola", queued) if queued else "")
             self.card_printer.set(name, detail)
-            self.card_printer.value.setStyleSheet("font-size: 17px; font-weight: 700;")  # un nombre, no un número
+            self.card_printer.value.setStyleSheet("font-size: 17px; font-weight: 600;")  # un nombre, no un número
 
     def _refresh_connections(self) -> None:
         ctx = self.ctx

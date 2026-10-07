@@ -110,7 +110,7 @@ def test_the_orders_page_marks_and_unmarks_from_its_menus(core, monkeypatch):
 def test_the_sidebar_is_grouped_and_links_open_the_right_settings_tab(core):
     from labelbridge.ui.main_window import NAV, NAV_SECTIONS, MainWindow
 
-    assert sorted(key for _title, keys in NAV_SECTIONS for key in keys) == sorted(key for key, _t, _i in NAV)
+    assert sorted(key for _title, keys in NAV_SECTIONS for key in keys) == sorted(NAV)
     window = MainWindow(_ui_context(core))
     window.navigate("settings/label")
     settings = window.pages["settings"]

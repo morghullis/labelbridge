@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import QUrl
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import QCheckBox, QFormLayout, QHBoxLayout, QLineEdit, QSpinBox
+from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QLineEdit, QSpinBox
 
 from ...config import slugify
 from ...connectors.mqtt import topics
@@ -13,7 +13,7 @@ from ...i18n import tr
 from ...paths import resource_path
 from ...secret_store import MQTT_PASSWORD
 from ..context import AppContext
-from ..widgets import Card, Page, Pill, SecretField, SwitchRow, button, error, label, run_async
+from ..widgets import Card, Page, Pill, SecretField, SwitchRow, button, error, form_layout, label, run_async
 
 
 class N8nPage(Page):
@@ -46,7 +46,7 @@ class N8nPage(Page):
         )
         self.enabled = SwitchRow(tr("Recibir trabajos de n8n en tiempo real"), tr("Conexión saliente: no hay que abrir puertos."), s.enabled)
         conn.add(self.enabled)
-        form = QFormLayout()
+        form = form_layout()
         form.setSpacing(10)
         self.host = QLineEdit(s.host)
         self.host.setPlaceholderText("xxxxxxxx.ala.us-east-1.emqxsl.com")

@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
+from typing import Callable
+
 from PySide6.QtCore import QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
     QComboBox,
-    QFormLayout,
-    QGridLayout,
     QHBoxLayout,
     QLineEdit,
     QRadioButton,
@@ -23,10 +23,13 @@ from ...connectors.shopify import SCOPES_LABELS, ShopifyError, normalize_shop
 from ...events import CONFIG_EXTERNAL
 from ...i18n import date_text, tr
 from ...paths import resource_path
+from ...printing import routing
 from ...secret_store import SHOPIFY_ACCESS_TOKEN, SHOPIFY_CLIENT_SECRET
 from ..context import AppContext
+from ..print_routes import PrintRoutesCard
 from ..widgets import (
     Card,
+    FlowLayout,
     Page,
     Pill,
     SecretField,
@@ -35,24 +38,15 @@ from ..widgets import (
     confirm,
     copy_to_clipboard,
     error,
+    form_layout,
+    inline,
     label,
     run_async,
 )
 
 
-def printer_combo(ctx: AppContext, current: str) -> QComboBox:
-    combo = QComboBox()
-    combo.addItem(tr("Impresora predeterminada"), "")
-    for p in ctx.cfg.data.printers:
-        combo.addItem(p.alias, p.alias)
-    if current and combo.findData(current) < 0:
-        combo.addItem(current, current)
-    combo.setCurrentIndex(max(0, combo.findData(current)))
-    return combo
-
-
 class ShopifyPage(Page):
-    def __init__(self, ctx: AppContext) -> None:
+    def __init__(self, ctx: AppContext, navigate: Callable[[str], None] | None = None) -> None:
         super().__init__(
             tr("Shopify"),
             tr("Conexión directa con tu tienda: LabelBridge revisa los pedidos nuevos e imprime sin pasar por n8n."),
@@ -66,7 +60,7 @@ class ShopifyPage(Page):
         conn = Card(tr("Conexión"))
         self.enabled = SwitchRow(tr("Conector Shopify activo"), tr("Revisa pedidos cada pocos segundos."), s.enabled)
         conn.add(self.enabled)
-        form = QFormLayout()
+        form = form_layout()
         form.setSpacing(10)
         self.shop = QLineEdit(s.shop)
         self.shop.setPlaceholderText(tr("mi-tienda.myshopify.com"))
@@ -123,35 +117,25 @@ class ShopifyPage(Page):
         self.mode_cc.toggled.connect(self._mode_changed)
         self._mode_changed()
 
-        # --- qué imprimir --------------------------------------------------------------------
+        # --- qué imprimir ---------------------------------------------------------------------
         what = Card(tr("Qué imprimir en cada pedido"))
-        grid = QGridLayout()
-        grid.setHorizontalSpacing(16)
-        grid.setVerticalSpacing(14)
-
         self.buy_label = SwitchRow(
             tr("Guía de envío de Shopify Shipping (recomendado)"),
             tr("La etiqueta con franqueo que va en el paquete: LabelBridge la compra con el paquete y la tarifa "
                "predeterminados de tu tienda y la imprime. Shopify cobra cada guía en tu factura."),
             s.buy_shipping_label,
         )
-        self.label_printer = printer_combo(ctx, s.shipping_label_printer)
-        grid.addWidget(self.buy_label, 0, 0)
-        grid.addWidget(self.label_printer, 0, 1)
-
-        buy_opts = QHBoxLayout()
+        what.add(self.buy_label)
+        # Las opciones de la compra, debajo del interruptor; si no caben en una línea, siguen en la de abajo.
+        buy_opts = FlowLayout(spacing=20, line_spacing=8)
         buy_opts.setContentsMargins(56, 0, 0, 0)
         self.notify_customer = QCheckBox(tr("Avisar al cliente por correo"))
         self.notify_customer.setChecked(s.notify_customer)
         buy_opts.addWidget(self.notify_customer)
-        buy_opts.addSpacing(16)
-        buy_opts.addWidget(label(tr("Máximo por día:")))
         self.max_per_day = QSpinBox()
         self.max_per_day.setRange(1, 5000)
         self.max_per_day.setValue(s.max_labels_per_day)
-        buy_opts.addWidget(self.max_per_day)
-        buy_opts.addSpacing(16)
-        buy_opts.addWidget(label(tr("Tamaño:")))
+        buy_opts.addWidget(inline(label(tr("Máximo por día:")), self.max_per_day))
         self.label_size = QComboBox()
         for key, text in LABEL_SIZES.items():
             self.label_size.addItem(tr(text), key)
@@ -160,35 +144,31 @@ class ShopifyPage(Page):
             tr("La guía sale a este tamaño real en cualquier papel: en un rollo de etiquetas 4×6 lo llena, y en una hoja "
                "carta o A4 va arriba y centrada para recortarla. «Ajustar a la hoja» la agranda hasta llenar el papel.")
         )
-        buy_opts.addWidget(self.label_size)
-        buy_opts.addStretch(1)
-        grid.addLayout(buy_opts, 1, 0, 1, 2)
+        buy_opts.addWidget(inline(label(tr("Tamaño:")), self.label_size))
+        what.add(layout=buy_opts)
         self.buy_warning = label(
-            tr("⚠ Actívala solo en un equipo y no la combines con la plantilla 02 de n8n (comprarías dos "
-               "guías por pedido). Requiere los permisos write_orders y write_merchant_managed_fulfillment_orders, "
-               "Shopify Shipping activo y un paquete predeterminado en Shopify. No disponible para FedEx."),
+            tr("Actívala solo en un equipo y no la combines con la plantilla 02 de n8n (comprarías dos guías por "
+               "pedido). Requiere los permisos write_orders y write_merchant_managed_fulfillment_orders, Shopify "
+               "Shipping activo y un paquete predeterminado en Shopify. No disponible para FedEx."),
             "Warning",
             wrap=True,
         )
-        grid.addWidget(self.buy_warning, 2, 0, 1, 2)
+        what.add(self.buy_warning)
 
         self.print_order = SwitchRow(
-            tr("Etiqueta de pedido de LabelBridge (opcional)"),
-            tr("Etiqueta interna sin franqueo: dirección, productos y código del pedido. Útil para empacar."),
+            tr("Etiqueta del pedido (opcional)"),
+            tr("Sin franqueo: número de pedido, productos y dirección, para empacar. Sale cuando llega el pedido, antes "
+               "de la guía; abajo eliges por qué impresora."),
             s.print_order_label,
         )
-        self.order_printer = printer_combo(ctx, s.order_label_printer)
-        grid.addWidget(self.print_order, 3, 0)
-        grid.addWidget(self.order_printer, 3, 1)
+        what.add(self.print_order)
 
         self.metafield = SwitchRow(
             tr("Etiqueta desde un metafield del pedido (URL de PDF/ZPL)"),
             tr("Para guías de otra paquetería que n8n (plantilla 03), tu web o un ERP guardan en el pedido."),
             s.metafield_label,
         )
-        self.metafield_printer = printer_combo(ctx, s.metafield_printer)
-        grid.addWidget(self.metafield, 4, 0)
-        grid.addWidget(self.metafield_printer, 4, 1)
+        what.add(self.metafield)
         mf_row = QHBoxLayout()
         mf_row.setContentsMargins(56, 0, 0, 0)
         mf_row.addWidget(label(tr("Metafield:")))
@@ -200,16 +180,19 @@ class ShopifyPage(Page):
         mf_row.addWidget(label("."))
         mf_row.addWidget(self.mf_key)
         mf_row.addStretch(1)
-        grid.addLayout(mf_row, 5, 0, 1, 2)
-        grid.setColumnStretch(0, 1)
-        what.add(layout=grid)
+        what.add(layout=mf_row)
         self.buy_label.switch.toggled.connect(self._buy_toggled)
         self._buy_toggled(s.buy_shipping_label)
         self.add(what)
 
+        # --- por dónde sale cada cosa --------------------------------------------------------------
+        self.routes = PrintRoutesCard(ctx, navigate)
+        self.print_order.switch.toggled.connect(self.routes.set_order_label_active)
+        self.add(self.routes)
+
         # --- filtros -----------------------------------------------------------------------
         filters = Card(tr("Filtros y frecuencia"))
-        form = QFormLayout()
+        form = form_layout()
         form.setSpacing(10)
         self.only_paid = QCheckBox(tr("Solo pedidos pagados (o con pago autorizado)"))
         self.only_paid.setChecked(s.only_paid)
@@ -231,7 +214,7 @@ class ShopifyPage(Page):
         filters.add(layout=form)
 
         since_row = QHBoxLayout()
-        self.since_label = label("", "Muted")
+        self.since_label = label("", "Muted", wrap=True)  # se parte en líneas si la ventana es angosta
         since_row.addWidget(self.since_label, 1)
         since_row.addWidget(label(tr("Reprocesar las últimas")))
         self.back_hours = QSpinBox()
@@ -264,7 +247,6 @@ class ShopifyPage(Page):
         self.token.setEnabled(not cc)
 
     def _buy_toggled(self, on: bool) -> None:
-        self.label_printer.setEnabled(on)
         self.notify_customer.setEnabled(on)
         self.max_per_day.setEnabled(on)
         self.label_size.setEnabled(on)
@@ -293,14 +275,7 @@ class ShopifyPage(Page):
         self.metafield.setChecked(s.metafield_label)
         self.mf_namespace.setText(s.metafield_namespace)
         self.mf_key.setText(s.metafield_key)
-        for combo, alias in (
-            (self.label_printer, s.shipping_label_printer),
-            (self.order_printer, s.order_label_printer),
-            (self.metafield_printer, s.metafield_printer),
-        ):
-            if alias and combo.findData(alias) < 0:
-                combo.addItem(alias, alias)
-            combo.setCurrentIndex(max(0, combo.findData(alias)))
+        self.routes.load()
         self.only_paid.setChecked(s.only_paid)
         self.only_unfulfilled.setChecked(s.only_unfulfilled)
         self.required_tag.setText(s.required_tag)
@@ -310,16 +285,7 @@ class ShopifyPage(Page):
 
     def _on_config(self, section: str) -> None:
         if section in ("printers", "all"):
-            for combo, current in (
-                (self.order_printer, self.order_printer.currentData()),
-                (self.label_printer, self.label_printer.currentData()),
-                (self.metafield_printer, self.metafield_printer.currentData()),
-            ):
-                fresh = printer_combo(self.ctx, current)
-                combo.clear()
-                for i in range(fresh.count()):
-                    combo.addItem(fresh.itemText(i), fresh.itemData(i))
-                combo.setCurrentIndex(max(0, combo.findData(current)))
+            self.routes.reload_printers()
 
     def refresh(self) -> None:
         svc = self.ctx.services.shopify
@@ -365,14 +331,14 @@ class ShopifyPage(Page):
         s.client_id = self.client_id.text().strip()
         s.api_version = self.api_version.currentText().strip() or "2026-10"
         s.print_order_label = self.print_order.isChecked()
-        s.order_label_printer = self.order_printer.currentData() or ""
+        s.order_label_printer = self.routes.alias(routing.ORDER)
         s.buy_shipping_label = self.buy_label.isChecked()
-        s.shipping_label_printer = self.label_printer.currentData() or ""
+        s.shipping_label_printer = self.routes.alias(routing.SHIPPING)
         s.notify_customer = self.notify_customer.isChecked()
         s.max_labels_per_day = self.max_per_day.value()
         s.label_size = self.label_size.currentData() or "4x6"
         s.metafield_label = self.metafield.isChecked()
-        s.metafield_printer = self.metafield_printer.currentData() or ""
+        s.metafield_printer = self.routes.alias(routing.METAFIELD)
         s.metafield_namespace = self.mf_namespace.text().strip() or "custom"
         s.metafield_key = self.mf_key.text().strip() or "label_url"
         s.only_paid = self.only_paid.isChecked()
@@ -414,11 +380,11 @@ class ShopifyPage(Page):
             self.ctx.cfg.data.labels.store_name = str(data["name"])  # remitente de la etiqueta
             self.ctx.cfg.save("general")
         scopes = ", ".join(sorted(data.get("scopes") or [])) or "—"
-        text = tr("✓ Conectado a «{0}» ({1}).\nPermisos: {2}", data.get('name'), data.get('myshopifyDomain'), scopes)
+        text = tr("Conectado a «{0}» ({1}).\nPermisos: {2}", data.get('name'), data.get('myshopifyDomain'), scopes)
         if self._activate_first_time():
-            text += tr("\n✓ La tienda quedó activa: LabelBridge ya revisa sus pedidos.")
+            text += tr("\nLa tienda quedó activa: LabelBridge ya revisa sus pedidos.")
         if data.get("missing"):
-            text += tr("\n⚠ Faltan permisos: ") + ", ".join(data["missing"])
+            text += tr("\nFaltan permisos: ") + ", ".join(data["missing"])
         if data.get("optional_missing"):
             text += tr("\nOpcionales que aún no tiene la app (lo demás funciona igual): ") + ", ".join(
                 data["optional_missing"]) + tr(". Agrégalos con «Copiar permisos» en el Dev Dashboard y aprueba la "

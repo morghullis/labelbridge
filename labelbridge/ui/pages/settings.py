@@ -13,7 +13,6 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
     QFileDialog,
-    QFormLayout,
     QGridLayout,
     QHBoxLayout,
     QLineEdit,
@@ -50,7 +49,7 @@ from ...system.platform import pick
 from ...updater import UPDATES_PAGE
 from ..alerts import play_async
 from ..context import AppContext
-from ..widgets import Card, Page, SecretField, button, confirm, error, info, label, run_async
+from ..widgets import Card, Page, SecretField, button, confirm, error, form_layout, info, label, run_async
 
 GMAIL_APP_PASSWORDS = "https://myaccount.google.com/apppasswords"
 REMIND_OPTIONS = {0: N_("No recordar"), 15: N_("Cada 15 minutos"), 30: N_("Cada 30 minutos"), 60: N_("Cada hora"),
@@ -152,7 +151,7 @@ class SettingsPage(Page):
         self.add(self.tab_stack)
 
         general = Card(tr("General"))
-        form = QFormLayout()
+        form = form_layout()
         form.setSpacing(10)
         self.agent = QLineEdit(g.agent_name)
         form.addRow(tr("Nombre de este equipo"), self.agent)
@@ -199,7 +198,7 @@ class SettingsPage(Page):
             tr("Etiqueta de pedido generada"),
             tr("Datos del remitente y contenido de la etiqueta que LabelBridge genera a partir del pedido."),
         )
-        form = QFormLayout()
+        form = form_layout()
         form.setSpacing(10)
         self.store_name = QLineEdit(lb.store_name)
         self.store_name.setPlaceholderText(tr("Nombre de tu tienda"))
@@ -226,7 +225,7 @@ class SettingsPage(Page):
                "(pagas por uso a tu proveedor). Los permisos y límites valen igual para cualquier modelo. Proveedor, modelo "
                "y nivel se aplican a las conversaciones nuevas."),
         )
-        form = QFormLayout()
+        form = form_layout()
         form.setSpacing(10)
         self.assistant_form = form
         self.assistant_on = QCheckBox(tr("Asistente activado"))
@@ -314,7 +313,7 @@ class SettingsPage(Page):
             tr("Los pedidos, etiquetas y la configuración se guardan cifrados (AES-256) y las claves en el "
                "Administrador de credenciales de Windows. Estos límites protegen la API local, n8n y las descargas."),
         )
-        form = QFormLayout()
+        form = form_layout()
         form.setSpacing(10)
         self.api_rate = _spin(10, 10000, tr(" por minuto"))
         form.addRow(tr("Peticiones a la API local (por equipo)"), self.api_rate)
@@ -556,7 +555,7 @@ class SettingsPage(Page):
         self.notify_printed, self.notify_errors = self.alert_toasts["printed"], self.alert_toasts["print_error"]
         card.add(layout=grid)
 
-        form = QFormLayout()
+        form = form_layout()
         form.setSpacing(10)
         self.volume = QSlider(Qt.Orientation.Horizontal)
         self.volume.setRange(0, 100)
@@ -597,7 +596,7 @@ class SettingsPage(Page):
         card.add(layout=form)
 
         card.add(label(tr("Alertas de entrega"), "SectionTitle"))
-        delays = QFormLayout()
+        delays = form_layout()
         delays.setSpacing(10)
         self.no_scan_days = _spin(1, 30, tr(" días"))
         delays.addRow(tr("La paquetería no recibe el paquete después de"), self.no_scan_days)
@@ -619,7 +618,7 @@ class SettingsPage(Page):
             tr("LabelBridge escribe a los dueños de la tienda desde tu correo: los avisos que marques en «Email» y lo que "
                "les quiera contar el asistente. Solo a las direcciones de aquí."),
         )
-        form = QFormLayout()
+        form = form_layout()
         form.setSpacing(10)
         self.email_on = QCheckBox(tr("Enviar avisos por email"))
         form.addRow("", self.email_on)

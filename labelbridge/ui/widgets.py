@@ -9,7 +9,9 @@ from PySide6.QtCore import (
     Property,
     QEasingCurve,
     QObject,
+    QPoint,
     QPropertyAnimation,
+    QRect,
     QRectF,
     QRunnable,
     QSize,
@@ -17,12 +19,17 @@ from PySide6.QtCore import (
     QThreadPool,
     Signal,
 )
-from PySide6.QtGui import QColor, QGuiApplication, QPainter
+from PySide6.QtGui import QColor, QGuiApplication, QPainter, QPainterPath, QPixmap
 from PySide6.QtWidgets import (
     QAbstractButton,
+    QBoxLayout,
+    QFormLayout,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
+    QLayout,
+    QLayoutItem,
     QLineEdit,
     QMessageBox,
     QPushButton,
@@ -34,7 +41,7 @@ from PySide6.QtWidgets import (
 
 from ..i18n import tr
 from . import icons
-from .theme import ACCENT, STATE_COLORS
+from .theme import ACCENT, STATE_COLORS, Color
 
 
 # --- tareas en segundo plano -----------------------------------------------------------------
@@ -92,7 +99,7 @@ def button(text: str, icon_name: str | None = None, variant: str | None = None, 
     if variant:
         btn.setProperty("variant", variant)
     if icon_name:
-        color = "#FFFFFF" if variant == "primary" else ("#B91C1C" if variant == "danger" else "#334155")
+        color = "#FFFFFF" if variant == "primary" else ("#8E1F0B" if variant == "danger" else Color.ICON)
         btn.setIcon(icons.icon(icon_name, color, 16))
         btn.setIconSize(QSize(16, 16))
     if tooltip:
@@ -224,7 +231,7 @@ class ToggleSwitch(QAbstractButton):
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        track = QColor(ACCENT) if self.isChecked() else QColor("#CBD5E1")
+        track = QColor(ACCENT) if self.isChecked() else QColor(Color.INPUT_BORDER)
         if not self.isEnabled():
             track.setAlpha(110)
         p.setPen(Qt.PenStyle.NoPen)
@@ -284,7 +291,7 @@ class SecretField(QWidget):
     def _toggle(self) -> None:
         hidden = self.edit.echoMode() == QLineEdit.EchoMode.Password
         self.edit.setEchoMode(QLineEdit.EchoMode.Normal if hidden else QLineEdit.EchoMode.Password)
-        self.toggle.setIcon(icons.icon("eye-off" if hidden else "eye", "#334155", 16))
+        self.toggle.setIcon(icons.icon("eye-off" if hidden else "eye", Color.ICON, 16))
 
     def text(self) -> str:
         return self.edit.text().strip()
@@ -310,17 +317,19 @@ class Page(QWidget):
         # Abajo, espacio para que nada quede tapado por el bubble del asistente.
         self.layout_.setContentsMargins(32, 28, 32, 104)
         self.layout_.setSpacing(18)
-        header = QHBoxLayout()
+        # Título y botones en una fila; si no caben (ventana chica), los botones pasan debajo del título.
+        self.header = QBoxLayout(QBoxLayout.Direction.LeftToRight)
+        self.header.setSpacing(12)
         titles = QVBoxLayout()
         titles.setSpacing(4)
         titles.addWidget(label(title, "PageTitle"))
         if subtitle:
             titles.addWidget(label(subtitle, "PageSubtitle", wrap=True))
-        header.addLayout(titles, 1)
+        self.header.addLayout(titles, 1)
         self.header_actions = QHBoxLayout()
         self.header_actions.setSpacing(8)
-        header.addLayout(self.header_actions)
-        self.layout_.addLayout(header)
+        self.header.addLayout(self.header_actions)
+        self.layout_.addLayout(self.header)
         scroll.setWidget(inner)
         outer.addWidget(scroll)
 
@@ -332,6 +341,15 @@ class Page(QWidget):
 
     def finish(self) -> None:
         self.layout_.addStretch(1)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        needed = self.header_actions.sizeHint().width() + 320  # los botones y un título que se lea
+        stacked = needed > self.width() - 64
+        direction = QBoxLayout.Direction.TopToBottom if stacked else QBoxLayout.Direction.LeftToRight
+        if self.header.direction() != direction:
+            self.header.setDirection(direction)
+            self.header_actions.setAlignment(Qt.AlignmentFlag.AlignLeft if stacked else Qt.AlignmentFlag.AlignRight)
 
     def refresh(self) -> None:
         pass
@@ -357,7 +375,7 @@ def step_title(number: int, text: str) -> QWidget:
     badge = label(str(number))
     badge.setFixedSize(24, 24)
     badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    badge.setStyleSheet("QLabel { background: #4F46E5; color: white; border-radius: 12px; font-weight: 700; }")
+    badge.setStyleSheet(f"QLabel {{ background: {Color.PRIMARY}; color: white; border-radius: 12px; font-weight: 600; }}")
     line.addWidget(badge)
     line.addWidget(label(text, "SectionTitle", wrap=True), 1)
     return box
@@ -390,3 +408,260 @@ def context_menu(view, build: Callable[[], Any]) -> None:
 
     view.customContextMenuRequested.connect(show)
 
+
+def divider(vertical: bool = False) -> QFrame:
+    """Una línea fina para separar grupos (en vez de cajas con borde)."""
+    line = QFrame()
+    line.setObjectName("VDivider" if vertical else "Divider")
+    return line
+
+
+def link_button(text: str) -> QPushButton:
+    """Un enlace dentro de la app («Ver historial»): texto azul, sin caja."""
+    btn = QPushButton(text)
+    btn.setCursor(Qt.CursorShape.PointingHandCursor)
+    btn.setStyleSheet(f"QPushButton {{ background: transparent; border: none; color: {Color.FOCUS}; "
+                      "font-weight: 600; padding: 4px 2px; } QPushButton:hover { text-decoration: underline; }")
+    return btn
+
+
+class FlowRow(QWidget):
+    """Bloques en una fila separados por líneas finas (los números de una franja). Si no caben en el ancho, pasan a
+    filas de las columnas que quepan, sin barra para desplazarse a los lados."""
+
+    def __init__(self, min_column: int = 170, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.min_column = min_column
+        self.grid = QGridLayout(self)
+        self.grid.setContentsMargins(0, 0, 0, 0)
+        self.grid.setHorizontalSpacing(0)
+        self.grid.setVerticalSpacing(14)
+        self.setMinimumWidth(1)  # el ancho lo pone la ventana (las columnas se acomodan), nunca al revés
+        self.blocks: list[QWidget] = []
+        self.columns = 0
+        self._dividers: list[QFrame] = []
+
+    def add_block(self, widget: QWidget) -> None:
+        self.blocks.append(widget)
+        self._relayout(force=True)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._relayout()
+
+    def _relayout(self, force: bool = False) -> None:
+        if not self.blocks:
+            return
+        width = self.width() or self.min_column * len(self.blocks)
+        fits = max(1, min(len(self.blocks), width // self.min_column))
+        rows = -(-len(self.blocks) // fits)
+        columns = -(-len(self.blocks) // rows)  # filas parejas: 5 bloques en 3 + 2, no en 4 + 1
+        if columns == self.columns and not force:
+            return
+        self.columns = columns
+        for line in self._dividers:
+            self.grid.removeWidget(line)
+            line.deleteLater()
+        self._dividers = []
+        for block in self.blocks:
+            self.grid.removeWidget(block)
+        for index, block in enumerate(self.blocks):
+            row, column = divmod(index, columns)
+            if column:
+                line = divider(vertical=True)
+                self._dividers.append(line)
+                self.grid.addWidget(line, row, column * 2 - 1)
+            self.grid.addWidget(block, row, column * 2)
+        for column in range(columns * 2 - 1):
+            self.grid.setColumnStretch(column, 0 if column % 2 else 1)
+
+
+
+class SplitRow(QWidget):
+    """Una fila de controles con dos grupos: el del inicio (filtros) y el del final (búsqueda). Si la ventana es
+    angosta y no caben en una línea, el del final pasa debajo a todo el ancho, en vez de empujar la página a los lados."""
+
+    def __init__(self, spacing: int = 8, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.start = QHBoxLayout()
+        self.end = QHBoxLayout()
+        for group in (self.start, self.end):
+            group.setContentsMargins(0, 0, 0, 0)
+            group.setSpacing(spacing)
+        self.start.addStretch(1)  # lo que sobra queda entre los dos grupos
+        self.box = QBoxLayout(QBoxLayout.Direction.LeftToRight, self)
+        self.box.setContentsMargins(0, 0, 0, 0)
+        self.box.setSpacing(spacing)
+        self.box.addLayout(self.start, 1)
+        self.box.addLayout(self.end)
+        self.setMinimumWidth(1)  # el ancho lo pone la ventana: si no cabe, se apila (resizeEvent)
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+
+    def add_start(self, widget: QWidget) -> None:
+        self.start.insertWidget(self.start.count() - 1, widget)  # antes del espacio que empuja al final
+
+    def add_end(self, widget: QWidget, stretch: int = 0) -> None:
+        self.end.addWidget(widget, stretch)
+
+    def stacked(self) -> bool:
+        return self.box.direction() == QBoxLayout.Direction.TopToBottom
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        needed = self.start.sizeHint().width() + self.box.spacing() + self.end.sizeHint().width()
+        direction = QBoxLayout.Direction.TopToBottom if needed > self.width() else QBoxLayout.Direction.LeftToRight
+        if self.box.direction() != direction:
+            self.box.setDirection(direction)
+
+
+# --- filas que se adaptan al ancho --------------------------------------------------------------------
+
+def form_layout(spacing: int = 10) -> QFormLayout:
+    """Etiqueta a la izquierda y campo a la derecha, igual en Windows y en Mac; si la ventana es angosta, la etiqueta
+    de una fila larga pasa arriba de su campo (en vez de empujar la página hacia los lados)."""
+    form = QFormLayout()
+    form.setSpacing(spacing)
+    form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+    form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+    form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+    form.setFormAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+    return form
+
+
+def inline(*widgets: QWidget, spacing: int = 6) -> QWidget:
+    """Varias piezas que van siempre juntas en una línea (una etiqueta y su campo) dentro de una FlowLayout."""
+    box = QWidget()
+    row = QHBoxLayout(box)
+    row.setContentsMargins(0, 0, 0, 0)
+    row.setSpacing(spacing)
+    for widget in widgets:
+        row.addWidget(widget)
+    return box
+
+
+class FlowLayout(QLayout):
+    """Controles en fila que pasan a la línea siguiente cuando no caben, como el texto: nunca obligan a la ventana a
+    ser más ancha. Cada pieza conserva su tamaño y queda centrada en el alto de su línea."""
+
+    def __init__(self, parent: QWidget | None = None, spacing: int = 8, line_spacing: int = 8) -> None:
+        super().__init__(parent)
+        self._items: list[QLayoutItem] = []
+        self._spacing = spacing
+        self._line_spacing = line_spacing
+        self.setContentsMargins(0, 0, 0, 0)
+
+    # La API de QLayout.
+    def addItem(self, item: QLayoutItem) -> None:  # noqa: N802
+        self._items.append(item)
+
+    def count(self) -> int:
+        return len(self._items)
+
+    def itemAt(self, index: int) -> QLayoutItem | None:  # noqa: N802
+        return self._items[index] if 0 <= index < len(self._items) else None
+
+    def takeAt(self, index: int) -> QLayoutItem | None:  # noqa: N802
+        return self._items.pop(index) if 0 <= index < len(self._items) else None
+
+    def expandingDirections(self) -> Qt.Orientation:  # noqa: N802
+        return Qt.Orientation(0)
+
+    def hasHeightForWidth(self) -> bool:  # noqa: N802
+        return True
+
+    def heightForWidth(self, width: int) -> int:  # noqa: N802
+        return self._arrange(QRect(0, 0, width, 0), apply=False)
+
+    def setGeometry(self, rect: QRect) -> None:  # noqa: N802
+        super().setGeometry(rect)
+        self._arrange(rect, apply=True)
+
+    def sizeHint(self) -> QSize:  # noqa: N802
+        """Todo en una línea, si hay espacio."""
+        visible = [item for item in self._items if not item.isEmpty()]
+        margins = self.contentsMargins()
+        width = sum(item.sizeHint().width() for item in visible) + self._spacing * max(0, len(visible) - 1)
+        height = max((item.sizeHint().height() for item in visible), default=0)
+        return QSize(width + margins.left() + margins.right(), height + margins.top() + margins.bottom())
+
+    def minimumSize(self) -> QSize:  # noqa: N802
+        """Lo que pide la pieza más ancha: lo demás pasa a otra línea."""
+        margins = self.contentsMargins()
+        width = max((item.minimumSize().width() for item in self._items if not item.isEmpty()), default=0)
+        return QSize(width + margins.left() + margins.right(), margins.top() + margins.bottom())
+
+    def _arrange(self, rect: QRect, apply: bool) -> int:
+        margins = self.contentsMargins()
+        area = rect.adjusted(margins.left(), margins.top(), -margins.right(), -margins.bottom())
+        lines: list[list[tuple[QLayoutItem, QSize]]] = [[]]
+        used = 0
+        for item in self._items:
+            if item.isEmpty():  # piezas ocultas
+                continue
+            size = item.sizeHint().boundedTo(QSize(max(area.width(), item.minimumSize().width()), 10_000))
+            needed = size.width() if not lines[-1] else used + self._spacing + size.width()
+            if lines[-1] and needed > area.width():
+                lines.append([])
+                needed = size.width()
+            lines[-1].append((item, size))
+            used = needed
+        y = area.y()
+        for index, line in enumerate(lines):
+            if not line:
+                continue
+            height = max(size.height() for _item, size in line)
+            if apply:
+                x = area.x()
+                for item, size in line:
+                    item.setGeometry(QRect(QPoint(x, y + (height - size.height()) // 2), size))
+                    x += size.width() + self._spacing
+            y += height + (self._line_spacing if index < len(lines) - 1 else 0)
+        return y - rect.y() + margins.bottom()
+
+
+class ScaledImage(QWidget):
+    """Una imagen que se achica con la ventana (nunca pasa su tamaño real ni `max_width`) sin deformarse, con las
+    esquinas redondeadas. `clicked`: para abrirla en grande."""
+
+    clicked = Signal()
+
+    def __init__(self, pixmap: QPixmap, max_width: int = 760, radius: float = 8.0) -> None:
+        super().__init__()
+        self.pixmap = pixmap
+        self.radius = radius
+        natural = pixmap.deviceIndependentSize()
+        self._ratio = natural.height() / max(1.0, natural.width())
+        self.max_width = max(1, int(min(max_width, natural.width())))
+        policy = QSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+        policy.setHeightForWidth(True)
+        self.setSizePolicy(policy)
+
+    def hasHeightForWidth(self) -> bool:  # noqa: N802
+        return True
+
+    def heightForWidth(self, width: int) -> int:  # noqa: N802
+        return round(min(width, self.max_width) * self._ratio)
+
+    def sizeHint(self) -> QSize:  # noqa: N802
+        return QSize(self.max_width, self.heightForWidth(self.max_width))
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802
+        width = min(160, self.max_width)
+        return QSize(width, self.heightForWidth(width))
+
+    def paintEvent(self, _event) -> None:  # noqa: N802
+        width = min(self.width(), self.max_width)
+        target = QRectF(0, 0, width, round(width * self._ratio))
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        clip = QPainterPath()
+        clip.addRoundedRect(target, self.radius, self.radius)
+        painter.setClipPath(clip)
+        painter.drawPixmap(target, self.pixmap, QRectF(self.pixmap.rect()))
+        painter.end()
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.MouseButton.LeftButton and self.rect().contains(event.position().toPoint()):
+            self.clicked.emit()
+        super().mouseReleaseEvent(event)

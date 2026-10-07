@@ -17,7 +17,7 @@ from ..i18n import date_text, tr
 from .context import AppContext
 from .widgets import Pill, button, copy_to_clipboard, label, run_async, run_dialog
 
-DONE, CURRENT, TODO, PROBLEM = "#16A34A", "#4F46E5", "#CBD5E1", "#BE123C"
+DONE, CURRENT, TODO, PROBLEM = "#29845A", "#303030", "#C9C9C9", "#C70A24"
 
 
 class Stepper(QWidget):
@@ -58,7 +58,7 @@ class Stepper(QWidget):
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QColor(color))
             painter.drawEllipse(QPointF(x, y), radius, radius)
-            painter.setPen(QColor("#0F172A" if index == self.step and not self.closed else "#64748B"))
+            painter.setPen(QColor("#1A1A1A" if index == self.step and not self.closed else "#616161"))
             box = QRectF(x - margin, y + radius + 4, 2 * margin, 22)
             painter.drawText(box, int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop), tr(STEPS[index]))
         painter.end()

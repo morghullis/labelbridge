@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Qt, QUrl, Signal
-from PySide6.QtGui import QColor, QDesktopServices, QLinearGradient, QPainter
+from PySide6.QtGui import QColor, QDesktopServices, QPainter
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -58,7 +58,7 @@ class _Banner(QFrame):
         heading = QLabel(title)
         heading.setStyleSheet("color: white; font-size: 20px; font-weight: 700; background: transparent;")
         sub = QLabel(subtitle)
-        sub.setStyleSheet("color: #E0E7FF; font-size: 13px; background: transparent;")
+        sub.setStyleSheet("color: #D4D4D4; font-size: 13px; background: transparent;")
         texts.addStretch(1)
         texts.addWidget(heading)
         texts.addWidget(sub)
@@ -66,12 +66,9 @@ class _Banner(QFrame):
         row.addLayout(texts, 1)
 
     def paintEvent(self, event) -> None:  # noqa: N802
-        painter = QPainter(self)
-        gradient = QLinearGradient(0, 0, self.width(), self.height())
-        gradient.setColorAt(0.0, QColor("#312E81"))
-        gradient.setColorAt(0.55, QColor("#4F46E5"))
-        gradient.setColorAt(1.0, QColor("#7C3AED"))
-        painter.fillRect(self.rect(), gradient)
+        painter = QPainter(self)  # sobrio: el negro de la marca con una línea dorada abajo
+        painter.fillRect(self.rect(), QColor("#1F1F1F"))
+        painter.fillRect(0, self.height() - 3, self.width(), 3, QColor("#B98A2C"))
         painter.end()
 
 
@@ -80,8 +77,8 @@ def _notes_box(notes: str) -> QTextBrowser:
     box.setOpenExternalLinks(True)
     box.setHtml(updater.notes_to_html(notes))
     box.setStyleSheet(
-        "QTextBrowser { background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 10px; padding: 8px 12px;"
-        " font-size: 13px; color: #0F172A; }"
+        "QTextBrowser { background: #FFFFFF; border: none; border-radius: 10px; padding: 8px 12px;"
+        " font-size: 13px; color: #303030; }"
     )
     box.setMinimumHeight(150)
     return box
