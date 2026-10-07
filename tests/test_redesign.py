@@ -112,8 +112,12 @@ def test_the_status_says_what_is_happening_and_pulses_only_while_printing(window
 def test_no_page_spills_sideways_in_the_narrowest_window(window, qapp):
     from PySide6.QtWidgets import QScrollArea
 
+    from PySide6.QtGui import QFontInfo
+
     from labelbridge.ui.pages.settings import SETTINGS_TABS
 
+    if not QFontInfo(qapp.font()).family():  # Qt sin letras dibuja cajas: los anchos no dirían nada
+        pytest.skip("La plataforma de pruebas no tiene letras (en Windows: QT_QPA_FONTDIR=C:\\Windows\\Fonts)")
     window.resize(window.minimumWidth(), 700)
     _settle(qapp, 0.1)
     too_wide = {}

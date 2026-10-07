@@ -21,6 +21,9 @@ jobs:
     timeout-minutes: 60
     env:
       PYTHONUTF8: "1"  # la consola de Windows (cp1252) no imprime ✓ ni ·: los scripts fallaban a mitad
+      # Qt sin pantalla (offscreen) no lee las letras de Windows: sin esto mide y dibuja cada letra como una caja
+      # (las pruebas de ancho fallaban y las capturas de la Guía del instalador salían con cajas).
+      QT_QPA_FONTDIR: C:\Windows\Fonts
     permissions:
       contents: write  # solo para el Release del tag
     steps:

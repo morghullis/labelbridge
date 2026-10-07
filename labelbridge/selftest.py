@@ -115,7 +115,7 @@ def run(argv: list[str]) -> int:
             for key in window.pages:
                 window.navigate(key)
                 app.processEvents()
-            assert [key for key, _, _ in NAV if key not in window.pages] == ["assistant"], "faltan pantallas"
+            assert [key for key in NAV if key not in window.pages] == ["assistant"], "faltan pantallas"
             orders = window.nav_buttons["orders"].text().strip()
             assert orders == {"es": "Pedidos", "en": "Orders"}[language], f"pestaña Pedidos: {orders!r}"
             window.quitting = True
