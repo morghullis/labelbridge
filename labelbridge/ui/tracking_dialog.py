@@ -15,9 +15,10 @@ from ..connectors.orders_overview import OrderRow
 from ..connectors.tracking import STEPS, Shipment, Tracking
 from ..i18n import date_text, tr
 from .context import AppContext
+from .theme import Color
 from .widgets import Pill, button, copy_to_clipboard, label, run_async, run_dialog, window_closed
 
-DONE, CURRENT, TODO, PROBLEM = "#29845A", "#303030", "#C9C9C9", "#C70A24"
+DONE, CURRENT, TODO, PROBLEM = Color.SUCCESS, Color.TEXT_STRONG, Color.INPUT_BORDER, Color.CRITICAL
 
 
 class Stepper(QWidget):
@@ -58,7 +59,7 @@ class Stepper(QWidget):
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QColor(color))
             painter.drawEllipse(QPointF(x, y), radius, radius)
-            painter.setPen(QColor("#1A1A1A" if index == self.step and not self.closed else "#616161"))
+            painter.setPen(QColor(Color.TEXT_STRONG if index == self.step and not self.closed else Color.TEXT_SECONDARY))
             box = QRectF(x - margin, y + radius + 4, 2 * margin, 22)
             painter.drawText(box, int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop), tr(STEPS[index]))
         painter.end()

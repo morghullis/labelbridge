@@ -113,12 +113,16 @@ def button(text: str, icon_name: str | None = None, variant: str | None = None, 
     if variant:
         btn.setProperty("variant", variant)
     if icon_name:
-        color = "#FFFFFF" if variant == "primary" else ("#8E1F0B" if variant == "danger" else Color.ICON)
+        color = Color.ON_PRIMARY if variant == "primary" else (Color.CRITICAL if variant == "danger" else Color.ICON)
         btn.setIcon(icons.icon(icon_name, color, 16))
         btn.setIconSize(QSize(16, 16))
     if tooltip:
         btn.setToolTip(tooltip)
     btn.setCursor(Qt.CursorShape.PointingHandCursor)
+    if variant == "primary":
+        from .motion import NeonGlow
+
+        btn._glow = NeonGlow(btn)  # se enciende al pasar el mouse
     return btn
 
 
@@ -257,7 +261,7 @@ class ToggleSwitch(QAbstractButton):
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(track)
         p.drawRoundedRect(QRectF(0, 0, 44, 24), 12, 12)
-        p.setBrush(QColor("white"))
+        p.setBrush(QColor(Color.ON_PRIMARY if self.isChecked() else Color.TEXT_STRONG))
         p.drawEllipse(QRectF(3 + self._offset * 20, 3, 18, 18))
         p.end()
 
@@ -437,11 +441,10 @@ def divider(vertical: bool = False) -> QFrame:
 
 
 def link_button(text: str) -> QPushButton:
-    """Un enlace dentro de la app («Ver historial»): texto azul, sin caja."""
+    """Un enlace dentro de la app («Ver historial»): texto verde neón, sin caja (estilo «link» del tema)."""
     btn = QPushButton(text)
+    btn.setProperty("variant", "link")
     btn.setCursor(Qt.CursorShape.PointingHandCursor)
-    btn.setStyleSheet(f"QPushButton {{ background: transparent; border: none; color: {Color.FOCUS}; "
-                      "font-weight: 600; padding: 4px 2px; } QPushButton:hover { text-decoration: underline; }")
     return btn
 
 

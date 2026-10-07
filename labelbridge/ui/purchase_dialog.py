@@ -29,6 +29,7 @@ from ..connectors.shopify import admin_url, package_input
 from ..i18n import tr
 from . import icons
 from .context import AppContext
+from .theme import Color
 from .widgets import button, label, run_async, window_closed
 
 DIM_UNITS = {"INCHES": "in", "CENTIMETERS": "cm"}
@@ -437,7 +438,7 @@ class PurchaseDialog(QDialog):
         self.buy_btn.setVisible(usable)
         self.buy_btn.setEnabled(usable and not self.busy and self.services.available())
         self.buy_btn.setText(tr("Comprar en Shopify") if fedex else tr("Comprar e imprimir"))
-        self.buy_btn.setIcon(icons.icon("link" if fedex else "printer", "#FFFFFF", 16))
+        self.buy_btn.setIcon(icons.icon("link" if fedex else "printer", Color.ON_PRIMARY, 16))
         if self.isVisible():
             QTimer.singleShot(0, self._fit)
 

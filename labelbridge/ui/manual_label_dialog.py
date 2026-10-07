@@ -39,6 +39,7 @@ from ..connectors.shopify_orders import ManualItem, ProductChoice, Recipient, ma
 from ..i18n import tr
 from .context import AppContext
 from .purchase_dialog import WEIGHT_UNITS, _units
+from .theme import Color
 from .widgets import button, confirm, copy_to_clipboard, form_layout, label, run_async
 
 COUNTRIES = {"US": "Estados Unidos", "PR": "Puerto Rico", "MX": "México", "CA": "Canadá", "ES": "España",
@@ -251,7 +252,7 @@ class ManualLabelDialog(QDialog):
                 item = QListWidgetItem(text)
                 item.setData(Qt.ItemDataRole.UserRole, choice.variant_id)
                 if choice.stock is not None and choice.stock <= 0 and not choice.oversell:
-                    item.setForeground(QColor("#BE123C"))
+                    item.setForeground(QColor(Color.CRITICAL))
                 self.results.addItem(item)
             self.search_note.setText(tr("Doble clic o «Agregar» para sumarlo al envío.") if choices
                                      else tr("No se encontró nada con «{0}».", text))

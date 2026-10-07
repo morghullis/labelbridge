@@ -36,6 +36,7 @@ from .pages.printers import PrintersPage
 from .pages.report import ReportPage
 from .pages.settings import SettingsPage
 from .pages.shopify import ShopifyPage
+from .theme import Color
 from .widgets import error, label
 
 log = logging.getLogger(__name__)
@@ -220,7 +221,7 @@ class MainWindow(QMainWindow):
         self.update_pill = QPushButton("")
         self.update_pill.setProperty("variant", "primary")
         self.update_pill.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.update_pill.setIcon(icons.icon("download", "#FFFFFF", 16))
+        self.update_pill.setIcon(icons.icon("download", Color.ON_PRIMARY, 16))
         self.update_pill.setStyleSheet("QPushButton { text-align: left; padding: 8px 10px; }")
         self.update_pill.setVisible(False)
         self.update_pill.clicked.connect(lambda: self.open_update_dialog(self.pending_update))
@@ -306,7 +307,7 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentWidget(page)
         page.refresh()
         if changed:
-            fade_in(page)
+            fade_in(page, rise=8)
 
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)

@@ -16,6 +16,7 @@ from PySide6.QtWidgets import QFrame, QGraphicsOpacityEffect, QHBoxLayout, QPush
 from ..i18n import tr
 from . import icons
 from .mascot import Mascot, MascotView, paint_mascot
+from .theme import Color
 from .widgets import label
 
 DISC = 60  # diámetro del bubble
@@ -385,18 +386,18 @@ class AssistantLauncher(QWidget):
         paint_mascot(p, QRectF(c.x() - r, c.y() - r, 2 * r, 2 * r), self.mascot.frame, badge=True, glow=self._glow)
         if self._keyboard and self.hasFocus():
             p.setBrush(Qt.BrushStyle.NoBrush)
-            p.setPen(QPen(QColor("#6366F1"), 2.5))
+            p.setPen(QPen(QColor(Color.FOCUS), 2.5))
             p.drawEllipse(c, r + 4, r + 4)
         if self.unread:
             bx, by, br = c.x() + r * 0.72, c.y() - r * 0.72, 10.0
-            p.setPen(QPen(QColor("#FFFFFF"), 2))
-            p.setBrush(QColor("#6366F1"))
+            p.setPen(QPen(QColor(Color.BG), 2))
+            p.setBrush(QColor(Color.PRIMARY))
             p.drawEllipse(QPointF(bx, by), br, br)
             font = QFont(self.font())
             font.setPixelSize(11)
             font.setBold(True)
             p.setFont(font)
-            p.setPen(QColor("#FFFFFF"))
+            p.setPen(QColor(Color.ON_PRIMARY))
             p.drawText(QRectF(bx - br, by - br, 2 * br, 2 * br), Qt.AlignmentFlag.AlignCenter,
                        "9+" if self.unread > 9 else str(self.unread))
         p.end()
@@ -460,7 +461,7 @@ class AssistantPanel(QWidget):
     def _icon_button(self, name: str, tip: str) -> QPushButton:
         btn = QPushButton("")
         btn.setObjectName("HeaderButton")
-        btn.setIcon(icons.icon(name, "#CBD5E1", 18))
+        btn.setIcon(icons.icon(name, Color.ICON, 18))
         btn.setFixedSize(34, 34)
         btn.setToolTip(tip)
         btn.setAccessibleName(tip.split(":")[0].split(" (")[0])

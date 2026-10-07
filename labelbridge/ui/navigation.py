@@ -1,8 +1,9 @@
 """La navegación de la ventana principal: el menú lateral (ventana ancha), la barra inferior (ventana chica) y el
 indicador de estado de la impresión.
 
-Se dibujan a mano para que se vean limpios: la pestaña activa lleva un fondo blanco y una barra fina dorada (la marca),
-el paso del mouse se funde en 120 ms y el punto del estado late suave solo mientras imprime. Todas las animaciones son
+Se dibujan a mano para que se vean limpios: la pestaña activa lleva un fondo verde suave, el icono en verde neón y una
+barra fina neón que brilla y crece desde el centro; el paso del mouse se funde en 120 ms y el punto del estado tiene un
+halo suave y late solo mientras imprime. Todas las animaciones son
 cortas (≤ 250 ms, salvo el latido) y se apagan si Windows pide menos animaciones.
 """
 
@@ -18,7 +19,7 @@ from PySide6.QtWidgets import QAbstractButton, QFrame, QHBoxLayout, QMenu, QSize
 from ..i18n import tr
 from ..system.accessibility import reduced_motion
 from . import icons
-from .theme import STATE_DOTS, Color
+from .theme import STATE_COLORS, STATE_DOTS, Color
 
 FAST_MS = 120  # paso del mouse
 MOTION_MS = 200  # cambio de pestaña
@@ -89,6 +90,17 @@ class _Fade:
         self.animation.start()
 
 
+def glow(painter: QPainter, rect: QRectF, color: str, radius: float = 1.5, spread: int = 6,
+         strength: float = 1.0) -> None:
+    """El brillo neón alrededor de una forma: capas translúcidas cada vez más grandes (sin efectos costosos)."""
+    painter.setPen(Qt.PenStyle.NoPen)
+    for step in range(spread, 0, -1):
+        halo = QColor(color)
+        halo.setAlphaF(0.07 * strength * (spread - step + 1) / spread)
+        painter.setBrush(halo)
+        painter.drawRoundedRect(rect.adjusted(-step, -step, step, step), radius + step, radius + step)
+
+
 def _badge(painter: QPainter, right: float, center_y: float, text: str, attention: bool) -> None:
     """El contador de una pestaña («3»): ámbar si algo espera a una persona, gris si no."""
     font = QFont(painter.font())
@@ -98,9 +110,9 @@ def _badge(painter: QPainter, right: float, center_y: float, text: str, attentio
     width = max(20.0, painter.fontMetrics().horizontalAdvance(text) + 12.0)
     rect = QRectF(right - width, center_y - 9, width, 18)
     painter.setPen(Qt.PenStyle.NoPen)
-    painter.setBrush(QColor("#FFD79D") if attention else QColor(Color.SURFACE_PRESSED))
+    painter.setBrush(QColor(STATE_COLORS["warn"][0]) if attention else QColor(Color.SURFACE_PRESSED))
     painter.drawRoundedRect(rect, 9, 9)
-    painter.setPen(QColor("#5E4200") if attention else QColor(Color.TEXT))
+    painter.setPen(QColor(STATE_COLORS["warn"][1]) if attention else QColor(Color.TEXT))
     painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, text)
 
 
@@ -146,20 +158,22 @@ class NavItem(_FocusRing, QAbstractButton):
         rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
         active, hover = self._active.value, self._hover.value
         background = _mix(QColor(0, 0, 0, 0), QColor(Color.NAV_HOVER), hover * (1 - active))
-        background = _mix(background, QColor(Color.SURFACE), active)
+        background = _mix(background, QColor(Color.NEON_SOFT), active)
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(background)
         painter.drawRoundedRect(rect, 8, 8)
-        if active > 0.01:  # la barra dorada de la pestaña activa, que crece desde el centro
+        if active > 0.01:  # la barra neón de la pestaña activa, que crece desde el centro y brilla
             height = (rect.height() - 16) * active
-            painter.setBrush(QColor(Color.GOLD))
-            painter.drawRoundedRect(QRectF(rect.left() + 4, rect.center().y() - height / 2, 3, height), 1.5, 1.5)
+            bar = QRectF(rect.left() + 4, rect.center().y() - height / 2, 3, height)
+            glow(painter, bar, Color.PRIMARY, strength=active)
+            painter.setBrush(QColor(Color.PRIMARY))
+            painter.drawRoundedRect(bar, 1.5, 1.5)
         if self.hasFocus() and self.focus_visible:
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.setPen(QPen(QColor(Color.FOCUS), 1.5))
             painter.drawRoundedRect(rect.adjusted(1, 1, -1, -1), 7, 7)
         strong = active > 0.5
-        color = Color.TEXT_STRONG if strong else Color.ICON
+        color = Color.PRIMARY if strong else Color.ICON
         pixmap = icons.pixmap(self.destination.icon, color, 18)
         painter.drawPixmap(QRectF(rect.left() + 14, rect.center().y() - 9, 18, 18), pixmap, QRectF(pixmap.rect()))
         font = QFont(self.font())
@@ -241,6 +255,8 @@ class StatusIndicator(_FocusRing, QAbstractButton):
             painter.drawRoundedRect(rect, 8, 8)
         color = QColor(STATE_DOTS.get(self.state, STATE_DOTS["off"]))
         center = QPointF(rect.left() + (rect.width() / 2 if self.compact else 18), rect.center().y())
+        if self.state != "off":  # un halo quieto del color del estado (el neón «encendido»)
+            glow(painter, QRectF(center.x() - 4.5, center.y() - 4.5, 9, 9), color.name(), radius=4.5, spread=5)
         if self._pulse.state() == QVariantAnimation.State.Running:  # el halo que se abre y se apaga
             t = float(self._pulse.currentValue() or 0.0)
             halo = QColor(color)
@@ -308,7 +324,7 @@ class _BottomItem(_FocusRing, QAbstractButton):
             painter.drawRoundedRect(rect.adjusted(4, 4, -4, -4), 8, 8)
         active = self.isChecked()
         color = Color.TEXT_STRONG if active else Color.TEXT_SECONDARY
-        pixmap = icons.pixmap(self.destination.icon, color, 20)
+        pixmap = icons.pixmap(self.destination.icon, Color.PRIMARY if active else color, 20)
         painter.drawPixmap(QRectF(rect.center().x() - 10, rect.top() + 8, 20, 20), pixmap, QRectF(pixmap.rect()))
         font = QFont(self.font())
         font.setPixelSize(11)
@@ -327,7 +343,7 @@ class _BottomItem(_FocusRing, QAbstractButton):
 
 
 class _Indicator(QWidget):
-    """La raya dorada arriba de la pestaña activa: se desliza a la nueva (200 ms)."""
+    """La raya neón arriba de la pestaña activa: se desliza a la nueva (200 ms)."""
 
     def __init__(self, parent: QWidget) -> None:
         super().__init__(parent)
@@ -351,7 +367,7 @@ class _Indicator(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         path = QPainterPath()
         path.addRoundedRect(QRectF(self.rect()), 1.5, 1.5)
-        painter.fillPath(path, QColor(Color.GOLD))
+        painter.fillPath(path, QColor(Color.PRIMARY))
         painter.end()
 
 
@@ -421,9 +437,10 @@ class BottomNav(QFrame):
             item.update()
 
 
-def fade_in(widget: QWidget, on_done: Callable[[], None] | None = None) -> None:
-    """La pantalla nueva aparece con un fundido corto (160 ms); sin animaciones, aparece y listo."""
-    from PySide6.QtCore import QPropertyAnimation
+def fade_in(widget: QWidget, on_done: Callable[[], None] | None = None, rise: int = 0) -> None:
+    """La pantalla nueva aparece con un fundido corto (160 ms) y, con `rise`, sube esos píxeles mientras aparece (220
+    ms); sin animaciones, aparece y listo."""
+    from PySide6.QtCore import QPoint, QPropertyAnimation
     from PySide6.QtWidgets import QGraphicsOpacityEffect
 
     if not motion_enabled() or not widget.isVisible():
@@ -446,3 +463,11 @@ def fade_in(widget: QWidget, on_done: Callable[[], None] | None = None) -> None:
 
     animation.finished.connect(finished)
     animation.start(QPropertyAnimation.DeletionPolicy.DeleteWhenStopped)
+    if rise:  # sube un poco mientras aparece (la posición final es la que le dio su contenedor)
+        end = widget.pos()
+        slide = QPropertyAnimation(widget, b"pos", widget)
+        slide.setDuration(220)
+        slide.setStartValue(end + QPoint(0, rise))
+        slide.setEndValue(end)
+        slide.setEasingCurve(QEasingCurve.Type.OutCubic)
+        slide.start(QPropertyAnimation.DeletionPolicy.DeleteWhenStopped)

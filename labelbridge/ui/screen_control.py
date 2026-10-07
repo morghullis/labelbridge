@@ -15,6 +15,7 @@ from PySide6.QtWidgets import QApplication, QDialog, QFrame, QHBoxLayout, QLabel
 
 from ..assistant.screen import SHOT_LONG_EDGE, Frame, scale_for
 from ..i18n import tr
+from .theme import Color
 from .widgets import button, label
 
 THUMB_WIDTH = 560
@@ -178,7 +179,7 @@ class ScreenBar(QFrame):
         super().__init__(None, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint
                          | Qt.WindowType.WindowStaysOnTopHint)
         self.setObjectName("ScreenBar")
-        self.setStyleSheet("QFrame#ScreenBar { background: #1F1F1F; border-radius: 10px; }"
+        self.setStyleSheet(f"QFrame#ScreenBar {{ background: {Color.NAV}; border: 1px solid {Color.INPUT_BORDER}; border-radius: 10px; }}"
                            " QLabel { color: white; font-weight: 600; }")
         row = QHBoxLayout(self)
         row.setContentsMargins(14, 6, 8, 6)

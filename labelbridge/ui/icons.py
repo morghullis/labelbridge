@@ -8,6 +8,8 @@ from PySide6.QtCore import QByteArray, QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QIcon, QLinearGradient, QPainter, QPainterPath, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 
+from .theme import Color
+
 PATHS = {
     "bar-chart": '<line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>',
     "home": '<path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>',
@@ -58,7 +60,7 @@ PATHS = {
 
 
 @lru_cache(maxsize=512)
-def pixmap(name: str, color: str = "#4A4A4A", size: int = 18, ratio: float = 2.0) -> QPixmap:
+def pixmap(name: str, color: str = Color.ICON, size: int = 18, ratio: float = 2.0) -> QPixmap:
     body = PATHS.get(name, PATHS["file"])
     svg = (
         '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" '
@@ -74,7 +76,7 @@ def pixmap(name: str, color: str = "#4A4A4A", size: int = 18, ratio: float = 2.0
     return px
 
 
-def icon(name: str, color: str = "#4A4A4A", size: int = 18) -> QIcon:
+def icon(name: str, color: str = Color.ICON, size: int = 18) -> QIcon:
     return QIcon(pixmap(name, color, size))
 
 

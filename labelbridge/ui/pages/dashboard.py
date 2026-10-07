@@ -28,6 +28,7 @@ from ..actions import enqueue_test_label
 from .guide import guide_banner, update_guide_banner
 from ..context import AppContext
 from ..theme import Color, job_state
+from ..motion import count_up
 from ..widgets import Card, Page, Pill, ToggleSwitch, button, context_menu, divider, error, label, link_button
 
 
@@ -53,7 +54,10 @@ class DayCard(QFrame):
         column.addWidget(self.detail)
 
     def set(self, value: str, detail: str, color: str = "") -> None:
-        self.value.setText(value)
+        if value.isdigit():  # las cantidades suben hasta su valor
+            count_up(self.value, int(value), lambda v: str(round(v)))
+        else:
+            self.value.setText(value)
         self.value.setStyleSheet(f"color: {color};" if color else "")
         self.detail.setText(detail)
 
@@ -207,7 +211,7 @@ class DashboardPage(Page):
             self.banner_title.setText(tr("Impresión automática en pausa"))
             self.banner_desc.setText(tr("Los trabajos se siguen recibiendo y quedan en cola hasta que la reanudes."))
         else:
-            self.banner_icon.setPixmap(icons.pixmap("zap", Color.GOLD, 28))
+            self.banner_icon.setPixmap(icons.pixmap("zap", Color.PRIMARY, 28))
             self.banner_title.setText(tr("Impresión automática activa"))
             self.banner_desc.setText(
                 tr("Equipo «{0}». Las etiquetas se imprimen apenas llegan.", g.agent_name) + awake

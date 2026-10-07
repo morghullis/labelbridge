@@ -38,6 +38,7 @@ from ...system.platform import pick
 from .. import icons
 from ..context import AppContext
 from ..mascot import mascot_pixmap
+from ..theme import STATE_COLORS, Color
 from ..widgets import Card, SecretField, button, copy_to_clipboard, form_layout, label, repolish, run_async
 
 BUBBLE_MAX = 292  # ancho máximo de una burbuja dentro del panel
@@ -127,9 +128,7 @@ class ApprovalDialog(QDialog):
         head.addWidget(label(tr("El asistente quiere hacer este cambio:"), "CardTitle", wrap=True), 1)
         layout.addLayout(head)
         detail = label(text, wrap=True, selectable=True)
-        detail.setStyleSheet(
-            "QLabel { background: #F7F7F7; border: none; border-radius: 8px; padding: 10px 12px; }"
-        )
+        detail.setObjectName("Note")
         layout.addWidget(detail)
         layout.addWidget(label(tr("¿Le das permiso? Puedes permitir solo esto o todos los cambios de esta conversación."),
                                "Muted", wrap=True))
@@ -171,7 +170,7 @@ class SecretDialog(QDialog):
         layout.setSpacing(10)
         head = QHBoxLayout()
         lock = QLabel()
-        lock.setPixmap(icons.pixmap("lock", "#303030", 22))
+        lock.setPixmap(icons.pixmap("lock", Color.TEXT_STRONG, 22))
         head.addWidget(lock)
         self.title = label(title, "CardTitle")
         head.addWidget(self.title, 1)
@@ -375,10 +374,10 @@ def bubble(text: str, role: str) -> QWidget:
     else:
         body.setTextFormat(Qt.TextFormat.PlainText)
         body.setText(text)
-    styles = {
-        "user": "background: #303030; color: white; border: none;",
-        "assistant": "background: #FFFFFF; color: #303030; border: none;",
-        "error": "background: #FEE1DE; color: #8E1F0B; border: none;",
+    styles = {  # lo tuyo en verde suave; la respuesta, en la superficie; un error, en rojo suave
+        "user": f"background: {Color.NEON_SOFT}; color: {Color.TEXT_STRONG}; border: 1px solid #1E5A3F;",
+        "assistant": f"background: {Color.SURFACE_RAISED}; color: {Color.TEXT}; border: none;",
+        "error": f"background: {STATE_COLORS['error'][0]}; color: {STATE_COLORS['error'][1]}; border: none;",
     }
     body.setStyleSheet(f"QLabel {{ {styles[role]} border-radius: 14px; padding: 10px 14px; }}")
     # Tamaño justo para el texto: las burbujas cortas no ocupan toda la fila ni sobra alto.
@@ -406,7 +405,7 @@ class ActivityRow(QWidget):
         layout.setContentsMargins(40, 0, 0, 0)
         layout.setSpacing(8)
         self.icon = QLabel()
-        self.icon.setPixmap(icons.pixmap("refresh", "#616161", 14))
+        self.icon.setPixmap(icons.pixmap("refresh", Color.TEXT_SECONDARY, 14))
         self.text = label(f"{text}…", "Muted")
         self.text.setWordWrap(True)
         layout.addWidget(self.icon, 0, Qt.AlignmentFlag.AlignTop)
@@ -426,7 +425,7 @@ class ActivityRow(QWidget):
     def finish(self, ok: bool, detail: str = "") -> None:
         if self._timer:
             self._timer.stop()
-        self.icon.setPixmap(icons.pixmap("check" if ok else "x", "#29845A" if ok else "#C70A24", 14))
+        self.icon.setPixmap(icons.pixmap("check" if ok else "x", Color.SUCCESS if ok else Color.CRITICAL, 14))
         detail = " ".join(detail.split())
         self.text.setText(self.base if ok else f"{self.base} — {detail[:220]}")
 
@@ -616,7 +615,7 @@ class AssistantPage(QWidget):
         self.key_form.addRow(tr("Modelo"), self.model_field)
         card.add(layout=self.key_form)
         self.key_steps = label("", wrap=True)
-        self.key_steps.setStyleSheet("font-size: 12px; color: #303030;")
+        self.key_steps.setStyleSheet(f"font-size: 12px; color: {Color.TEXT};")
         card.add(self.key_steps)
         self.key_field = SecretField("", copyable=False)
         card.add(self.key_field)
@@ -919,7 +918,7 @@ class AssistantPage(QWidget):
         self.cancel = threading.Event()
         turn = self.cancel  # identifica el turno: los avisos de un turno ya detenido se ignoran
         self.send_btn.setText(tr("Detener"))
-        self.send_btn.setIcon(icons.icon("stop", "#FFFFFF", 16))
+        self.send_btn.setIcon(icons.icon("stop", Color.ON_PRIMARY, 16))
         self._show_thinking()
         self.refresh()
         previous = self._worker
@@ -977,7 +976,7 @@ class AssistantPage(QWidget):
             row.finish(False, tr("sin terminar"))
         self._activities.clear()
         self.send_btn.setText(tr("Enviar"))
-        self.send_btn.setIcon(icons.icon("send", "#FFFFFF", 16))
+        self.send_btn.setIcon(icons.icon("send", Color.ON_PRIMARY, 16))
         self.refresh()
         self.input.setFocus()
 

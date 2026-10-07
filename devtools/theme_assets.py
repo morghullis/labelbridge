@@ -22,7 +22,7 @@ from PySide6.QtSvg import QSvgRenderer  # noqa: E402
 
 OUT = ROOT / "assets" / "ui"
 
-CHECK = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="#FFFFFF" '
+CHECK = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="#03160C" '
          'stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 8.5 6.8 11.2 12 5.2"/></svg>')
 
 

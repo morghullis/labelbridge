@@ -40,21 +40,22 @@ def test_main_window_builds_and_navigates(core):
     assert isinstance(core.events, Events)
 
 
-def test_the_app_stays_light_even_with_windows_in_dark_mode(qapp):
+def test_the_app_is_dark_neon_whatever_the_system_uses(qapp):
     from PySide6.QtCore import Qt
     from PySide6.QtGui import QColor, QPalette
     from PySide6.QtWidgets import QApplication
 
-    from labelbridge.ui.theme import TEXT, apply_theme
+    from labelbridge.ui.theme import Color, apply_theme
 
     app = QApplication.instance()
-    dark = QPalette()
+    light = QPalette()
     for role in (QPalette.ColorRole.Window, QPalette.ColorRole.Base):
-        dark.setColor(role, QColor("#1E1E1E"))
-    dark.setColor(QPalette.ColorRole.Text, QColor("#FFFFFF"))
-    app.setPalette(dark)  # como queda con el modo oscuro de Windows 11
+        light.setColor(role, QColor("#FFFFFF"))
+    light.setColor(QPalette.ColorRole.Text, QColor("#000000"))
+    app.setPalette(light)  # como queda con Windows en modo claro
     apply_theme(app)
-    assert app.palette().color(QPalette.ColorRole.Text).name() == TEXT.lower()
-    assert app.palette().color(QPalette.ColorRole.Base).name() == "#ffffff"
-    # El esquema claro lo respeta Windows; la plataforma de pruebas (offscreen) lo ignora y queda «Unknown».
-    assert app.styleHints().colorScheme() in (Qt.ColorScheme.Light, Qt.ColorScheme.Unknown)
+    assert app.palette().color(QPalette.ColorRole.Text).name() == Color.TEXT.lower()
+    assert app.palette().color(QPalette.ColorRole.Window).name() == Color.BG.lower()
+    assert app.palette().color(QPalette.ColorRole.Link).name() == Color.PRIMARY.lower()  # el verde neón
+    # El esquema oscuro lo respeta Windows; la plataforma de pruebas (offscreen) lo ignora y queda «Unknown».
+    assert app.styleHints().colorScheme() in (Qt.ColorScheme.Dark, Qt.ColorScheme.Unknown)

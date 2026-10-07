@@ -31,6 +31,7 @@ from ...system.platform import pick
 from ...updater import UPDATES_PAGE
 from ..actions import enqueue_test_label
 from ..context import AppContext
+from ..theme import Color
 from ..widgets import Card, Page, Pill, ScaledImage, button, copy_to_clipboard, label, repolish, run_dialog
 
 log = logging.getLogger(__name__)
@@ -366,15 +367,15 @@ def is_complete(ctx: AppContext) -> bool:
 
 # --- interfaz ------------------------------------------------------------------------------
 
-CODE_STYLE = "font-family: Consolas, Menlo, monospace; color: #1A1A1A; background-color: #EBEBEB;"
+CODE_STYLE = f"font-family: Consolas, Menlo, monospace; color: {Color.CODE_TEXT}; background-color: {Color.CODE_BG};"
 
 
-BADGE_STYLE = "background-color: #E8B04B; color: #1A1A1A; font-weight: 600;"
+BADGE_STYLE = f"background-color: {Color.PRIMARY}; color: {Color.ON_PRIMARY}; font-weight: 600;"
 CIRCLED = "①②③④⑤⑥⑦⑧⑨"
 
 
 def _highlight_code(html: str) -> str:
-    """Resalta lo que hay que escribir o pegar y convierte ①②③ en las insignias doradas de las capturas."""
+    """Resalta lo que hay que escribir o pegar y convierte ①②③ en insignias (las mismas marcas de las capturas)."""
     html = html.replace("<code>", f'<span style="{CODE_STYLE}">&nbsp;').replace("</code>", "&nbsp;</span>")
     for number, symbol in enumerate(CIRCLED, start=1):
         html = html.replace(symbol, f'<span style="{BADGE_STYLE}">&nbsp;{number}&nbsp;</span>')
@@ -382,10 +383,10 @@ def _highlight_code(html: str) -> str:
 
 
 BADGE_STYLES = {
-    "done": "background: #29845A; color: white;",
-    "current": "background: #303030; color: white;",
-    "pending": "background: #EBEBEB; color: #616161;",
-    "optional": "background: transparent; color: #616161;",
+    "done": f"background: {Color.SUCCESS}; color: {Color.ON_PRIMARY};",
+    "current": f"background: {Color.PRIMARY}; color: {Color.ON_PRIMARY};",
+    "pending": f"background: {Color.SURFACE_SELECTED}; color: {Color.TEXT_SECONDARY};",
+    "optional": f"background: transparent; color: {Color.TEXT_SECONDARY};",
 }
 
 
@@ -480,8 +481,7 @@ class StepCard(QFrame):
         body.addLayout(head)
         body.addWidget(label(tr(step.summary), "Muted", wrap=True))
 
-        self.toggle = button(tr("Ver instrucciones"), None, "ghost")
-        self.toggle.setStyleSheet("color: #005BD3; font-weight: 600; text-align: left; padding-left: 0;")
+        self.toggle = button(tr("Ver instrucciones"), None, "link")
         self.toggle.clicked.connect(lambda: self.set_expanded(not self.details.isVisible()))
         body.addWidget(self.toggle, 0, Qt.AlignmentFlag.AlignLeft)
 
@@ -493,10 +493,7 @@ class StepCard(QFrame):
         instructions.setWordWrap(True)
         instructions.setTextFormat(Qt.TextFormat.RichText)
         instructions.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        instructions.setStyleSheet(
-            "QLabel { background: #F7F7F7; border: none; border-radius: 8px; padding: 10px 14px;"
-            " color: #303030; line-height: 150%; }"
-        )
+        instructions.setObjectName("Note")
         details_layout.addWidget(instructions)
         for file_name, caption in step.images:
             shot = GuideImage(file_name, tr(caption))

@@ -29,6 +29,7 @@ from ...system.platform import pick
 from .. import icons
 from ..context import AppContext
 from ..printer_dialog import PrinterDialog
+from ..theme import Color
 from ..widgets import Card, Page, button, confirm, context_menu, error, info, label, run_async
 
 
@@ -193,7 +194,7 @@ class PrintersPage(Page):
         for row, p in enumerate(cfg.data.printers):
             star = QTableWidgetItem()
             if default and p.id == default.id:
-                star.setIcon(icons.icon("star", "#F59E0B", 16))
+                star.setIcon(icons.icon("star", Color.WARNING, 16))
                 star.setToolTip(tr("Predeterminada"))
             self.table.setItem(row, 0, star)
             values = [

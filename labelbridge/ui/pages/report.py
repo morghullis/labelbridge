@@ -22,6 +22,7 @@ from ...i18n import N_, date_text, decimal, tr
 from ..charts import DailyBars
 from ..context import AppContext
 from ..theme import Color
+from ..motion import busy_bar, count_up
 from ..widgets import Card, FlowRow, Page, Pill, button, label, link_button, run_async
 
 WEEKS = ((1, N_("Semana pasada")), (0, N_("Esta semana (hasta hoy)")), (2, N_("Hace 2 semanas")),
@@ -161,6 +162,8 @@ class ReportPage(Page):
 
         self.status = label("", "Small", wrap=True)
         self.add(self.status)
+        self.busy = busy_bar()  # corre mientras se leen los pedidos
+        self.add(self.busy)
         self.notice = label("", "Warning", wrap=True)
         self.notice.setVisible(False)
         self.add(self.notice)
@@ -324,6 +327,7 @@ class ReportPage(Page):
         """Mientras se lee, ni otra semana ni «Actualizar»: lo que se ve siempre es de la semana elegida."""
         self.refresh_btn.setEnabled(not busy)
         self.week.setEnabled(not busy)
+        self.busy.setVisible(busy)
 
     def _failed(self, message: str) -> None:
         self.loading = False
@@ -346,7 +350,10 @@ class ReportPage(Page):
             if metric is None:
                 continue
             title.setText(tr(metric.title))
-            value.setText(metric_text(metric, currency=report.currency))
+            if metric.value is None:
+                value.setText("—")
+            else:  # la cifra sube hasta su valor
+                count_up(value, metric.value, partial(metric_text, metric, currency=report.currency))
             text, color = delta_text(metric)
             delta.setText(text)
             delta.setStyleSheet(f"color: {color};")

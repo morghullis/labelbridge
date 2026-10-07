@@ -123,6 +123,8 @@ class SettingsPage(Page):
         self.tab_stack.setCurrentIndex(index)
         self.tab_buttons[key].setChecked(True)
         self.tab_stack.updateGeometry()
+        if hasattr(self, "save_btn"):  # en «Acerca de» no hay nada que guardar
+            self.save_btn.setVisible(key != "about")
 
     def __init__(self, ctx: AppContext) -> None:
         super().__init__(tr("Ajustes"), tr("Comportamiento del agente en este equipo."))

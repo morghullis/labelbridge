@@ -28,6 +28,7 @@ from ..i18n import date_text, decimal, tr
 from ..updater import UpdateInfo
 from . import icons
 from .context import AppContext
+from .theme import Color
 from .widgets import button, label
 
 log = logging.getLogger(__name__)
@@ -59,9 +60,9 @@ class _Banner(QFrame):
         texts = QVBoxLayout()
         texts.setSpacing(4)
         heading = QLabel(title)
-        heading.setStyleSheet("color: white; font-size: 20px; font-weight: 700; background: transparent;")
+        heading.setStyleSheet(f"color: {Color.TEXT_STRONG}; font-size: 20px; font-weight: 700; background: transparent;")
         sub = QLabel(subtitle)
-        sub.setStyleSheet("color: #D4D4D4; font-size: 13px; background: transparent;")
+        sub.setStyleSheet(f"color: {Color.TEXT_SECONDARY}; font-size: 13px; background: transparent;")
         texts.addStretch(1)
         texts.addWidget(heading)
         texts.addWidget(sub)
@@ -69,9 +70,9 @@ class _Banner(QFrame):
         row.addLayout(texts, 1)
 
     def paintEvent(self, event) -> None:  # noqa: N802
-        painter = QPainter(self)  # sobrio: el negro de la marca con una línea dorada abajo
-        painter.fillRect(self.rect(), QColor("#1F1F1F"))
-        painter.fillRect(0, self.height() - 3, self.width(), 3, QColor("#B98A2C"))
+        painter = QPainter(self)  # el fondo del menú con una línea verde neón abajo
+        painter.fillRect(self.rect(), QColor(Color.NAV))
+        painter.fillRect(0, self.height() - 2, self.width(), 2, QColor(Color.PRIMARY))
         painter.end()
 
 
@@ -79,10 +80,8 @@ def _notes_box(notes: str) -> QTextBrowser:
     box = QTextBrowser()
     box.setOpenExternalLinks(True)
     box.setHtml(updater.notes_to_html(notes))
-    box.setStyleSheet(
-        "QTextBrowser { background: #FFFFFF; border: none; border-radius: 10px; padding: 8px 12px;"
-        " font-size: 13px; color: #303030; }"
-    )
+    box.setStyleSheet(f"QTextBrowser {{ background: {Color.SURFACE}; border: none; border-radius: 10px; "
+                      f"padding: 8px 12px; font-size: 13px; color: {Color.TEXT}; }}")
     box.setMinimumHeight(150)
     return box
 

@@ -1,7 +1,7 @@
 """Gráficos de la app, dibujados con QPainter (QtCharts no va en la app empaquetada).
 
-Barras finas (≤ 24 px) con el extremo redondeado y la base recta, una sola serie en el dorado de la marca (contraste
-≥ 3:1 sobre blanco), líneas guía finas y grises, y el valor solo en la barra más alta: los demás aparecen al pasar el
+Barras finas (≤ 24 px) con el extremo redondeado y la base recta, una sola serie en el verde neón del tema (contraste
+≥ 3:1 sobre la tarjeta oscura), líneas guía finas y grises, y el valor solo en la barra más alta: los demás aparecen al pasar el
 mouse o con el teclado (flechas), y siempre se pueden ver como tabla. Las barras crecen en 200 ms al llegar datos
 nuevos, salvo con «menos animaciones».
 """
@@ -133,7 +133,7 @@ class DailyBars(QWidget):
         for index, label in enumerate(self.labels):
             bar = self._bar(index, plot, slot, top)
             if bar.height() > 0.5:
-                color = QColor(Color.GOLD)
+                color = QColor(Color.PRIMARY)
                 if index == self.hovered:
                     color = color.lighter(112)  # la barra señalada se aclara un poco
                 painter.setPen(Qt.PenStyle.NoPen)

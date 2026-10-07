@@ -82,18 +82,13 @@ STALE_SECONDS = 60
 COLUMNS = [N_("Pedido"), N_("Fecha"), N_("Cliente · destino"), N_("Envío · piezas"), N_("Paquetería"), N_("Guía"),
            N_("Estado")]
 STATE_COLORS = {  # color del texto del estado de cada fila
-    "action": "#8A5A00",
-    "waiting": "#00418A",
-    "done": "#0C5132",
+    "action": Color.WARNING,
+    "waiting": Color.INFO,
+    "done": Color.SUCCESS,
     "cancelled": Color.TEXT_SECONDARY,
     "info": Color.ICON,
 }
-CARRIER_COLORS = {  # (fondo, texto)
-    "USPS": ("#DBEAFE", "#1E3A8A"),
-    "FedEx": ("#EDE9FE", "#4D148C"),
-    "UPS": ("#FEF3C7", "#5B3A1A"),
-    "DHL": ("#FEF9C3", "#A16207"),
-}
+CARRIER_COLORS = Color.CARRIERS  # (fondo, texto)
 ACTION_BUTTONS = {  # acción → (texto, icono)
     "open": (N_("Abrir en Shopify"), "link"),
     "buy": (N_("Comprar en Shopify"), "link"),
@@ -253,7 +248,7 @@ class DelayItem(QFrame):
             head.addWidget(label(row.tracking[0][1], "Muted", selectable=True))
         column.addLayout(head)
         title = label(row.alert_title, "SectionTitle")
-        title.setStyleSheet("color: #BE123C;")
+        title.setStyleSheet(f"color: {Color.CRITICAL};")
         column.addWidget(title)
         column.addWidget(label(row.alert_reason, wrap=True))
         actions = QHBoxLayout()
@@ -706,7 +701,7 @@ class OrdersPage(Page):
         detail.setText(tr("Todo va solo") if not summary.action else tr("Míralos abajo, con el porqué"))
         value, detail = self.stat_delays
         value.setText(str(summary.alerts))
-        value.setStyleSheet("color: #BE123C;" if summary.alerts else "")
+        value.setStyleSheet(f"color: {Color.CRITICAL};" if summary.alerts else "")
         detail.setText(tr("Todo va a tiempo") if not summary.alerts else tr("Envíos con retraso o problemas"))
         value, detail = self.stat_orders
         value.setText(str(summary.orders))
