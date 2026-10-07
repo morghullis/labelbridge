@@ -399,7 +399,8 @@ def step_title(number: int, text: str) -> QWidget:
     badge = label(str(number))
     badge.setFixedSize(24, 24)
     badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    badge.setStyleSheet(f"QLabel {{ background: {Color.PRIMARY}; color: white; border-radius: 12px; font-weight: 600; }}")
+    badge.setStyleSheet(f"QLabel {{ background: {Color.PRIMARY}; color: {Color.ON_PRIMARY}; border-radius: 12px; "
+                        "font-weight: 600; }")
     line.addWidget(badge)
     line.addWidget(label(text, "SectionTitle", wrap=True), 1)
     return box

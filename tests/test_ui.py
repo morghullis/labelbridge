@@ -59,3 +59,19 @@ def test_the_app_is_dark_neon_whatever_the_system_uses(qapp):
     assert app.palette().color(QPalette.ColorRole.Link).name() == Color.PRIMARY.lower()  # el verde neón
     # El esquema oscuro lo respeta Windows; la plataforma de pruebas (offscreen) lo ignora y queda «Unknown».
     assert app.styleHints().colorScheme() in (Qt.ColorScheme.Dark, Qt.ColorScheme.Unknown)
+
+
+def test_counting_numbers_reuse_one_animation(qapp, monkeypatch):
+    from PySide6.QtCore import QVariantAnimation
+    from PySide6.QtWidgets import QLabel
+
+    from labelbridge.ui import motion
+
+    monkeypatch.setattr(motion, "motion_enabled", lambda: True)
+    number = QLabel()
+    number.show()
+    for value in range(1, 60):
+        motion.count_up(number, value, lambda v: str(round(v)))
+    assert len(number.findChildren(QVariantAnimation)) == 1  # la app queda abierta semanas: no se acumulan
+    number._count_animation.stop()
+    assert number._count_value == 59

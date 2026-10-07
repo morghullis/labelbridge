@@ -11,6 +11,7 @@ devuelve None y avisa la bandeja como antes.
 from __future__ import annotations
 
 import logging
+import re
 import sys
 from pathlib import Path
 from typing import Callable
@@ -21,6 +22,11 @@ log = logging.getLogger(__name__)
 AUMID = "LabelBridge.App"  # el mismo del acceso directo (packaging/installer.iss)
 REGISTRY_KEY = r"Software\Classes\AppUserModelId" + "\\" + AUMID
 OPEN = "open:"  # argumentos de un botón: «open:<pantalla>»
+_NOT_XML = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")  # caracteres de control que un aviso no puede llevar
+
+
+def _xml_text(text: str) -> str:
+    return escape(_NOT_XML.sub(" ", str(text)))
 
 
 def toast_xml(title: str, message: str, *, target: str, action: str, attribution: str = "", logo: str = "") -> str:
@@ -29,17 +35,18 @@ def toast_xml(title: str, message: str, *, target: str, action: str, attribution
     lines = [
         f"<toast launch={quoteattr(OPEN + target)} activationType=\"foreground\">",
         "<visual><binding template=\"ToastGeneric\">",
-        f"<text hint-maxLines=\"2\">{escape(title)}</text>",
-        f"<text>{escape(message)}</text>",
+        f"<text hint-maxLines=\"2\">{_xml_text(title)}</text>",
+        f"<text>{_xml_text(message)}</text>",
     ]
     if attribution:
-        lines.append(f"<text placement=\"attribution\">{escape(attribution)}</text>")
+        lines.append(f"<text placement=\"attribution\">{_xml_text(attribution)}</text>")
     if logo:
         lines.append(f"<image placement=\"appLogoOverride\" hint-crop=\"circle\" src={quoteattr(logo)}/>")
     lines += [
         "</binding></visual>",
         "<actions>",
-        f"<action content={quoteattr(action)} arguments={quoteattr(OPEN + target)} activationType=\"foreground\"/>",
+        f"<action content={quoteattr(_NOT_XML.sub(' ', action))} arguments={quoteattr(OPEN + target)} "
+        "activationType=\"foreground\"/>",
         "<action content=\"\" arguments=\"dismiss\" activationType=\"system\"/>",
         "</actions>",
         "<audio silent=\"true\"/>",

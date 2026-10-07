@@ -360,3 +360,39 @@ def test_an_antivirus_block_is_explained_not_shown_as_a_code(tmp_path, monkeypat
     with pytest.raises(updater.BlockedByAntivirus, match="Historial de protección"):
         updater.download(info, folder=tmp_path)
     assert not list(tmp_path.glob("*.part"))
+
+
+def test_windows_reports_an_antivirus_block_as_an_invalid_argument(tmp_path, monkeypatch):
+    """Con Python en Windows, el bloqueo del antivirus al escribir llega como EINVAL (no como el error 225)."""
+    import errno
+
+    def blocked(*args, **kwargs):
+        raise updater._LocalFileError(OSError(errno.EINVAL, "Invalid argument"))
+
+    monkeypatch.setattr(updater, "_download_into", blocked)
+    monkeypatch.setattr(updater.sys, "platform", "win32")
+    info = updater.UpdateInfo("99.0.0", "http://127.0.0.1:9/LabelBridge-Setup.exe", 10, "a" * 64)
+    with pytest.raises(updater.BlockedByAntivirus):
+        updater.download(info, folder=tmp_path)
+    monkeypatch.setattr(updater.sys, "platform", "darwin")  # en otro sistema, un error del disco se dice tal cual
+    with pytest.raises(updater.UpdateError, match="No se pudo guardar"):
+        updater.download(info, folder=tmp_path)
+
+
+def test_a_broken_http_response_is_retried(tmp_path, monkeypatch):
+    import http.client
+
+    calls: list[int] = []
+
+    def flaky(info, partial, received, digest, progress, cancel):
+        calls.append(received)
+        if len(calls) == 1:
+            raise http.client.IncompleteRead(b"ab")  # no es un OSError: antes no se reintentaba
+        partial.write_bytes(b"abc")
+        return 3, hashlib.sha256(b"abc")
+
+    monkeypatch.setattr(updater, "_download_into", flaky)
+    monkeypatch.setattr(updater.time, "sleep", lambda seconds: None)
+    info = updater.UpdateInfo("99.0.0", "http://127.0.0.1:9/LabelBridge-Setup.exe", 3, hashlib.sha256(b"abc").hexdigest())
+    assert updater.download(info, folder=tmp_path).read_bytes() == b"abc" and len(calls) == 2
+    assert not list(tmp_path.glob("*.part"))

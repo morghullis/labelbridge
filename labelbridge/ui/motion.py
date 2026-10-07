@@ -83,21 +83,22 @@ class NeonGlow(QObject):
 def count_up(label: QLabel, target: float, text: Callable[[float], str], duration: int = COUNT_MS) -> None:
     """Muestra `text(target)`; con animaciones, el número sube desde 0 (o desde el anterior) hasta ahí."""
     previous = getattr(label, "_count_value", 0.0)
-    running = getattr(label, "_count_animation", None)
-    if running is not None:
-        running.stop()
-    label._count_value = target
+    animation: QVariantAnimation | None = getattr(label, "_count_animation", None)
+    if animation is not None:
+        animation.stop()
+    label._count_value, label._count_text = target, text
     if not motion_enabled() or not label.isVisible() or target == previous:
         label.setText(text(target))
         return
-    animation = QVariantAnimation(label)
+    if animation is None:  # una sola animación por cifra, reusada (la app queda abierta semanas)
+        animation = QVariantAnimation(label)
+        animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        animation.valueChanged.connect(lambda value: label.setText(label._count_text(float(value))))
+        animation.finished.connect(lambda: label.setText(label._count_text(label._count_value)))  # el valor exacto
+        label._count_animation = animation
     animation.setDuration(duration)
-    animation.setEasingCurve(QEasingCurve.Type.OutCubic)
     animation.setStartValue(float(previous))
     animation.setEndValue(float(target))
-    animation.valueChanged.connect(lambda value: label.setText(text(float(value))))
-    animation.finished.connect(lambda: label.setText(text(target)))  # el valor exacto al final
-    label._count_animation = animation
     animation.start()
 
 

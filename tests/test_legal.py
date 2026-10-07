@@ -34,23 +34,36 @@ def test_terms_are_asked_once_and_the_installer_counts(core, monkeypatch):
     from labelbridge import app
     from labelbridge.ui import legal_dialog
 
-    shown: list[int] = []
-
-    def answer(code):
-        def exec_(self):
-            shown.append(1)
-            return code
-        return exec_
-
     core.cfg.data.general.terms_accepted = 0
-    monkeypatch.setattr(legal_dialog.AcceptDialog, "exec", answer(QDialog.DialogCode.Rejected))
-    assert not app._terms_accepted(core.cfg, {}) and core.cfg.data.general.terms_accepted == 0
-    assert app._terms_accepted(core.cfg, {"terms_accepted": str(legal.TERMS_VERSION)})  # aceptados en el instalador
-    assert shown == [1] and core.cfg.data.general.terms_accepted == legal.TERMS_VERSION
+    assert app._terms_pending(core.cfg, {})
+    assert not app._terms_pending(core.cfg, {"terms_accepted": str(legal.TERMS_VERSION)})  # aceptados al instalar
+    assert core.cfg.data.general.terms_accepted == legal.TERMS_VERSION
     core.cfg.data.general.terms_accepted = 0
-    monkeypatch.setattr(legal_dialog.AcceptDialog, "exec", answer(QDialog.DialogCode.Accepted))
-    assert app._terms_accepted(core.cfg, {}) and core.cfg.data.general.terms_accepted == legal.TERMS_VERSION
-    assert app._terms_accepted(core.cfg, {}) and shown == [1, 1]  # la segunda vez ya no se pregunta
+    monkeypatch.setattr(legal_dialog.AcceptDialog, "exec", lambda self: QDialog.DialogCode.Rejected)
+    assert not app._accept_terms(core.cfg) and core.cfg.data.general.terms_accepted == 0
+    monkeypatch.setattr(legal_dialog.AcceptDialog, "exec", lambda self: QDialog.DialogCode.Accepted)
+    assert app._accept_terms(core.cfg) and not app._terms_pending(core.cfg, {})
+
+
+def test_an_install_that_was_working_keeps_printing_while_terms_are_asked(core, qapp, monkeypatch):
+    """Tras actualizarse sola, la PC sigue imprimiendo: los términos se piden sin frenar nada (y si no se aceptan,
+    la app se cierra)."""
+    from labelbridge import app
+    from labelbridge.ui import legal_dialog
+
+    shown: list = []
+    original = legal_dialog.terms_dialog
+    monkeypatch.setattr(legal_dialog, "terms_dialog", lambda parent=None: shown.append(original(parent)) or shown[-1])
+    core.cfg.data.general.terms_accepted = 0
+    quits: list[int] = []
+    app._ask_terms_while_working(core.cfg, None, lambda: quits.append(1))
+    assert shown and shown[0].isVisible()  # abierta, sin esperar la respuesta
+    shown[0].reject()
+    assert quits == [1] and core.cfg.data.general.terms_accepted == 0
+    app._ask_terms_while_working(core.cfg, None, lambda: quits.append(1))
+    shown[1].agree.setChecked(True)
+    shown[1].accept()
+    assert quits == [1] and core.cfg.data.general.terms_accepted == legal.TERMS_VERSION
 
 
 def test_accepting_needs_the_checkbox(qapp):

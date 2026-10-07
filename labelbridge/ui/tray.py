@@ -29,7 +29,7 @@ TOAST_ACTIONS = {
     "printed": ("history", N_("Ver historial")),
     "print_error": ("history", N_("Ver qué pasó")),
     "report": ("report", N_("Ver reporte")),
-    "connector": ("dashboard", N_("Ver conexiones")),
+    "connector": ("home", N_("Ver conexiones")),
 }
 
 
@@ -53,6 +53,7 @@ class Tray(QSystemTrayIcon):
         if open_target is not None:
             self.toast_clicked.connect(open_target)
         self.toasts = toasts.create(self.toast_clicked.emit, resource_path("assets", "icon.png"))
+        self._toast_failures = 0  # seguidas: con varias, Windows no los está mostrando y se usa la bandeja
         menu = QMenu()
         open_action = menu.addAction(icons.icon("home"), tr("Abrir {0}", APP_NAME))
         open_action.triggered.connect(show_window)
@@ -98,10 +99,14 @@ class Tray(QSystemTrayIcon):
             try:
                 self.toasts.show(title, message, target=target, action=tr(action),
                                  attribution=self.ctx.cfg.data.general.agent_name, group=kind or "general")
+                self._toast_failures = 0
                 return
-            except Exception:  # noqa: BLE001  el aviso sale igual por la bandeja; queda anotado una vez
-                log.warning("Aviso nativo de Windows falló; se usa la bandeja", exc_info=True)
-                self.toasts = None
+            except Exception:  # noqa: BLE001  este aviso sale por la bandeja; queda anotado
+                self._toast_failures += 1
+                log.warning("Aviso nativo de Windows falló (%s seguido/s); este sale por la bandeja",
+                            self._toast_failures, exc_info=True)
+                if self._toast_failures >= 3:
+                    self.toasts = None
         icon = QSystemTrayIcon.MessageIcon.Warning if error else QSystemTrayIcon.MessageIcon.Information
         self.showMessage(title, message, icon, 6000)
 

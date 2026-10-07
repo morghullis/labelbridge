@@ -191,27 +191,67 @@ def main(argv: list[str] | None = None) -> int:
         return 0  # ya se avisó: en la Mac, launchd no la vuelve a abrir en un bucle de ventanas
 
 
-def _terms_accepted(cfg, hints: dict) -> bool:
-    """Términos de uso y privacidad: aceptados antes (en la app o en el instalador de Windows) o ahora, una vez por
-    versión de los documentos. Sin aceptarlos, la app no empieza a trabajar."""
-    from PySide6.QtWidgets import QDialog
-
+def _terms_pending(cfg, hints: dict) -> bool:
+    """¿Falta aceptar los términos de uso y la privacidad de esta versión? Los aceptados en el instalador de Windows
+    cuentan (y quedan anotados en la configuración)."""
     from . import legal
-    from .ui.legal_dialog import terms_dialog
 
     general = cfg.data.general
     if general.terms_accepted >= legal.TERMS_VERSION:
-        return True
+        return False
     from_installer = hints.get("terms_accepted", "")
     if from_installer.isdigit() and int(from_installer) >= legal.TERMS_VERSION:
         general.terms_accepted = int(from_installer)
-    elif terms_dialog().exec() == QDialog.DialogCode.Accepted:
-        general.terms_accepted = legal.TERMS_VERSION
-    else:
+        cfg.save("general")
+        log.info("Términos de uso y privacidad aceptados en el instalador (versión %s)", general.terms_accepted)
         return False
-    cfg.save("general")
-    log.info("Términos de uso y privacidad aceptados (versión %s)", general.terms_accepted)
     return True
+
+
+def _accept_terms(cfg, instance=None) -> bool:
+    """La ventana de términos y privacidad, esperando la respuesta (instalación nueva: antes de empezar). Si se abre
+    LabelBridge otra vez mientras tanto, la ventana vuelve al frente."""
+    from PySide6.QtWidgets import QDialog
+
+    from .ui.legal_dialog import terms_dialog
+
+    dialog = terms_dialog()
+
+    def bring_front() -> None:
+        dialog.raise_()
+        dialog.activateWindow()
+
+    if instance is not None:
+        instance.activated.connect(bring_front)
+    bring_front()
+    accepted = dialog.exec() == QDialog.DialogCode.Accepted
+    if instance is not None:
+        instance.activated.disconnect(bring_front)
+    if not accepted:
+        return False
+    _terms_saved(cfg)
+    return True
+
+
+def _terms_saved(cfg) -> None:
+    from . import legal
+
+    cfg.data.general.terms_accepted = legal.TERMS_VERSION
+    cfg.save("general")
+    log.info("Términos de uso y privacidad aceptados (versión %s)", legal.TERMS_VERSION)
+
+
+def _ask_terms_while_working(cfg, window, quit_app) -> None:
+    """Una instalación que ya trabajaba (p. ej. tras actualizarse sola): la app sigue imprimiendo mientras se pide
+    aceptar los términos nuevos; si no se aceptan, se cierra. Nunca deja una PC desatendida sin imprimir."""
+    from .ui.legal_dialog import terms_dialog
+
+    dialog = terms_dialog(window)
+    dialog.accepted.connect(lambda: _terms_saved(cfg))
+    dialog.rejected.connect(quit_app)
+    dialog.open()  # sin esperar: la impresión y los servicios siguen
+    dialog.raise_()
+    dialog.activateWindow()
 
 
 def _run(app, argv: list[str], hints: dict, instance) -> int:
@@ -253,6 +293,7 @@ def _run(app, argv: list[str], hints: dict, instance) -> int:
                     N_("{0}.\n\nLabelBridge no se abre para no perder ni exponer datos. Reinicia la Mac y vuelve a intentarlo; si continúa, revisa el Llavero (Acceso a Llaveros).")), exc),
         )
         return 0  # ya se avisó: en la Mac, launchd no la vuelve a abrir en un bucle de ventanas
+    fresh_install = not config_path().exists()  # sin configuración: primera vez en este equipo
     cfg = ConfigManager(config_path(), protector)
     language = i18n.set_language(i18n.choose(cfg.data.general.language, hints.get("language", "")))
     if language == "es":
@@ -260,9 +301,12 @@ def _run(app, argv: list[str], hints: dict, instance) -> int:
     log.info("Idioma de la interfaz: %s", language)
     if cfg.load_problem:  # la configuración no se pudo leer: se empezó de cero (y se dice dónde quedó la copia)
         QMessageBox.warning(None, APP_NAME, cfg.load_problem)
-    if not _terms_accepted(cfg, hints):
-        log.info("No se aceptaron los términos de uso: LabelBridge se cierra sin empezar")
-        return 0
+    terms_pending = _terms_pending(cfg, hints)
+    if terms_pending and fresh_install:  # instalación nueva: se aceptan antes de empezar
+        if not _accept_terms(cfg, instance):
+            log.info("No se aceptaron los términos de uso: LabelBridge se cierra sin empezar")
+            return 0
+        terms_pending = False
     connect_store = "--connect-store" in argv or installer_hints.apply(cfg, hints)
     # Con la clave del instalador la tienda se prueba y se activa sola al abrirse (ver ShopifyPage.connected).
     auto_connect = installer_hints.apply_secret(secrets, cfg, hints)
@@ -408,6 +452,8 @@ def _run(app, argv: list[str], hints: dict, instance) -> int:
         window.show()
         QTimer.singleShot(900, lambda: WhatsNewDialog(window, just_installed).show())
     ensure_tray()
+    if terms_pending:  # ya trabajaba en este equipo: sigue imprimiendo mientras se aceptan los términos nuevos
+        QTimer.singleShot(1200, lambda: _ask_terms_while_working(cfg, window, quit_app))
     for title, text in services.startup_notices:  # lo que falló al preparar los servicios, ya con la ventana escuchando
         QTimer.singleShot(1500, lambda title=title, text=text: events.notify(title, text, "error"))
 

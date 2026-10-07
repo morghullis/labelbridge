@@ -9,7 +9,9 @@ instalador (verificando SHA-256), lo ejecuta en modo silencioso y se vuelve a ab
 
 from __future__ import annotations
 
+import errno
 import hashlib
+import http.client
 import json
 import logging
 import os
@@ -61,8 +63,20 @@ class BlockedByAntivirus(UpdateError):
             "Acciones → Permitir, y vuelve a pulsar «Reintentar»."))
 
 
+class _LocalFileError(Exception):
+    """Falló guardar o leer el instalador en el disco (no la red): no se reintenta como un corte de conexión."""
+
+    def __init__(self, error: OSError) -> None:
+        super().__init__(str(error))
+        self.error = error
+
+
 def blocked_by_antivirus(exc: BaseException) -> bool:
-    return getattr(exc, "winerror", None) in VIRUS_ERRORS
+    """¿El antivirus bloqueó el archivo? Windows lo dice con el error 225/226; al leer o escribir con Python (C runtime)
+    llega como «argumento inválido» (EINVAL), que con un archivo local en Windows es eso mismo."""
+    if getattr(exc, "winerror", None) in VIRUS_ERRORS:
+        return True
+    return sys.platform == "win32" and getattr(exc, "errno", None) == errno.EINVAL
 
 
 class NotForThisSystem(UpdateError):
@@ -170,8 +184,12 @@ def download(
                 break
             except UpdateError:
                 raise
-            except (OSError, ValueError) as exc:
-                if blocked_by_antivirus(exc):
+            except _LocalFileError as exc:  # el disco o el antivirus, no la red: reintentar no sirve
+                if blocked_by_antivirus(exc.error):
+                    raise BlockedByAntivirus() from None
+                raise UpdateError(tr("No se pudo guardar la actualización: {0}", exc.error)) from None
+            except (OSError, ValueError, http.client.HTTPException) as exc:  # la conexión: se sigue donde quedó
+                if getattr(exc, "winerror", None) in VIRUS_ERRORS:
                     raise BlockedByAntivirus() from None
                 if attempt == attempts:
                     raise UpdateError(tr("No se pudo descargar la actualización: {0}", exc)) from None
@@ -207,10 +225,13 @@ def _resume_point(partial: Path) -> tuple[int, Any]:
     digest = hashlib.sha256()
     if not partial.exists():
         return 0, digest
-    with open(partial, "rb") as existing:
-        for block in iter(lambda: existing.read(1024 * 1024), b""):
-            digest.update(block)
-    return partial.stat().st_size, digest
+    try:
+        with open(partial, "rb") as existing:
+            for block in iter(lambda: existing.read(1024 * 1024), b""):
+                digest.update(block)
+        return partial.stat().st_size, digest
+    except OSError as exc:
+        raise _LocalFileError(exc) from exc
 
 
 def _download_into(info: UpdateInfo, partial: Path, received: int, digest: Any,
@@ -226,7 +247,11 @@ def _download_into(info: UpdateInfo, partial: Path, received: int, digest: Any,
             received, digest = 0, hashlib.sha256()
         length = int(response.headers.get("Content-Length") or 0)
         total = (received + length) if length else int(info.size or 0)
-        with open(partial, "ab" if received else "wb") as out:
+        try:
+            out = open(partial, "ab" if received else "wb")
+        except OSError as exc:
+            raise _LocalFileError(exc) from exc
+        with out:
             while True:
                 if cancel is not None and cancel.is_set():
                     raise UpdateError(tr("Descarga cancelada"))
@@ -237,7 +262,10 @@ def _download_into(info: UpdateInfo, partial: Path, received: int, digest: Any,
                 if received > MAX_INSTALLER_BYTES:
                     raise UpdateError(tr("El instalador es demasiado grande"))
                 digest.update(chunk)
-                out.write(chunk)
+                try:
+                    out.write(chunk)
+                except OSError as exc:
+                    raise _LocalFileError(exc) from exc
                 if progress:
                     progress(received, total)
     if info.size and received < info.size:

@@ -56,4 +56,34 @@ def test_each_notice_opens_its_screen_and_falls_back_to_the_tray(core, qapp, mon
     tray_messages: list[str] = []
     monkeypatch.setattr(tray, "showMessage", lambda title, *a: tray_messages.append(title))
     tray.notice("No se pudo imprimir", "detalle", "print_error", True)
-    assert tray_messages == ["No se pudo imprimir"] and tray.toasts is None  # siguió por la bandeja
+    assert tray_messages == ["No se pudo imprimir"] and tray.toasts is not None  # este, por la bandeja
+    tray.notice("Dos", "x")
+    tray.notice("Tres", "x")
+    assert tray.toasts is None  # tres seguidos: Windows no los muestra, se queda la bandeja
+
+
+def test_control_characters_never_break_a_notice():
+    xml = toasts.toast_xml("Pedido\x0b raro\x1b", "texto\x00", target="orders", action="Ver\x07", attribution="PC\x0c")
+    root = ET.fromstring(xml)
+    assert [t.text for t in root.iter("text")][:2] == ["Pedido  raro ", "texto "]
+
+
+def test_one_failed_notice_does_not_turn_native_notices_off(core, qapp, monkeypatch):
+    from test_orders import _ui_context
+
+    from labelbridge.ui import tray as tray_module
+
+    tray = tray_module.Tray(_ui_context(core), lambda: None, lambda: None, lambda: None)
+    calls: list[int] = []
+
+    class Flaky:
+        def show(self, *a, **kw):
+            calls.append(1)
+            if len(calls) == 1:
+                raise OSError("este no")
+
+    tray.toasts = Flaky()
+    monkeypatch.setattr(tray, "showMessage", lambda *a: None)
+    tray.notice("Uno", "x")
+    tray.notice("Dos", "x")
+    assert tray.toasts is not None and len(calls) == 2  # el segundo salió nativo
