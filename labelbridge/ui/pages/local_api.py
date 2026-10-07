@@ -38,7 +38,7 @@ class LocalApiPage(Page):
         self.allow_lan = QCheckBox(tr(pick(N_("Permitir conexiones desde otros equipos de la red (Windows pedirá permiso de firewall)"),
                                            N_("Permitir conexiones desde otros equipos de la red (la Mac puede pedir permiso)"))))
         self.allow_lan.setChecked(s.allow_lan)
-        form.addRow("", self.allow_lan)
+        form.addRow(self.allow_lan)
         key_row = QHBoxLayout()
         self.key = SecretField()
         self.key.setText(ctx.secrets.get(LOCAL_API_KEY))

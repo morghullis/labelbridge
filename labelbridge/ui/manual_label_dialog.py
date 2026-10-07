@@ -81,7 +81,7 @@ class ManualLabelDialog(QDialog):
         form.addRow(tr("Dirección"), self.address1)
         self.address2 = QLineEdit()
         self.address2.setPlaceholderText(tr("Apartamento, suite… (opcional)"))
-        form.addRow("", self.address2)
+        form.addRow(self.address2)
         place = QHBoxLayout()
         place.setSpacing(6)
         self.city = QLineEdit()

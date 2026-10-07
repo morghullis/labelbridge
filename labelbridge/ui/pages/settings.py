@@ -163,20 +163,20 @@ class SettingsPage(Page):
         self.autostart.setChecked(g.start_with_windows)
         if not autostart.supported():
             self.autostart.setToolTip(tr("Se aplica en la app instalada"))
-        form.addRow("", self.autostart)
+        form.addRow(self.autostart)
         self.keep_awake = QCheckBox(tr("Mantener el equipo despierto mientras LabelBridge está abierto (la pantalla sí "
                                        "se apaga)"))
         self.keep_awake.setChecked(g.keep_awake)
         self.keep_awake.setToolTip(tr("Así sigue imprimiendo con la pantalla apagada. Si alguien suspende el equipo a "
                                       "mano, LabelBridge se pone al día en cuanto despierta."))
-        form.addRow("", self.keep_awake)
+        form.addRow(self.keep_awake)
         self.minimized = QCheckBox(tr(pick(N_("Iniciar minimizado en la bandeja del sistema"),
                                            N_("Iniciar oculto (solo el icono en la barra de menús)"))))
         self.minimized.setChecked(g.start_minimized)
-        form.addRow("", self.minimized)
+        form.addRow(self.minimized)
         self.auto_discover = QCheckBox(tr("Buscar impresoras automáticamente al conectarse a una red (Wi‑Fi / LAN)"))
         self.auto_discover.setChecked(g.auto_discover)
-        form.addRow("", self.auto_discover)
+        form.addRow(self.auto_discover)
         self.retries = QSpinBox()
         self.retries.setRange(0, 20)
         self.retries.setValue(g.max_retries)
@@ -212,13 +212,13 @@ class SettingsPage(Page):
         form.addRow(tr("Dirección"), self.sender)
         self.show_items = QCheckBox(tr("Incluir la lista de productos"))
         self.show_items.setChecked(lb.show_items)
-        form.addRow("", self.show_items)
+        form.addRow(self.show_items)
         self.show_qr = QCheckBox(tr("Incluir QR al pedido en Shopify (para escanear en bodega)"))
         self.show_qr.setChecked(lb.show_qr)
-        form.addRow("", self.show_qr)
+        form.addRow(self.show_qr)
         self.show_price = QCheckBox(tr("Incluir el total del pedido"))
         self.show_price.setChecked(lb.show_price)
-        form.addRow("", self.show_price)
+        form.addRow(self.show_price)
         label_card.add(layout=form)
         tabs["label"].addWidget(label_card)
 
@@ -232,7 +232,7 @@ class SettingsPage(Page):
         form.setSpacing(10)
         self.assistant_form = form
         self.assistant_on = QCheckBox(tr("Asistente activado"))
-        form.addRow("", self.assistant_on)
+        form.addRow(self.assistant_on)
         self.assistant_provider = _combo({p.id: tr(p.name) for p in PROVIDERS.values()})
         self.assistant_provider.currentIndexChanged.connect(lambda _i: self._provider_changed(user=True))
         form.addRow(tr("Proveedor de IA"), self.assistant_provider)
@@ -249,7 +249,7 @@ class SettingsPage(Page):
         self.assistant_url.textChanged.connect(lambda _t: self._check_url())
         form.addRow(tr("Dirección del servidor"), self.assistant_url)
         self.url_hint = label("", "Small", wrap=True)
-        form.addRow("", self.url_hint)
+        form.addRow(self.url_hint)
         self.assistant_effort = _combo({key: tr(text) for key, text in ASSISTANT_EFFORTS.items()})
         form.addRow(tr("Nivel de razonamiento"), self.assistant_effort)
         prices = QHBoxLayout()
@@ -263,7 +263,7 @@ class SettingsPage(Page):
         prices.addWidget(self.price_out, 1)
         form.addRow(tr("Precio por millón de tokens"), prices)
         self.price_hint = label("", "Small", wrap=True)
-        form.addRow("", self.price_hint)
+        form.addRow(self.price_hint)
         self.key_status = label("", "Small", wrap=True)
         key_row = QHBoxLayout()
         key_row.addWidget(self.key_status, 1)
@@ -291,7 +291,7 @@ class SettingsPage(Page):
             "Si un pedido trae mensaje de regalo, deja la instrucción «tarjeta de regalo» en el pedido."))
         self.assistant_rules.setFixedHeight(110)
         form.addRow(tr("Reglas del dueño"), self.assistant_rules)
-        form.addRow("", label(tr("Solo tú las cambias, aquí. No pueden saltarse las confirmaciones ni los límites de "
+        form.addRow(label(tr("Solo tú las cambias, aquí. No pueden saltarse las confirmaciones ni los límites de "
                                  "seguridad."), "Small", wrap=True))
         # Acceso a la PC: solo Windows, apagado de fábrica y nunca lo cambia el asistente.
         self.pc_tools = QCheckBox(tr("Herramientas de Windows"))
@@ -299,12 +299,12 @@ class SettingsPage(Page):
         for box in (self.pc_tools, self.screen_control):
             box.setEnabled(sys.platform == "win32")
         form.addRow(tr("Acceso a la PC"), self.pc_tools)
-        form.addRow("", label(tr("Revisar y configurar impresoras, la cola de impresión, la red, la energía y la "
+        form.addRow(label(tr("Revisar y configurar impresoras, la cola de impresión, la red, la energía y la "
                                  "Configuración de Windows."), "Small", wrap=True))
-        form.addRow("", self.screen_control)
-        form.addRow("", label(tr("Ver la pantalla y usar el mouse y el teclado para lo que no tenga herramienta (el "
+        form.addRow(self.screen_control)
+        form.addRow(label(tr("Ver la pantalla y usar el mouse y el teclado para lo que no tenga herramienta (el "
                                  "instalador de un driver, la página de la impresora)."), "Small", wrap=True))
-        form.addRow("", label(tr(
+        form.addRow(label(tr(
             "Cada acción te pide permiso en una ventana y lo de administrador, además, el permiso de Windows. Con el "
             "control de la pantalla, lo que se ve en ella se envía a tu proveedor de IA mientras dura la tarea.")
             if sys.platform == "win32" else tr("Solo en Windows."), "Small", wrap=True))
@@ -337,7 +337,7 @@ class SettingsPage(Page):
         )
         form.addRow(tr("Descargas desde la red interna"), self.private_urls)
         self.require_https = QCheckBox(tr("Descargas desde internet solo por https (recomendado)"))
-        form.addRow("", self.require_https)
+        form.addRow(self.require_https)
         security.add(layout=form)
         row = QHBoxLayout()
         audit_btn = button(tr("Ver registro de seguridad"), "file")
@@ -609,7 +609,7 @@ class SettingsPage(Page):
         for spin in (self.no_scan_days, self.transit_days, self.unshipped_days):
             spin.setMaximumWidth(140)
         delays.addRow(tr("Marcar los pedidos pagados sin enviar después de"), self.unshipped_days)
-        delays.addRow("", label(tr("También avisa si se pasa la fecha estimada de entrega o la paquetería reporta un problema "
+        delays.addRow(label(tr("También avisa si se pasa la fecha estimada de entrega o la paquetería reporta un problema "
                                    "(intento fallido, retraso, no entregado)."), "Muted", wrap=True))
         card.add(layout=delays)
         self._load_notifications()
@@ -624,7 +624,7 @@ class SettingsPage(Page):
         form = form_layout()
         form.setSpacing(10)
         self.email_on = QCheckBox(tr("Enviar avisos por email"))
-        form.addRow("", self.email_on)
+        form.addRow(self.email_on)
         self.email_provider = QComboBox()
         for key, (name, _host, _port, _security) in EMAIL_PROVIDERS.items():
             self.email_provider.addItem(tr(name), key)
@@ -652,7 +652,7 @@ class SettingsPage(Page):
         self.email_help.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(GMAIL_APP_PASSWORDS)))
         password_row.addWidget(self.email_help)
         form.addRow(tr("Contraseña"), password_row)
-        form.addRow("", label(tr("Gmail e iCloud piden una «contraseña de aplicación» (con la verificación en dos pasos "
+        form.addRow(label(tr("Gmail e iCloud piden una «contraseña de aplicación» (con la verificación en dos pasos "
                                  "activa), no tu contraseña normal. Se guarda cifrada en este equipo."), "Small", wrap=True))
         self.email_name = QLineEdit()
         form.addRow(tr("Nombre del remitente"), self.email_name)
@@ -660,7 +660,7 @@ class SettingsPage(Page):
         self.email_to.setPlaceholderText(tr("dueno@tienda.com, socia@tienda.com"))
         form.addRow(tr("Avisar a"), self.email_to)
         self.email_assistant = QCheckBox(tr("El asistente puede escribirles (sin pedir permiso, solo a estas direcciones)"))
-        form.addRow("", self.email_assistant)
+        form.addRow(self.email_assistant)
         self.email_per_hour = _spin(1, 200, tr(" correos"))
         self.email_per_hour.setMaximumWidth(160)
         form.addRow(tr("Máximo por hora"), self.email_per_hour)

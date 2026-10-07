@@ -25,6 +25,26 @@ MOTION_MS = 200  # cambio de pestaña
 PULSE_MS = 1800  # latido del estado mientras imprime
 
 
+KEYBOARD_FOCUS = (Qt.FocusReason.TabFocusReason, Qt.FocusReason.BacktabFocusReason, Qt.FocusReason.ShortcutFocusReason)
+
+
+class _FocusRing:
+    """El anillo de foco solo cuando se llegó con el teclado (como :focus-visible en la web): al abrir la ventana o
+    con un clic no aparece; con Tab, sí."""
+
+    focus_visible = False
+
+    def focusInEvent(self, event) -> None:  # noqa: N802
+        self.focus_visible = event.reason() in KEYBOARD_FOCUS
+        super().focusInEvent(event)
+        self.update()
+
+    def focusOutEvent(self, event) -> None:  # noqa: N802
+        self.focus_visible = False
+        super().focusOutEvent(event)
+        self.update()
+
+
 @dataclass(frozen=True)
 class Destination:
     """Una pestaña de la ventana: su clave, el texto (sin traducir) y el icono."""
@@ -84,7 +104,7 @@ def _badge(painter: QPainter, right: float, center_y: float, text: str, attentio
     painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, text)
 
 
-class NavItem(QAbstractButton):
+class NavItem(_FocusRing, QAbstractButton):
     """Una pestaña del menú lateral: icono, texto y, si hay, un contador."""
 
     HEIGHT = 36
@@ -134,7 +154,7 @@ class NavItem(QAbstractButton):
             height = (rect.height() - 16) * active
             painter.setBrush(QColor(Color.GOLD))
             painter.drawRoundedRect(QRectF(rect.left() + 4, rect.center().y() - height / 2, 3, height), 1.5, 1.5)
-        if self.hasFocus():
+        if self.hasFocus() and self.focus_visible:
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.setPen(QPen(QColor(Color.FOCUS), 1.5))
             painter.drawRoundedRect(rect.adjusted(1, 1, -1, -1), 7, 7)
@@ -155,7 +175,7 @@ class NavItem(QAbstractButton):
         painter.end()
 
 
-class StatusIndicator(QAbstractButton):
+class StatusIndicator(_FocusRing, QAbstractButton):
     """El estado de la impresión: un punto de color (que late suave mientras imprime), qué pasa y el detalle.
     `compact`: solo el punto (barra inferior), con el texto en el tooltip."""
 
@@ -246,14 +266,14 @@ class StatusIndicator(QAbstractButton):
             detail = painter.fontMetrics().elidedText(self.detail, Qt.TextElideMode.ElideRight, int(rect.width() - 36))
             painter.drawText(QRectF(rect.left() + 32, rect.top() + 23, rect.width() - 36, 16),
                              Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, detail)
-        if self.hasFocus():
+        if self.hasFocus() and self.focus_visible:
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.setPen(QPen(QColor(Color.FOCUS), 1.5))
             painter.drawRoundedRect(rect.adjusted(1, 1, -1, -1), 7, 7)
         painter.end()
 
 
-class _BottomItem(QAbstractButton):
+class _BottomItem(_FocusRing, QAbstractButton):
     """Una pestaña de la barra inferior: icono arriba y texto abajo (al menos 48 px de alto para el clic)."""
 
     def __init__(self, destination: Destination, parent: QWidget | None = None) -> None:
@@ -299,7 +319,7 @@ class _BottomItem(QAbstractButton):
         painter.drawText(QRectF(rect.left() + 3, rect.top() + 30, rect.width() - 6, 16), Qt.AlignmentFlag.AlignCenter, label)
         if self.badge:
             _badge(painter, rect.center().x() + 24, rect.top() + 12, self.badge, self.attention)
-        if self.hasFocus():
+        if self.hasFocus() and self.focus_visible:
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.setPen(QPen(QColor(Color.FOCUS), 1.5))
             painter.drawRoundedRect(rect.adjusted(3, 3, -3, -3), 8, 8)

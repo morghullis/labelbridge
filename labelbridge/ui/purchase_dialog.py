@@ -334,7 +334,7 @@ class PurchaseDialog(QDialog):
         self.package.add_rows(details)
         self.notify = QCheckBox(tr("Avisar al cliente por correo con el número de seguimiento"))
         self.notify.setChecked(s.notify_customer)
-        details.addRow("", self.notify)
+        details.addRow(self.notify)
         form.addRow(self.details_box)
         layout.addWidget(self.form_box)
         self.services.changed.connect(self._update)

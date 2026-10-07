@@ -3,6 +3,7 @@ lados en la ventana más angosta, y las piezas que se acomodan al ancho (filas, 
 
 from __future__ import annotations
 
+import sys
 import time
 
 import pytest
@@ -27,7 +28,19 @@ def _wait_qt(qapp, predicate, timeout: float = 10.0) -> bool:
 
 
 @pytest.fixture()
-def window(core, qapp):
+def app_font(qapp):
+    """La letra de la app instalada (app.main pone Segoe UI 10 en Windows): los anchos se miden con la de verdad."""
+    from PySide6.QtGui import QFont
+
+    previous = qapp.font()
+    if sys.platform == "win32":
+        qapp.setFont(QFont("Segoe UI", 10))
+    yield
+    qapp.setFont(previous)
+
+
+@pytest.fixture()
+def window(core, qapp, app_font):
     from labelbridge.ui.main_window import MainWindow
 
     win = MainWindow(_ui_context(core))
@@ -116,8 +129,29 @@ def test_no_page_spills_sideways_in_the_narrowest_window(window, qapp):
             _settle(qapp)
             need, room = scroll.widget().minimumSizeHint().width(), scroll.viewport().width()
             if need > room:
-                too_wide[f"{key}/{tab}" if tab else key] = (need, room)
-    assert not too_wide, too_wide
+                too_wide[f"{key}/{tab}" if tab else key] = (need, room, _widest(scroll.widget()))
+    assert not too_wide, _diagnose(qapp, too_wide)
+
+
+def _widest(root, count: int = 4) -> list[str]:
+    """Las piezas visibles que piden más ancho (para saber cuál arreglar si una página se sale)."""
+    from PySide6.QtWidgets import QWidget
+
+    sizes = sorted(((w.minimumSizeHint().width(), type(w).__name__, str(getattr(w, "text", lambda: "")())[:40])
+                    for w in root.findChildren(QWidget) if w.isVisible() and type(w).__name__ not in ("Card", "QWidget")),
+                   reverse=True)
+    return [f"{width} {kind} «{text}»" for width, kind, text in sizes[:count]]
+
+
+def _diagnose(qapp, too_wide: dict) -> str:
+    from PySide6.QtGui import QFontInfo
+
+    font = qapp.font()
+    screen = qapp.primaryScreen()
+    head = (f"letra {QFontInfo(font).family()} {font.pointSizeF()}pt, dpi {screen.logicalDotsPerInch():.0f}, "
+            f"estilo {qapp.style().name()}")
+    return head + "\n" + "\n".join(f"{page}: necesita {need} y hay {room} → {widest}"
+                                    for page, (need, room, widest) in too_wide.items())
 
 
 # --- piezas que se acomodan al ancho --------------------------------------------------------------------
@@ -133,12 +167,15 @@ def test_split_row_stacks_its_groups_instead_of_widening_the_page(qapp):
     search.setMinimumWidth(240)
     row.add_end(search, 1)
     row.show()
-    row.resize(1000, 40)
+    side_by_side = row.start.sizeHint().width() + row.box.spacing() + row.end.sizeHint().width()
+    row.resize(side_by_side + 40, 40)
     _settle(qapp)
     assert not row.stacked()
-    row.resize(380, 40)
+    row.resize(side_by_side - 40, 40)  # ya no caben juntos (con cualquier letra)
     _settle(qapp)
-    assert row.stacked() and row.minimumSizeHint().width() <= row.width()
+    assert row.stacked()
+    widest_group = max(row.start.minimumSize().width(), row.end.minimumSize().width())
+    assert row.minimumSizeHint().width() <= widest_group  # apilados: pide lo del grupo más ancho, no la suma
     assert row.minimumWidth() == 1  # el ancho lo pone la ventana
     row.close()
 
@@ -233,3 +270,18 @@ def test_checked_boxes_draw_a_check_mark_from_the_packaged_image(qapp):
     apply_theme(qapp)
     assert QFile("theme:check.png").exists()  # la ruta real (con «;» o espacios) nunca entra en el estilo
     assert "url(theme:check.png)" in STYLESHEET
+
+
+def test_focus_ring_only_when_arriving_with_the_keyboard(qapp):
+    from PySide6.QtCore import QEvent, Qt
+    from PySide6.QtGui import QFocusEvent
+
+    from labelbridge.ui.navigation import Destination, NavItem
+
+    item = NavItem(Destination("home", "Inicio", "home"))
+    item.focusInEvent(QFocusEvent(QEvent.Type.FocusIn, Qt.FocusReason.ActiveWindowFocusReason))
+    assert not item.focus_visible  # al abrir la ventana: sin anillo
+    item.focusInEvent(QFocusEvent(QEvent.Type.FocusIn, Qt.FocusReason.TabFocusReason))
+    assert item.focus_visible  # con Tab: con anillo
+    item.focusOutEvent(QFocusEvent(QEvent.Type.FocusOut, Qt.FocusReason.MouseFocusReason))
+    assert not item.focus_visible

@@ -129,7 +129,7 @@ class BulkPrintDialog(QDialog):
         form.addRow(tr("Paquete"), self.package)
         self.notify = QCheckBox(tr("Avisar a cada cliente por correo con su número de seguimiento"))
         self.notify.setChecked(s.notify_customer)
-        form.addRow("", self.notify)
+        form.addRow(self.notify)
         self.options_box.setVisible(buy > 0)
         layout.addWidget(self.options_box)
 

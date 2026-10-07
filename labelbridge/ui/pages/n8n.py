@@ -57,7 +57,7 @@ class N8nPage(Page):
         form.addRow(tr("Puerto"), self.port)
         self.tls = QCheckBox(tr("Conexión cifrada (TLS) — recomendado"))
         self.tls.setChecked(s.tls)
-        form.addRow("", self.tls)
+        form.addRow(self.tls)
         self.username = QLineEdit(s.username)
         self.username.setPlaceholderText("labelbridge-pc")
         form.addRow(tr("Usuario"), self.username)

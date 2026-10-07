@@ -572,7 +572,9 @@ def main() -> None:
     page = window.pages["shopify"]
     pump(300)
     capture(window, [page.enabled, page.shop, [page.client_id, page.client_secret], page.test_btn], "shopify-connect.png")
-    capture(window, [page.buy_label, page.label_printer, page.print_order], "shopify-what.png", context=[page.buy_warning])
+    routes = page.routes.combos
+    capture(window, [page.buy_label, page.print_order, [routes["shipping"], routes["order"]]], "shopify-what.png",
+            context=[page.buy_warning])
 
     # El asistente flotante: el bubble en cualquier pantalla, «Conecta tu IA» y el chat.
     window.resize(1180, 760)
