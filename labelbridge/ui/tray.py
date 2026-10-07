@@ -1,4 +1,5 @@
-"""Icono en la bandeja del sistema con menú rápido y notificaciones."""
+"""Icono en la bandeja del sistema con menú rápido y los avisos: en Windows, avisos nativos con botón (ver
+system/toasts.py); en la Mac y si Windows no los permite, los de la bandeja."""
 
 from __future__ import annotations
 
@@ -6,20 +7,35 @@ import logging
 import time
 from typing import Callable
 
-from PySide6.QtCore import QUrl
+from PySide6.QtCore import QUrl, Signal
 from PySide6.QtGui import QAction, QDesktopServices
 from PySide6.QtWidgets import QMenu, QSystemTrayIcon
 
 from .. import APP_NAME
-from ..i18n import tr
+from ..i18n import N_, tr
+from ..paths import resource_path
+from ..system import toasts
 from ..system.platform import MAC
 from . import alerts, icons
 from .context import AppContext
 
 log = logging.getLogger(__name__)
 
+# A dónde lleva cada aviso (pantalla y texto del botón); los demás abren LabelBridge.
+TOAST_ACTIONS = {
+    "new_order": ("orders", N_("Ver pedidos")),
+    "action": ("orders", N_("Ver qué falta")),
+    "delivery": ("orders", N_("Ver el envío")),
+    "printed": ("history", N_("Ver historial")),
+    "print_error": ("history", N_("Ver qué pasó")),
+    "report": ("report", N_("Ver reporte")),
+    "connector": ("dashboard", N_("Ver conexiones")),
+}
+
 
 class Tray(QSystemTrayIcon):
+    toast_clicked = Signal(str)  # pantalla a abrir (llega desde el hilo de Windows: la señal la pasa al de la interfaz)
+
     def __init__(
         self,
         ctx: AppContext,
@@ -29,10 +45,14 @@ class Tray(QSystemTrayIcon):
         check_updates: Callable[[], object] | None = None,
         message_clicked: Callable[[], object] | None = None,
         open_assistant: Callable[[], object] | None = None,
+        open_target: Callable[[str], object] | None = None,
     ) -> None:
         super().__init__(icons.app_icon())
         self.ctx = ctx
         self._last_notice: dict[str, float] = {}
+        if open_target is not None:
+            self.toast_clicked.connect(open_target)
+        self.toasts = toasts.create(self.toast_clicked.emit, resource_path("assets", "icon.png"))
         menu = QMenu()
         open_action = menu.addAction(icons.icon("home"), tr("Abrir {0}", APP_NAME))
         open_action.triggered.connect(show_window)
@@ -71,6 +91,20 @@ class Tray(QSystemTrayIcon):
         state = tr("en pausa") if paused else tr("activo")
         self.setToolTip(tr("{0} · {1} · {2} en cola", APP_NAME, state, queued))
 
+    def notice(self, title: str, message: str, kind: str = "", error: bool = False) -> None:
+        """Un aviso: nativo de Windows con su botón, o el de la bandeja (Mac, o si Windows no lo muestra)."""
+        if self.toasts is not None:
+            target, action = TOAST_ACTIONS.get(kind, ("", N_("Abrir LabelBridge")))
+            try:
+                self.toasts.show(title, message, target=target, action=tr(action),
+                                 attribution=self.ctx.cfg.data.general.agent_name, group=kind or "general")
+                return
+            except Exception:  # noqa: BLE001  el aviso sale igual por la bandeja; queda anotado una vez
+                log.warning("Aviso nativo de Windows falló; se usa la bandeja", exc_info=True)
+                self.toasts = None
+        icon = QSystemTrayIcon.MessageIcon.Warning if error else QSystemTrayIcon.MessageIcon.Information
+        self.showMessage(title, message, icon, 6000)
+
     def _on_event(self, kind: str, data) -> None:
         if kind in ("job", "paused"):
             self._update()
@@ -82,12 +116,7 @@ class Tray(QSystemTrayIcon):
             self._last_notice[key] = now
             kind = data.get("kind") or ""
             if alerts.toast_enabled(self.ctx.cfg, kind):
-                icon = (
-                    QSystemTrayIcon.MessageIcon.Warning
-                    if data.get("level") == "error"
-                    else QSystemTrayIcon.MessageIcon.Information
-                )
-                self.showMessage(data.get("title", APP_NAME), data.get("message", ""), icon, 6000)
+                self.notice(data.get("title", APP_NAME), data.get("message", ""), kind, data.get("level") == "error")
             alerts.play_for(self.ctx.cfg, kind)  # el sonido va aparte: se puede tener sonido sin aviso
         elif kind == "open_url" and isinstance(data, dict):
             # Solo páginas del admin de Shopify (p. ej. el pedido para «Imprimir etiqueta» de la FedEx de Flow).
@@ -103,4 +132,4 @@ class Tray(QSystemTrayIcon):
             now = time.time()
             if now - self._last_notice.get(key, 0) > 600 and self.ctx.cfg.data.general.notify_errors:
                 self._last_notice[key] = now
-                self.showMessage(tr("Problema con {0}", name), data.get("message", ""), QSystemTrayIcon.MessageIcon.Warning, 6000)
+                self.notice(tr("Problema con {0}", name), data.get("message", ""), "connector", True)

@@ -94,8 +94,9 @@ Name: "firewall"; Description: "{cm:FirewallTask}"; GroupDescription: "{cm:Netwo
 Source: "..\dist\LabelBridge\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"; Parameters: "--show"
-Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Parameters: "--show"; Tasks: desktopicon
+; AppUserModelID: el mismo de la app (system/toasts.py), para que los avisos de Windows salgan como LabelBridge.
+Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"; Parameters: "--show"; AppUserModelID: "LabelBridge.App"
+Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Parameters: "--show"; Tasks: desktopicon; AppUserModelID: "LabelBridge.App"
 
 [Registry]
 ; Los términos aceptados en el instalador (solo si se vio la página: no en las actualizaciones silenciosas). La app no

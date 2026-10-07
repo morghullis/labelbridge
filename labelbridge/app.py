@@ -148,6 +148,9 @@ def main(argv: list[str] | None = None) -> int:
     _install_exception_hooks()
     _install_qt_message_handler()
 
+    from .system import toasts
+
+    toasts.set_process_identity()  # Windows: los avisos y la barra de tareas como LabelBridge (antes de las ventanas)
     QApplication.setApplicationName(APP_NAME)
     QApplication.setOrganizationName(APP_NAME)
     QApplication.setApplicationVersion(__version__)
@@ -174,7 +177,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if sys.platform == "win32":
         app.setFont(QFont("Segoe UI", 10))
-    apply_theme(app)  # siempre claro, aunque Windows esté en modo oscuro
+    apply_theme(app)  # siempre oscuro con verde neón, esté Windows en claro o en oscuro
     app.setWindowIcon(icons.app_icon())
     try:
         return _run(app, argv, hints, instance)
@@ -314,6 +317,14 @@ def _run(app, argv: list[str], hints: dict, instance) -> int:
         else:
             window.show_and_raise()
 
+    def open_target(target: str) -> None:
+        """El clic en un aviso de Windows: la pantalla de lo que avisa (o lo de siempre, si no dice cuál)."""
+        if not target:
+            tray_message_clicked()
+            return
+        window.show_and_raise()
+        window.navigate(target)
+
     tray = Tray(
         ctx,
         window.show_and_raise,
@@ -322,6 +333,7 @@ def _run(app, argv: list[str], hints: dict, instance) -> int:
         check_updates=window.check_updates_now,
         message_clicked=tray_message_clicked,
         open_assistant=window.open_assistant,
+        open_target=open_target,
     )
     instance.activated.connect(window.show_and_raise)
     if MAC:

@@ -330,6 +330,21 @@ def run(argv: list[str]) -> int:
         assert report.start == week_start(_time.time(), zone, 1).date().isoformat()
         return f"zona {zone} · semana del {report.start}"
 
+    def windows_notifications() -> str:
+        """Los avisos nativos de Windows: las API cargan y el aviso es válido para Windows (no se muestra ninguno)."""
+        if sys.platform != "win32":
+            return "solo en Windows"
+        from winrt.windows.data.xml.dom import XmlDocument
+        from winrt.windows.ui.notifications import ToastNotification, ToastNotificationManager
+
+        from .system.toasts import AUMID, toast_xml
+
+        document = XmlDocument()
+        document.load_xml(toast_xml("Prueba", "Aviso de prueba", target="orders", action="Ver pedidos", attribution="PC"))
+        ToastNotification(document)
+        ToastNotificationManager.create_toast_notifier_with_id(AUMID)
+        return f"avisos nativos listos ({AUMID})"
+
     def guide_and_updates() -> str:
         from . import updater
         from .paths import resource_path
@@ -351,6 +366,7 @@ def run(argv: list[str]) -> int:
     check("máscara animada", mascot)
     check("sonidos de aviso", notification_sounds)
     check("reporte semanal", store_report)
+    check("avisos de Windows", windows_notifications)
     lines.append("RESULTADO: " + ("OK" if ok else "FALLO"))
     report_path.write_text("\n".join(lines), encoding="utf-8")
     return 0 if ok else 1

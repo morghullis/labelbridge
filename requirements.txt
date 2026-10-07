@@ -8,3 +8,8 @@ anthropic>=1.11,<2
 cryptography>=43
 pywin32>=306; sys_platform == "win32"
 tzdata>=2024.1; sys_platform == "win32"  # zonas horarias (reporte semanal): Windows no las trae
+# Avisos nativos de Windows 10/11 con botones (system/toasts.py): las API de Windows para Python (pywinrt)
+winrt-runtime>=3.2,<4; sys_platform == "win32"
+winrt-Windows.UI.Notifications>=3.2,<4; sys_platform == "win32"
+winrt-Windows.Data.Xml.Dom>=3.2,<4; sys_platform == "win32"
+winrt-Windows.Foundation>=3.2,<4; sys_platform == "win32"

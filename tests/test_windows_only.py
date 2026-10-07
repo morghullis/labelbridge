@@ -28,3 +28,20 @@ def test_input_backend_reads_the_screen_and_the_cursor():
     x, y = backend.cursor()
     assert isinstance(x, int) and isinstance(y, int)
     assert isinstance(backend.foreground_is_ours(), bool)
+
+
+def test_native_windows_notifications_are_ready(tmp_path):
+    """Las API de avisos de Windows cargan, el aviso es válido y la app queda registrada con su nombre y logo."""
+    import winreg
+
+    from labelbridge.paths import resource_path
+    from labelbridge.system import toasts
+
+    opened: list[str] = []
+    notifier = toasts.create(opened.append, resource_path("assets", "icon.png"))
+    assert notifier is not None
+    document = notifier._XmlDocument()
+    document.load_xml(toasts.toast_xml("Prueba", "Aviso", target="orders", action="Ver pedidos", attribution="CI"))
+    notifier._ToastNotification(document)
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, toasts.REGISTRY_KEY) as key:
+        assert winreg.QueryValueEx(key, "DisplayName")[0] == "LabelBridge"
