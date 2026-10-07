@@ -232,6 +232,7 @@ Los datos de la app (configuración, cola, registros) se guardan en `%LOCALAPPDA
 
 - El cálculo está en `labelbridge/connectors/store_report.py` (sin pantalla ni red, probado en `tests/test_store_report.py`); la consulta, en `ShopifyService.weekly_report` (validada con el esquema de Shopify); la pestaña, en `ui/pages/report.py`; el asistente, en `assistant/report_tools.py`.
 - Semanas de lunes a domingo en la hora de la tienda. La rapidez se mide solo con señales reales de envío (guía comprada, seguimiento o en camino); el margen de envío, solo con guías compradas en Shopify. Con menos de 5 pedidos no hay alertas por porcentaje.
+- Las visitas salen de ShopifyQL (`shopifyqlQuery`, permiso `read_reports`; solo personas, sin bots), por día y sumadas en las mismas semanas. Si casi todas las visitas que ve Shopify ya están en el pago, la web de la tienda está fuera de Shopify (`checkout_only`): no se calcula la conversión de la web (sería falsa) y se mide quién llegó al pago y no compró. Sin el permiso o si la consulta falla, el reporte sale igual y lo dice.
 - Las referencias del sector viven en `connectors/benchmarks.py`, cada una con fuente, enlace y fecha de consulta: para actualizarlas, cambia el valor y `checked` ahí (nunca un número sin fuente).
 
 ## Seguridad

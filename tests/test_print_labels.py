@@ -237,7 +237,7 @@ def test_the_connection_test_lists_the_optional_permissions(core, monkeypatch):
     info = service.test_connection()
     assert info["missing"] == [] and isinstance(service._client, ShopifyClient) and service._client is not old
     assert [item.split(" ")[0] for item in info["optional_missing"]] == ["read_inventory", "read_shipping",
-                                                                         "read_customers"]
+                                                                         "read_customers", "read_reports"]
 
 
 # --- reimprimir y comprar en Shopify ---------------------------------------------------------------------

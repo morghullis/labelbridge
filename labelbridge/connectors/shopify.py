@@ -18,7 +18,7 @@ import re
 import threading
 import time
 from collections import deque
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import urlencode, urlparse
 
@@ -37,11 +37,16 @@ from .shopify_orders import MANUAL_TAG, ManualItem, ManualOrders, OrderDetail, P
 from .store_report import (
     HISTORY_WEEKS,
     REPORT_QUERY,
+    REPORT_VERSION,
     REPORT_QUERY_NO_CUSTOMERS,
+    SESSIONS_QUERY,
     TIMEZONE_QUERY,
+    Funnel,
     WeeklyReport,
     build_report,
     money_text,
+    parse_sessions,
+    sessions_shopifyql,
     store_timezone,
     week_start,
 )
@@ -252,16 +257,17 @@ DEV_DASHBOARD_URL = "https://dev.shopify.com/dashboard"
 SCOPES_BASIC = "read_orders"
 # Opcionales (sin ellos, lo demás funciona igual): read_products elige productos de la tienda en la guía manual y
 # read_inventory muestra sus existencias; read_shipping muestra solo los servicios que Shopify ofrece en cada envío;
-# read_customers dice en «Ver pedido» si el cliente ya compró antes.
+# read_customers dice en «Ver pedido» si el cliente ya compró antes; read_reports trae las visitas al reporte.
 SCOPES_LABELS = (
     "read_orders,write_orders,read_merchant_managed_fulfillment_orders,write_merchant_managed_fulfillment_orders,"
-    "read_products,read_inventory,read_shipping,read_customers"
+    "read_products,read_inventory,read_shipping,read_customers,read_reports"
 )
 OPTIONAL_SCOPES = {
     "read_products": N_("elegir productos de la tienda en la guía manual"),
     "read_inventory": N_("ver las existencias en la guía manual"),
     "read_shipping": N_("ver solo los servicios que Shopify ofrece en cada envío"),
     "read_customers": N_("saber si el cliente ya compró antes"),
+    "read_reports": N_("ver en el reporte semanal las visitas y quién llega a pagar y no compra"),
 }
 
 
@@ -355,6 +361,7 @@ class ShopifyClient:
         self.secrets = secrets
         self._token = ""
         self._token_expiry = 0.0
+        self._token_at = 0.0  # cuándo se pidió el token (los permisos nuevos llegan con un token nuevo)
         self.granted_scopes = ""
         self._token_lock = threading.Lock()
         self._fallbacks: dict[str, tuple[int, str]] = {}  # graphql_first: qué consulta funcionó, con qué permisos
@@ -398,6 +405,7 @@ class ShopifyClient:
         if not self._token:
             raise ShopifyError(tr("Shopify no devolvió un token de acceso"))
         self._token_expiry = time.time() + int(data.get("expires_in") or 86399)
+        self._token_at = time.time()
         self.granted_scopes = str(data.get("scope") or "")
         log.info("Shopify: token renovado (válido 24 h)")
         return self._token
@@ -569,6 +577,23 @@ class ShopifyClient:
     def shop_timezone(self) -> dict:
         """Zona horaria y moneda de la tienda (las semanas del reporte van en su hora)."""
         return self.graphql(TIMEZONE_QUERY).get("shop") or {}
+
+    def store_sessions(self, since: date, until: date) -> dict[str, Funnel]:
+        """Las visitas de personas por día, de `since` a `until` (estadísticas de Shopify; necesita read_reports)."""
+        variables = {"query": sessions_shopifyql(since, until)}
+        try:
+            data = self.graphql(SESSIONS_QUERY, variables)
+        except ShopifyError as exc:
+            # read_reports pudo agregarse después de pedir el token (dura 24 h): se pide uno nuevo, una vez.
+            if exc.code != "access_denied" or self.auth_mode == "token" or time.time() - self._token_at < 300:
+                raise
+            data = self.graphql(SESSIONS_QUERY, variables, _refresh=True)
+        result = data.get("shopifyqlQuery") or {}
+        problems = [str(problem) for problem in result.get("parseErrors") or []]
+        if problems:
+            raise ShopifyError(tr("Shopify no aceptó la consulta de visitas: {0}", "; ".join(problems)[:300]),
+                               code="shopifyql")
+        return parse_sessions(result.get("tableData"))
 
     def fulfillment_orders(self, order_gid: str) -> list[dict]:
         data = self.graphql(FULFILLMENT_ORDERS_QUERY, {"id": order_gid})
@@ -996,10 +1021,32 @@ class ShopifyService(BackgroundService):
         if orders and all(not order.get("customer") for order in orders):
             missing.append(tr("Clientes que vuelven: la app no puede ver a los clientes (permiso read_customers y datos "
                               "protegidos aprobados en el Dev Dashboard)."))
-        report = build_report(orders, now, zone, str(shop.get("currencyCode") or "USD"), weeks_back, missing)
-        if report.complete:  # una semana a medias no se guarda: no reemplaza al reporte de la semana entera
+        sunday = (week_start(now, zone, weeks_back) + timedelta(days=6)).date()
+        last_day = min(sunday, datetime.fromtimestamp(now, zone).date())  # la semana en curso, hasta hoy
+        sessions, sessions_note = self._report_sessions(since.date(), last_day, missing)
+        report = build_report(orders, now, zone, str(shop.get("currencyCode") or "USD"), weeks_back, missing, sessions,
+                              sessions_note)
+        # Una semana a medias no se guarda (no reemplaza a la semana entera), ni una en la que las visitas fallaron por
+        # un problema pasajero: la próxima vez se vuelve a intentar.
+        if report.complete and not sessions_note:
             self._save_report(report)
         return report
+
+    def _report_sessions(self, since: date, until: date, missing: list[str]) -> tuple[dict[str, Funnel] | None, str]:
+        """Las visitas por día para el reporte. Sin ellas el reporte sale igual, y dice por qué (nunca en silencio)."""
+        try:
+            return self.client().store_sessions(since, until), ""
+        except ShopifyError as exc:
+            if exc.code == "access_denied":
+                missing.append(tr("Visitas y pagos sin terminar: agrega el permiso read_reports a la app en el Dev "
+                                  "Dashboard (Shopify → Copiar permisos), publica la versión nueva y pulsa «Actualizar»."))
+                return None, ""
+            problem = exc
+        except (net.NetworkError, net.HttpError, TypeError, ValueError, AttributeError) as exc:  # sin red o datos raros
+            problem = exc
+        log.warning("Shopify: no se pudieron leer las visitas para el reporte: %s", problem)
+        missing.append(tr("No se pudieron leer las visitas de Shopify esta vez: {0}", errors.user_message(problem)))
+        return None, tr("No se pudieron leer las visitas esta vez (mira la nota al final del reporte).")
 
     def _save_report(self, report: WeeklyReport) -> None:
         self.store.kv_set(self._key(f"report:{report.start}"), json.dumps(report.to_dict(), ensure_ascii=False))
@@ -1020,12 +1067,13 @@ class ShopifyService(BackgroundService):
         return sorted(reports, key=lambda report: report.start, reverse=True)
 
     def saved_report(self, weeks_back: int = 1, now: float | None = None) -> WeeklyReport | None:
-        """El reporte ya guardado de esa semana (sin volver a pedir los pedidos), si lo hay: solo semanas enteras y en
-        el idioma de ahora (si se cambió el idioma, se vuelve a armar)."""
+        """El reporte ya guardado de esa semana (sin volver a pedir los pedidos), si lo hay: solo semanas enteras, en el
+        idioma de ahora y armados por esta versión del cálculo (si no, se vuelve a armar)."""
         now = now or time.time()
         start = week_start(now, store_timezone(self._zone(now)), weeks_back).date().isoformat()
         return next((report for report in self.saved_reports()
-                     if report.start == start and report.complete and report.language == language()), None)
+                     if report.start == start and report.complete and report.language == language()
+                     and report.version == REPORT_VERSION), None)
 
     def weekly_report_if_due(self, now: float | None = None) -> WeeklyReport | None:
         """Desde el lunes a las 8 (hora de la tienda), el reporte de la semana que terminó, con su aviso una sola vez

@@ -2,6 +2,14 @@
 
 English version of [CHANGELOG.md](CHANGELOG.md). Each published version shows these notes in the app's update window when the app is in English, and on the English download page.
 
+## 1.17.1
+
+- **The weekly report now sees visits** (with the new `read_reports` permission; add it with **Copy permissions** in the Dev Dashboard and release the app version). It counts people only, not bots:
+  - **Who reaches checkout and doesn't buy**, compared with the industry's cart abandonment (Baymard). If it happens a lot, it comes first in **What to fix**, with steps: Shopify's automatic abandoned checkout email (Messaging app), checking checkout as a customer and showing guarantee and delivery times next to the pay button.
+  - **Visits that buy**, compared with online jewelry conversion (Dynamic Yield).
+  - If your website is outside Shopify (like your own site that sends buyers to Shopify's checkout), Shopify only sees the visits that reach checkout: the report detects it, doesn't invent a conversion for your site and measures who reached checkout and didn't buy.
+- Without the permission, the report still comes and says how to add it (before, it asked for that permission without using it).
+
 ## 1.17.0
 
 - **Weekly store report** (new **Report** tab, under Operation). Every Monday at 8 a.m. (store time) LabelBridge prepares the report for the week that just ended and lets you know:

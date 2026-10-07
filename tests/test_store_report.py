@@ -181,9 +181,11 @@ def test_facts_skip_test_orders_tagged_as_such():
 
 # --- el servicio: guardado y aviso del lunes ----------------------------------------------------------------------
 class _FakeClient:
-    def __init__(self, orders):
+    def __init__(self, orders, sessions=None):
         self.orders = orders
+        self.sessions = sessions  # visitas por día; None: la app no tiene read_reports
         self.calls = 0
+        self.session_ranges: list[tuple] = []
 
     def shop_timezone(self):
         return {"ianaTimezone": "", "timezoneOffsetMinutes": -240, "currencyCode": "USD"}
@@ -191,6 +193,16 @@ class _FakeClient:
     def report_orders(self, created_from_iso):
         self.calls += 1
         return self.orders, False
+
+    def store_sessions(self, since, until):
+        from labelbridge.connectors.shopify import ShopifyError
+
+        self.session_ranges.append((since, until))
+        if isinstance(self.sessions, Exception):
+            raise self.sessions
+        if self.sessions is None:
+            raise ShopifyError("Access denied for shopifyqlQuery field.", code="access_denied")
+        return self.sessions
 
 
 @pytest.fixture()
@@ -533,3 +545,229 @@ def test_percentages_from_a_handful_of_orders_are_not_judged_against_the_sector(
     assert by_key["aov_jewelry"].verdict == "above"  # un promedio de montos sí se compara
     five = [order(day(i), 300, customer_orders=1, ship_after_hours=5) for i in range(5)]
     assert {c.key: c for c in build_report(five, NOW, MIAMI).comparisons}["repeat"].verdict == "below"
+
+
+# --- visitas (estadísticas de Shopify, read_reports) ---------------------------------------------------------------
+def _days(per_day: dict[int, tuple[int, int, int, int]], monday: datetime = LAST_MONDAY, weeks: int = 1) -> dict:
+    """Visitas por día: {día de la semana: (visitas, carritos, al pago, compras)}, repetidas `weeks` semanas atrás."""
+    from labelbridge.connectors.store_report import Funnel
+
+    days = {}
+    for back in range(weeks):
+        for offset, numbers in per_day.items():
+            day = (monday - timedelta(weeks=back) + timedelta(days=offset)).date().isoformat()
+            days[day] = Funnel(*numbers)
+    return days
+
+
+# La semana real de la tienda (28 sep – 4 oct): casi todas las visitas que Shopify ve ya están en el pago.
+REAL_WEEK = {0: (3, 0, 3, 1), 1: (3, 0, 2, 0), 2: (7, 1, 6, 0), 3: (3, 0, 3, 0), 4: (5, 0, 5, 1), 5: (3, 0, 3, 0),
+             6: (3, 0, 3, 0)}
+
+
+def test_sessions_come_by_day_in_either_row_shape():
+    from labelbridge.connectors.store_report import Funnel, parse_sessions, sessions_shopifyql
+
+    columns = [{"name": "day"}, {"name": "sessions"}, {"name": "sessions_with_cart_additions"},
+               {"name": "sessions_that_reached_checkout"}, {"name": "sessions_that_completed_checkout"}]
+    as_lists = {"columns": columns, "rows": [["2026-09-28", "3", "0", "3", "1"], ["2026-09-29", "0", "0", "0", ""]]}
+    as_objects = {"columns": columns, "rows": [{"day": "2026-09-28T00:00:00-04:00", "sessions": 3,
+                                                "sessions_with_cart_additions": 0,
+                                                "sessions_that_reached_checkout": 3,
+                                                "sessions_that_completed_checkout": 1}]}
+    assert parse_sessions(as_lists) == {"2026-09-28": Funnel(3, 0, 3, 1), "2026-09-29": Funnel(0, 0, 0, 0)}
+    assert parse_sessions(as_objects) == {"2026-09-28": Funnel(3, 0, 3, 1)}
+    assert parse_sessions(None) == {}
+    query = sessions_shopifyql(LAST_MONDAY.date() - timedelta(weeks=4), LAST_MONDAY.date() + timedelta(days=6))
+    assert "WHERE human_or_bot_session = 'human'" in query and query.endswith("SINCE 2026-08-31 UNTIL 2026-10-04")
+
+
+def test_a_store_whose_website_is_elsewhere_measures_who_reaches_checkout_and_leaves():
+    """Como la tienda real: la web es otra (Jewel Linker) y Shopify solo ve el pago."""
+    orders = [order(day(0), 600, ship_after_hours=5), order(day(4), 590, ship_after_hours=5)]
+    report = build_report(orders, NOW, MIAMI, sessions=_days(REAL_WEEK, weeks=5))
+    assert report.visits_source == "checkout_only"
+    assert report.metric("visits").value == 27 and report.metric("conversion").value is None  # sería falsa
+    assert report.metric("abandonment").value == 92  # de 25 que llegaron al pago, 2 compraron
+    by_key = {c.key: c for c in report.comparisons}
+    assert by_key["conversion_jewelry"].store is None and "fuera de Shopify" in by_key["conversion_jewelry"].note
+    assert by_key["cart_abandonment"].store == 92 and by_key["cart_abandonment"].verdict == "above"
+    first = report.findings[0]
+    assert first.key == "abandonment" and first.severity == "critical" and "25" in first.evidence
+    assert "pago abandonado" in report.plan[0]  # lo primero del plan: el correo de pago abandonado
+
+
+def test_an_online_store_compares_its_conversion_with_the_sector():
+    orders = [order(day(i), 300, ship_after_hours=5) for i in range(5)]
+    busy = {i: (60, 6, 3, 1) for i in range(7)}  # 420 visitas, 42 carritos, 7 compras
+    report = build_report(orders, NOW, MIAMI, sessions=_days(busy, weeks=5))
+    assert report.visits_source == "online_store"
+    assert report.metric("conversion").value == pytest.approx(1.67, abs=0.01)
+    assert report.metric("abandonment").value == pytest.approx(83.3)
+    by_key = {c.key: c for c in report.comparisons}
+    assert by_key["conversion_jewelry"].verdict == "above" and by_key["cart_abandonment"].verdict == "above"
+    assert {"abandonment"} <= {f.key for f in report.findings}
+    assert "good_conversion" in {f.key for f in report.strengths}
+    quiet = build_report(orders, NOW, MIAMI, sessions=_days({i: (10, 1, 1, 0) for i in range(7)}, weeks=5))
+    few = {c.key: c for c in quiet.comparisons}
+    assert few["conversion_jewelry"].verdict == "few" and "70 visita" in few["conversion_jewelry"].note
+    assert few["cart_abandonment"].verdict == "few"
+
+
+def test_without_read_reports_the_report_says_how_to_add_it(shopify):
+    report = shopify.weekly_report(1, NOW)
+    assert any("read_reports" in note for note in report.missing)
+    assert "read_reports" in {c.key: c for c in report.comparisons}["cart_abandonment"].note
+    since, until = shopify.fake_client.session_ranges[0]
+    assert (since.isoformat(), until.isoformat()) == ("2026-08-31", "2026-10-04")
+
+
+def test_a_failure_reading_visits_is_noted_and_the_report_still_comes(shopify):
+    from labelbridge import net
+
+    shopify.fake_client.sessions = net.NetworkError("sin conexión")
+    report = shopify.weekly_report(1, NOW)
+    assert any("No se pudieron leer las visitas" in note and "sin conexión" in note for note in report.missing)
+    assert "nota al final" in {c.key: c for c in report.comparisons}["conversion_jewelry"].note
+    assert report.metric("sales").value == 420  # lo demás, igual
+
+
+def test_visits_reach_the_report_through_the_service(shopify):
+    shopify.fake_client.sessions = _days(REAL_WEEK, weeks=5)
+    report = shopify.weekly_report(1, NOW)
+    assert report.visits_source == "checkout_only" and report.metric("visits").value == 27
+
+
+def test_a_rejected_shopifyql_query_is_an_error_with_its_reason(monkeypatch):
+    from datetime import date
+
+    from labelbridge.connectors.shopify import ShopifyClient, ShopifyError
+
+    client = ShopifyClient.__new__(ShopifyClient)
+    monkeypatch.setattr(client, "graphql", lambda query, variables=None, **kw: {
+        "shopifyqlQuery": {"tableData": None, "parseErrors": ["Column Not Found: Column 'sesions' not found"]}})
+    with pytest.raises(ShopifyError) as caught:
+        client.store_sessions(date(2026, 9, 28), date(2026, 10, 4))
+    assert caught.value.code == "shopifyql" and "sesions" in str(caught.value)
+
+
+def test_a_week_without_visits_says_so_instead_of_a_blank():
+    report = build_report([order(day(1), 300, ship_after_hours=5)], NOW, MIAMI, sessions={})
+    by_key = {c.key: c for c in report.comparisons}
+    assert by_key["conversion_jewelry"].verdict == "unknown" and "no registró visitas" in by_key["conversion_jewelry"].note
+    assert by_key["cart_abandonment"].note == "Sin carritos esta semana."
+
+
+def test_reports_saved_by_an_older_calculation_are_prepared_again(shopify):
+    from labelbridge.connectors import store_report
+
+    report = shopify.weekly_report(1, NOW)
+    assert report.version == store_report.REPORT_VERSION and shopify.saved_report(1, NOW) is not None
+    old = report.to_dict()
+    old.pop("version")  # como los guardados por la 1.17.0
+    shopify._save_report(WeeklyReport.from_dict(old))
+    assert shopify.saved_report(1, NOW) is None
+
+
+def test_few_visits_are_labelled_as_visits(qapp):
+    from labelbridge.ui.pages.report import _verdict
+
+    quiet = build_report([order(day(1), 300, ship_after_hours=5)], NOW, MIAMI,
+                         sessions=_days({i: (10, 1, 1, 0) for i in range(7)}, weeks=5))
+    few = {c.key: c for c in quiet.comparisons}
+    assert _verdict(few["cart_abandonment"])[1] == "Pocas visitas"
+    assert _verdict(few["repeat"])[1] == "Pocos pedidos"
+
+
+# --- revisión de las visitas -----------------------------------------------------------------------------------------
+def test_a_report_whose_visits_failed_is_not_saved(shopify):
+    from labelbridge import net
+
+    shopify.fake_client.sessions = net.NetworkError("sin conexión")
+    shopify.weekly_report(1, NOW)
+    assert shopify.saved_report(1, NOW) is None  # la próxima vez se vuelve a intentar
+    shopify.fake_client.sessions = _days(REAL_WEEK, weeks=5)
+    shopify.weekly_report(1, NOW)
+    assert shopify.saved_report(1, NOW).visits_source == "checkout_only"
+
+
+def test_visits_line_up_with_their_own_weeks():
+    from labelbridge.connectors.store_report import Funnel
+
+    days = {}
+    for back, per_day in enumerate((100, 200, 300, 400, 500)):  # cada semana, distinto
+        for offset in range(7):
+            day = (LAST_MONDAY - timedelta(weeks=back) + timedelta(days=offset)).date().isoformat()
+            days[day] = Funnel(per_day, 10, 5, 1)
+    visits = build_report([], NOW, MIAMI, sessions=days).metric("visits")
+    assert (visits.value, visits.previous, visits.average) == (700, 1400, 2450)
+
+
+def test_this_week_compares_whole_days_only():
+    from labelbridge.connectors.store_report import Funnel
+
+    tuesday = datetime(2026, 10, 6, 10, 0, tzinfo=MIAMI)
+    this_monday = LAST_MONDAY + timedelta(weeks=1)
+    days = {(this_monday + timedelta(days=i)).date().isoformat(): Funnel(100, 10, 5, 1) for i in range(2)}
+    days.update({(LAST_MONDAY + timedelta(days=i)).date().isoformat(): Funnel(100, 10, 5, 1) for i in range(7)})
+    visits = build_report([], tuesday.timestamp(), MIAMI, weeks_back=0, sessions=days).metric("visits")
+    assert (visits.value, visits.previous) == (100, 100)  # el lunes contra el lunes (hoy, a medias, no cuenta)
+    monday = build_report([], (this_monday + timedelta(hours=9)).timestamp(), MIAMI, weeks_back=0, sessions=days)
+    assert monday.metric("visits").value is None  # el lunes todavía no hay un día entero
+
+
+def test_strange_rows_are_skipped_and_parsing_trouble_becomes_a_note(shopify, monkeypatch):
+    from labelbridge.connectors.store_report import parse_sessions
+
+    assert parse_sessions({"columns": [{"name": "day"}], "rows": [None, 5, ["2026-09-28"]]}) == {
+        "2026-09-28": parse_sessions({"rows": [{"day": "2026-09-28"}]})["2026-09-28"]}
+    shopify.fake_client.sessions = TypeError("algo raro")
+    report = shopify.weekly_report(1, NOW)
+    assert any("No se pudieron leer las visitas" in note for note in report.missing)
+
+
+def test_texts_follow_where_the_website_lives():
+    orders = [order(day(i), 300, ship_after_hours=5) for i in range(5)]
+    outside = build_report(orders, NOW, MIAMI, sessions=_days(REAL_WEEK, weeks=5))
+    assert outside.metric("abandonment").title == "Pagos sin terminar"
+    assert outside.findings[0].title == "Mucha gente llega a pagar y no compra"
+    online = build_report(orders, NOW, MIAMI, sessions=_days({i: (60, 6, 3, 1) for i in range(7)}, weeks=5))
+    assert online.metric("abandonment").title == "Carritos sin comprar"
+    assert next(f for f in online.findings if f.key == "abandonment").title == "Muchos carritos se quedan sin comprar"
+    few = build_report(orders, NOW, MIAMI, sessions=_days({0: (5, 0, 5, 1)}, weeks=5))
+    assert "visita(s) al pago" in {c.key: c for c in few.comparisons}["cart_abandonment"].note
+
+
+def test_the_assistant_knows_what_each_sample_counts():
+    from labelbridge.assistant.report_tools import compact
+
+    report = build_report([order(day(1), 300, ship_after_hours=5)], NOW, MIAMI, sessions=_days(REAL_WEEK, weeks=5))
+    refs = {r["title"]: r for r in compact(report)["industry_references"]}
+    assert refs["Carritos abandonados"]["sample"] == 25
+    assert refs["Carritos abandonados"]["sample_unit"] == "carts_or_checkout_visits"
+    assert refs["Clientes que vuelven a comprar"]["sample_unit"] == "orders"
+
+
+def test_a_permission_added_later_is_picked_up_with_a_new_token(monkeypatch):
+    from datetime import date
+
+    from labelbridge.connectors.shopify import ShopifyClient, ShopifyError
+
+    client = ShopifyClient.__new__(ShopifyClient)
+    client.auth_mode, client._token_at = "client_credentials", time.time() - 3600  # token de hace una hora
+    calls: list[bool] = []
+
+    def graphql(query, variables=None, _refresh=False, **kw):
+        calls.append(_refresh)
+        if not _refresh:
+            raise ShopifyError("Access denied for shopifyqlQuery field.", code="access_denied")
+        return {"shopifyqlQuery": {"tableData": {"rows": [{"day": "2026-09-28", "sessions": 3}]}, "parseErrors": []}}
+
+    monkeypatch.setattr(client, "graphql", graphql)
+    assert client.store_sessions(date(2026, 9, 28), date(2026, 10, 4))["2026-09-28"].sessions == 3
+    assert calls == [False, True]
+    client._token_at = time.time()  # token recién pedido: no se insiste
+    calls.clear()
+    with pytest.raises(ShopifyError):
+        client.store_sessions(date(2026, 9, 28), date(2026, 10, 4))
+    assert calls == [False]

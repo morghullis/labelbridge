@@ -3,6 +3,11 @@ envío), lo que hay que arreglar, lo que va bien, la comparación con referencia
 
 Aquí solo se calcula: sin pantalla ni red (la consulta la hace ShopifyService.weekly_report). La pantalla «Reporte» y
 el asistente muestran lo mismo. Las semanas van de lunes a domingo en la hora de la tienda.
+
+Las visitas (y con ellas la conversión y los pagos abandonados) salen de las estadísticas de Shopify (ShopifyQL, permiso
+read_reports): solo personas, sin bots. Si la web de la tienda está fuera de Shopify (p. ej. otra web que manda al pago
+de Shopify), Shopify solo ve las visitas que llegan al pago: entonces no se calcula la conversión de la web (sería
+falsa) y lo que se mide es quién llegó al pago y no compró.
 """
 
 from __future__ import annotations
@@ -12,7 +17,7 @@ import statistics
 from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass, field
 from functools import partial
-from datetime import datetime, timedelta, timezone, tzinfo
+from datetime import date, datetime, timedelta, timezone, tzinfo
 from typing import Any, Callable
 
 from ..i18n import N_, decimal, language, tr
@@ -58,10 +63,21 @@ query LabelBridgeReport($first: Int!, $after: String, $query: String!) {
 REPORT_QUERY_NO_CUSTOMERS = REPORT_QUERY.replace("      customer { id numberOfOrders }\n", "")
 TIMEZONE_QUERY = "query LabelBridgeShop { shop { ianaTimezone timezoneOffsetMinutes currencyCode } }"
 
+# Las visitas de la tienda por día (estadísticas de Shopify en ShopifyQL; necesita read_reports).
+SESSIONS_QUERY = """
+query LabelBridgeSessions($query: String!) {
+  shopifyqlQuery(query: $query) { tableData { columns { name } rows } parseErrors }
+}
+"""
+
+REPORT_VERSION = 2  # sube cuando el reporte calcula algo nuevo: los guardados con otra versión se vuelven a armar
 HISTORY_WEEKS = 4  # el promedio con el que se compara la semana
 MIN_ORDERS = 5  # con menos pedidos, un solo pedido mueve demasiado los porcentajes: no se sacan conclusiones de ellos
 TEST_TITLES = {"test", "prueba", "test order", "pedido de prueba"}  # productos que delatan un pedido de prueba
 TEST_WORDS = re.compile(r"(?<![a-z])(test|prueba)s?(?![a-z])")  # «prueba-etiqueta» sí; «latest collection» no
+MIN_SESSIONS = 300  # visitas para comparar la conversión (la del sector es de menos del 1 %)
+MIN_CARTS = 20  # carritos o visitas al pago para comparar cuántos se abandonan
+CHECKOUT_ONLY_SHARE = 0.5  # si la mitad de las visitas llega al pago, la web está fuera de Shopify (normal: 3–10 %)
 SHIP_TARGET_HOURS = 48  # meta propia: preparado en 2 días
 LATE_GRACE_HOURS = 24  # una entrega cuenta como atrasada un día después de la fecha estimada
 CHANNELS = {
@@ -100,6 +116,62 @@ def _money(order: dict, field_name: str) -> float:
         return float(money.get("amount") or 0)
     except (TypeError, ValueError):
         return 0.0
+
+
+# --- las visitas (estadísticas de Shopify) ---------------------------------------------------------------------------
+@dataclass
+class Funnel:
+    """Visitas de un día o de una semana: cuántas pusieron algo en el carrito, llegaron al pago y compraron."""
+
+    sessions: int = 0
+    carts: int = 0
+    checkouts: int = 0
+    completed: int = 0
+
+    def __add__(self, other: "Funnel") -> "Funnel":
+        return Funnel(self.sessions + other.sessions, self.carts + other.carts, self.checkouts + other.checkouts,
+                      self.completed + other.completed)
+
+
+SESSION_COLUMNS = {"sessions": "sessions", "sessions_with_cart_additions": "carts",
+                   "sessions_that_reached_checkout": "checkouts", "sessions_that_completed_checkout": "completed"}
+
+
+def sessions_shopifyql(since: date, until: date) -> str:
+    """Las visitas de personas (sin bots) por día, de `since` a `until` inclusive, en la hora de la tienda."""
+    return (f"FROM sessions SHOW {', '.join(SESSION_COLUMNS)} WHERE human_or_bot_session = 'human' "
+            f"TIMESERIES day SINCE {since.isoformat()} UNTIL {until.isoformat()}")
+
+
+def parse_sessions(table: dict | None) -> dict[str, Funnel]:
+    """Las filas de ShopifyQL (objetos por columna o listas en el orden de las columnas) por día «AAAA-MM-DD»."""
+    table = table or {}
+    names = [str((column or {}).get("name") or "") for column in table.get("columns") or []]
+    days: dict[str, Funnel] = {}
+    for row in table.get("rows") or []:
+        if isinstance(row, dict):
+            values = row
+        elif isinstance(row, (list, tuple)):
+            values = dict(zip(names, row))
+        else:
+            continue  # una fila que no se entiende no rompe el reporte
+        day = str(values.get("day") or "")[:10]
+        if not day:
+            continue
+        funnel = Funnel()
+        for column, attribute in SESSION_COLUMNS.items():
+            try:
+                setattr(funnel, attribute, int(float(values.get(column) or 0)))
+            except (TypeError, ValueError):
+                pass  # un valor vacío es 0 (días sin visitas)
+        days[day] = funnel
+    return days
+
+
+def checkout_only(days: dict[str, Funnel]) -> bool:
+    """La web de la tienda está fuera de Shopify: casi todas las visitas que Shopify ve ya están en el pago."""
+    total = sum(days.values(), Funnel())
+    return total.sessions >= 10 and total.checkouts >= total.sessions * CHECKOUT_ONLY_SHARE
 
 
 def facts_of(order: dict, now: float, later_orders: int = 0) -> OrderFacts | None:
@@ -197,6 +269,11 @@ class WeekNumbers:
     median_ship_hours: float | None = None
     shipping_margin: float | None = None  # envío cobrado − costo de guías (pedidos con guía comprada en Shopify)
     late: int = 0
+    visits: int | None = None  # visitas de personas (estadísticas de Shopify)
+    conversion: float | None = None  # % de visitas que compraron (solo si la web es la de Shopify)
+    abandonment: float | None = None  # % de carritos (o visitas al pago) que no terminaron en compra
+    abandonment_base: int = 0  # cuántos carritos o visitas al pago hubo
+    completed: int = 0  # visitas que compraron
     daily_sales: list[float] = field(default_factory=lambda: [0.0] * 7)
     daily_orders: list[int] = field(default_factory=lambda: [0] * 7)
 
@@ -245,6 +322,22 @@ def week_numbers(facts: list[OrderFacts], start: datetime, now: float,
     return numbers
 
 
+def apply_funnel(numbers: WeekNumbers, days: dict[str, Funnel], start: datetime, day_count: int,
+                 only_checkout: bool) -> None:
+    """Las visitas de esa semana (sus primeros `day_count` días) en los números de la semana."""
+    week = sum((days.get((start.date() + timedelta(days=offset)).isoformat(), Funnel())
+                for offset in range(day_count)), Funnel())
+    numbers.visits = week.sessions
+    numbers.completed = week.completed
+    if not only_checkout and week.sessions:
+        numbers.conversion = round(week.completed * 100 / week.sessions, 2)
+    # Lo que se abandona: los carritos (web en Shopify) o las visitas que llegaron al pago (web fuera de Shopify).
+    base = week.checkouts if only_checkout else week.carts
+    if base:
+        numbers.abandonment_base = base
+        numbers.abandonment = round(max(0.0, 100 - week.completed * 100 / base), 1)
+
+
 # --- el reporte ---------------------------------------------------------------------------------------------------
 @dataclass
 class Metric:
@@ -290,14 +383,15 @@ class Comparison:
     detail: str
     better: str = "up"
     note: str = ""  # p. ej. por qué no hay dato de la tienda
-    sample: int | None = None  # pedidos en que se basa un porcentaje: con menos de MIN_ORDERS no se juzga
+    sample: int | None = None  # en cuántos pedidos (o visitas) se basa un porcentaje
+    min_sample: int = MIN_ORDERS  # con menos, no se juzga
 
     @property
     def verdict(self) -> str:
-        """above | below | near (±10 % de la referencia) | few (pocos pedidos para juzgar) | unknown."""
+        """above | below | near (±10 % de la referencia) | few (muy pocos datos para juzgar) | unknown."""
         if self.store is None or not self.reference:
             return "unknown"
-        if self.sample is not None and self.sample < MIN_ORDERS:
+        if self.sample is not None and self.sample < self.min_sample:
             return "few"
         ratio = self.store / self.reference
         if 0.9 <= ratio <= 1.1:
@@ -324,6 +418,8 @@ class WeeklyReport:
     plan: list[str]
     missing: list[str] = field(default_factory=list)  # datos que faltaron y por qué
     language: str = ""  # el idioma de sus textos (uno guardado en otro idioma se vuelve a armar)
+    visits_source: str = ""  # "" sin visitas | "online_store" | "checkout_only" (la web está fuera de Shopify)
+    version: int = 0  # REPORT_VERSION con que se armó
 
     def metric(self, key: str) -> Metric | None:
         return next((m for m in self.metrics if m.key == key), None)
@@ -371,7 +467,10 @@ def week_start(now: float, tz: tzinfo, weeks_back: int = 1) -> datetime:
 
 
 def build_report(orders: list[dict], now: float, tz: tzinfo, currency: str = "USD", weeks_back: int = 1,
-                 missing: list[str] | None = None) -> WeeklyReport:
+                 missing: list[str] | None = None, sessions: dict[str, Funnel] | None = None,
+                 sessions_note: str = "") -> WeeklyReport:
+    """`sessions`: las visitas por día (parse_sessions) o None si no se pudieron leer; `sessions_note` dice por qué
+    (por defecto, que falta el permiso read_reports)."""
     later = _later_orders(orders)
     facts = [f for f in (facts_of(order, now, later.get(index, 0)) for index, order in enumerate(orders))
              if f is not None]
@@ -383,10 +482,18 @@ def build_report(orders: list[dict], now: float, tz: tzinfo, currency: str = "US
     current = week_numbers(facts, start, now, length)
     previous = week_numbers(facts, start - timedelta(weeks=1), now, length)
     history = [week_numbers(facts, start - timedelta(weeks=back), now, length) for back in range(1, HISTORY_WEEKS + 1)]
-    metrics = _metrics(current, previous, history)
+    only_checkout = checkout_only(sessions) if sessions else False
+    # Visitas por días enteros: en la semana en curso, hasta ayer (hoy a medias no se compara con días completos).
+    day_count = 7 if complete else min(7, length.days)
+    if sessions is not None and day_count:
+        weeks = [(0, current), (1, previous)] + [(back, numbers) for back, numbers in enumerate(history, start=1)]
+        for back, numbers in weeks:
+            apply_funnel(numbers, sessions, start - timedelta(weeks=back), day_count, only_checkout)
+    metrics = _metrics(current, previous, history, only_checkout)
     week = [f for f in facts if start.timestamp() <= f.created < (start + length).timestamp() and not f.cancelled]
     money = partial(money_text, currency=currency)
     findings, strengths = _findings(current, previous, history, week, metrics, complete, money, currency)
+    _funnel_findings(current, only_checkout, findings, strengths)
     notes = list(missing or [])
     if current.orders and current.shipped_on_time is None and any(f.fulfilled for f in week):
         notes.append(tr("Preparados en 2 días: tus pedidos se marcan preparados sin número de seguimiento, así que no "
@@ -408,10 +515,12 @@ def build_report(orders: list[dict], now: float, tz: tzinfo, currency: str = "US
         regions=Counter(f.region for f in week if f.region).most_common(5),
         findings=findings,
         strengths=strengths,
-        comparisons=_comparisons(current, currency),
+        comparisons=_comparisons(current, currency, sessions is not None, only_checkout, sessions_note),
         plan=_plan(findings),
         missing=notes,
         language=language(),
+        visits_source="" if sessions is None else ("checkout_only" if only_checkout else "online_store"),
+        version=REPORT_VERSION,
     )
     return report
 
@@ -437,7 +546,9 @@ def _average(history: list[WeekNumbers], pick: Callable[[WeekNumbers], float | N
     return round(sum(values) / len(values), 2) if values else None
 
 
-def _metrics(current: WeekNumbers, previous: WeekNumbers, history: list[WeekNumbers]) -> list[Metric]:
+def _metrics(current: WeekNumbers, previous: WeekNumbers, history: list[WeekNumbers],
+             only_checkout: bool = False) -> list[Metric]:
+    abandoned = N_("Pagos sin terminar") if only_checkout else N_("Carritos sin comprar")
     specs: list[tuple[str, str, str, str, Callable[[WeekNumbers], float | None]]] = [
         ("sales", N_("Ventas"), "money", "up", lambda w: w.sales),
         ("orders", N_("Pedidos"), "count", "up", lambda w: w.orders),
@@ -448,6 +559,9 @@ def _metrics(current: WeekNumbers, previous: WeekNumbers, history: list[WeekNumb
         ("discounts", N_("Pedidos con descuento"), "percent", "down", lambda w: w.discount_share),
         ("ship_margin", N_("Envío cobrado − guías"), "money", "up", lambda w: w.shipping_margin),
         ("late", N_("Entregas atrasadas"), "count", "down", lambda w: w.late),
+        ("visits", N_("Visitas"), "count", "up", lambda w: w.visits),
+        ("conversion", N_("Visitas que compran"), "percent", "up", lambda w: w.conversion),
+        ("abandonment", abandoned, "percent", "down", lambda w: w.abandonment),
     ]
     return [Metric(key, title, unit, pick(current), pick(previous), _average(history, pick), better)
             for key, title, unit, better, pick in specs]
@@ -623,6 +737,49 @@ def _findings(current: WeekNumbers, previous: WeekNumbers, history: list[WeekNum
     return findings, strengths
 
 
+def _funnel_findings(current: WeekNumbers, only_checkout: bool, findings: list[Finding],
+                     strengths: list[Finding]) -> None:
+    """Lo que dicen las visitas: cuántos se van sin pagar y (si la web es la de Shopify) cuántas visitas compran."""
+    cart = BENCHMARKS["cart_abandonment"]
+    if current.abandonment is not None and current.abandonment_base >= MIN_CARTS:
+        reference = tr("referencia de carritos abandonados: {0}, {1}; estimación", pct(cart.value, 2), cart.source)
+        if only_checkout:
+            evidence = tr("De {0} visitas que llegaron al pago, {1} compraron: el {2} se fue sin pagar ({3}).",
+                          current.abandonment_base, current.completed, pct(current.abandonment), reference)
+        else:
+            evidence = tr("De {0} visitas que pusieron algo en el carrito, {1} compraron: el {2} no terminó la compra "
+                          "({3}).", current.abandonment_base, current.completed, pct(current.abandonment), reference)
+        if current.abandonment >= cart.value + 10:
+            title = (tr("Mucha gente llega a pagar y no compra") if only_checkout
+                     else tr("Muchos carritos se quedan sin comprar"))
+            findings.append(Finding("abandonment", "critical" if current.abandonment >= 85 else "watch", title,
+                                    evidence, [
+                tr("Activa el correo automático de pago abandonado (en Shopify, app Messaging → Automatizaciones): "
+                   "le llega solo a quien dejó su email y no pagó."),
+                tr("Haz una compra de prueba como cliente: que el envío y el total no sorprendan y que haya Shop Pay, "
+                   "PayPal o Apple Pay."),
+                tr("Pon junto al botón de pagar la garantía, las devoluciones y cuándo llega el pedido."),
+            ], 50 + (current.abandonment - cart.value) / 2))
+        elif current.abandonment <= cart.value - 10:
+            strengths.append(Finding("abandonment_low", "strength", tr("Pocos se van sin pagar"), evidence, [], 30))
+
+    conversion = BENCHMARKS["conversion_jewelry"]
+    if current.conversion is not None and (current.visits or 0) >= MIN_SESSIONS:
+        evidence = tr("Compró el {0} de {1} visitas (referencia de joyería en línea: {2}, {3}; estimación).",
+                      pct(current.conversion, 2), current.visits, pct(conversion.value, 2), conversion.source)
+        if current.conversion < conversion.value / 2:
+            findings.append(Finding("low_conversion", "watch", tr("Pocas visitas terminan en compra"), evidence, [
+                tr("Mira en Shopify → Estadísticas por qué páginas entran las visitas y mejora sus fotos y textos."),
+                tr("Muestra en cada producto el precio con envío y cuándo llega."),
+            ], 45))
+        elif current.conversion >= conversion.value * 1.5:
+            strengths.append(Finding("good_conversion", "strength", tr("Las visitas compran"), evidence, [
+                tr("Trae más visitas: con esta conversión, cada visita nueva rinde."),
+            ], 35))
+    findings.sort(key=lambda f: (f.severity != "critical", -f.weight))
+    strengths.sort(key=lambda f: -f.weight)
+
+
 def _clean(text: str, limit: int = 60) -> str:
     """Un nombre de la tienda dentro de un texto del reporte: una sola línea, sin caracteres de control y corto."""
     flat = " ".join("".join(ch if ch.isprintable() else " " for ch in str(text)).split())
@@ -633,18 +790,39 @@ def history_orders(history: list[WeekNumbers]) -> int:
     return sum(week.orders for week in history)
 
 
-def _comparisons(current: WeekNumbers, currency: str = "USD") -> list[Comparison]:
-    def make(key: str, store: float | None, better: str = "up", note: str = "", sample: int | None = None) -> Comparison:
+def _comparisons(current: WeekNumbers, currency: str = "USD", has_visits: bool = False, only_checkout: bool = False,
+                 visits_note: str = "") -> list[Comparison]:
+    def make(key: str, store: float | None, better: str = "up", note: str = "", sample: int | None = None,
+             min_sample: int = MIN_ORDERS, few: str = "") -> Comparison:
         b = BENCHMARKS[key]
-        if store is not None and sample is not None and sample < MIN_ORDERS:
-            note = tr("Con {0} pedido(s) este porcentaje todavía no dice mucho: se compara desde {1} pedidos.",
-                      sample, MIN_ORDERS)
+        if store is not None and sample is not None and sample < min_sample:
+            note = few or tr("Con {0} pedido(s) este porcentaje todavía no dice mucho: se compara desde {1} pedidos.",
+                             sample, min_sample)
         return Comparison(b.key, tr(b.title), store, b.value, b.unit, b.source, b.url, b.checked, tr(b.detail), better,
-                          note, sample)
+                          note, sample, min_sample)
 
-    no_permission = tr("Para compararla hace falta el permiso de informes de Shopify (read_reports).")
+    no_visits = visits_note or tr("Para compararla hace falta el permiso de informes de Shopify (read_reports).")
+    outside = tr("Tu web está fuera de Shopify: Shopify solo ve las visitas que llegan al pago, así que la conversión "
+                 "de tu web no se mide aquí.")
     other_currency = tr("La referencia está en dólares y tu tienda vende en {0}: no se comparan.", currency)
     aov = current.aov if currency == "USD" else None
+    if not has_visits:
+        conversion = make("conversion_jewelry", None, note=no_visits)
+        abandonment = make("cart_abandonment", None, better="down", note=no_visits)
+    else:
+        quiet = "" if current.visits else tr("Shopify no registró visitas esta semana.")
+        conversion = make("conversion_jewelry", current.conversion, note=outside if only_checkout else quiet,
+                          sample=current.visits, min_sample=MIN_SESSIONS,
+                          few=tr("Con {0} visita(s) la conversión todavía no dice mucho: se compara desde {1}.",
+                                 current.visits, MIN_SESSIONS))
+        abandonment = make("cart_abandonment", current.abandonment, better="down",
+                           note=tr("Tu web está fuera de Shopify: aquí cuenta quién llegó al pago y no compró.")
+                           if only_checkout else ("" if current.abandonment_base else tr("Sin carritos esta semana.")),
+                           sample=current.abandonment_base, min_sample=MIN_CARTS,
+                           few=(tr("Con {0} visita(s) al pago este porcentaje todavía no dice mucho: se compara "
+                                   "desde {1}.", current.abandonment_base, MIN_CARTS) if only_checkout else
+                                tr("Con {0} carrito(s) este porcentaje todavía no dice mucho: se compara desde {1}.",
+                                   current.abandonment_base, MIN_CARTS)))
     return [
         make("aov_jewelry", aov, note="" if currency == "USD" else other_currency),
         make("aov_global", aov, note="" if currency == "USD" else other_currency),
@@ -652,8 +830,8 @@ def _comparisons(current: WeekNumbers, currency: str = "USD") -> list[Comparison
              note="" if current.returning_share is not None else tr("Sin el permiso de clientes no se sabe quién vuelve."),
              sample=current.orders),
         make("returns", current.refund_share, better="down", sample=current.orders),
-        make("conversion_jewelry", None, note=no_permission),
-        make("cart_abandonment", None, better="down", note=no_permission),
+        conversion,
+        abandonment,
     ]
 
 

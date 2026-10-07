@@ -29,6 +29,7 @@ WEEKS = ((1, N_("Semana pasada")), (0, N_("Esta semana (hasta hoy)")), (2, N_("H
 DAYS = (N_("Lun"), N_("Mar"), N_("Mié"), N_("Jue"), N_("Vie"), N_("Sáb"), N_("Dom"))
 KPIS = ("sales", "orders", "aov", "returning", "on_time")
 SEVERITY = {"critical": N_("Importante"), "watch": N_("Para revisar"), "strength": N_("Va bien")}
+VISIT_COMPARISONS = {"conversion_jewelry", "cart_abandonment"}  # se juzgan por visitas, no por pedidos
 STALE_AFTER = 3600  # al volver a la pestaña, lo mostrado hace más de 1 h se vuelve a leer
 
 
@@ -127,7 +128,7 @@ def _verdict(item: Comparison) -> tuple[str, str]:
     if verdict == "unknown":
         return "off", tr("Sin dato")
     if verdict == "few":
-        return "off", tr("Pocos pedidos")
+        return "off", tr("Pocas visitas") if item.key in VISIT_COMPARISONS else tr("Pocos pedidos")
     if verdict == "near":
         return "info", tr("Parecido")
     good = (verdict == "above") == (item.better == "up")

@@ -2,6 +2,14 @@
 
 Cada versión publicada muestra estas notas en la ventana de actualización de la app y en la página de descargas.
 
+## 1.17.1
+
+- **El reporte semanal ahora ve las visitas** (con el permiso nuevo `read_reports`; agrégalo con **Copiar permisos** en el Dev Dashboard y publica la versión de la app). Cuenta solo personas, no bots:
+  - **Quién llega a pagar y no compra**, comparado con los carritos abandonados del sector (Baymard). Si pasa mucho, aparece primero en **Lo que hay que arreglar**, con pasos: el correo automático de pago abandonado de Shopify (app Messaging), revisar el pago como cliente y mostrar garantía y tiempos junto al botón de pagar.
+  - **Visitas que compran**, comparado con la conversión de joyería en línea (Dynamic Yield).
+  - Si tu web está fuera de Shopify (como una web propia que manda al pago de Shopify), Shopify solo ve las visitas que llegan al pago: el reporte lo detecta, no inventa una conversión de tu web y mide quién llegó al pago y no compró.
+- Sin el permiso, el reporte sale igual y dice cómo agregarlo (antes pedía ese permiso sin usarlo).
+
 ## 1.17.0
 
 - **Reporte semanal de la tienda** (pestaña nueva **Reporte**, en Operación). Cada lunes a las 8 (hora de la tienda) LabelBridge prepara el reporte de la semana que terminó y te avisa:

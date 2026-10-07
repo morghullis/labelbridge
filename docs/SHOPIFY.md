@@ -17,7 +17,7 @@ Desde 2026 Shopify **ya no permite crear apps personalizadas desde el admin** (l
    | Para… | Scopes |
    |---|---|
    | Comprar e imprimir las guías de Shopify Shipping (recomendado) | `read_orders`, `write_orders`, `read_merchant_managed_fulfillment_orders`, `write_merchant_managed_fulfillment_orders` |
-   | Opcionales (sin ellos lo demás funciona igual) | `read_products` (elegir productos en la guía manual), `read_inventory` (ver sus existencias), `read_shipping` (ver solo los servicios que Shopify ofrece en cada envío), `read_customers` (saber en «Ver pedido» si el cliente ya compró antes) |
+   | Opcionales (sin ellos lo demás funciona igual) | `read_products` (elegir productos en la guía manual), `read_inventory` (ver sus existencias), `read_shipping` (ver solo los servicios que Shopify ofrece en cada envío), `read_customers` (saber en «Ver pedido» si el cliente ya compró antes), `read_reports` (visitas y pagos sin terminar en el reporte semanal) |
    | Solo leer pedidos (etiqueta interna de LabelBridge) | `read_orders` |
    | Agregar un tag al pedido al imprimir | `write_orders` |
 
