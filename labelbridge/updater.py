@@ -306,7 +306,9 @@ $null = $setup.Handle  # sin esto PowerShell 5.1 no conserva el código de salid
 $setup.WaitForExit()
 "El instalador terminó con código $($setup.ExitCode)"
 Start-Sleep -Seconds 3
-if (-not (Get-Process -Name 'LabelBridge' -ErrorAction SilentlyContinue)) {
+# Solo la sesión de la persona: una copia de segundo plano (sesión 0, «Funcionar siempre») no cuenta como abierta.
+$mySession = (Get-Process -Id $PID).SessionId
+if (-not (Get-Process -Name 'LabelBridge' -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -eq $mySession })) {
     "Abriendo LabelBridge"
     Start-Process -FilePath $app -ArgumentList '--updated'
 }

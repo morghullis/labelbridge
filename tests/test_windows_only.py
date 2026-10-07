@@ -61,5 +61,11 @@ def test_windows_accepts_the_always_on_tasks():
         finally:
             always_on.remove_task(name)
         assert not always_on.task_exists(name)
+    # La de despertar, tal como la registra la app: sin contraseña (S4U).
+    always_on._register(name, always_on.wake_task_xml(user), user, None, always_on.LOGON_S4U)
+    try:
+        assert always_on.task_exists(name)
+    finally:
+        always_on.remove_task(name)
     status = always_on.status()
     assert status.sleep_minutes_ac is not None and isinstance(status.background, bool)

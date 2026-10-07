@@ -116,9 +116,9 @@ Filename: "{app}\{#AppExe}"; Parameters: "--updated"; Flags: nowait runasorigina
 [UninstallRun]
 ; «Funcionar siempre» (Ajustes → General): las tareas de Windows se quitan y, si LabelBridge trabajaba en segundo plano
 ; (sin sesión iniciada), se cierra para poder borrar sus archivos.
-Filename: "{sys}\schtasks.exe"; Parameters: "/Delete /TN ""LabelBridge - Sin sesión"" /F"; Flags: runhidden; RunOnceId: "RemoveBackgroundTask"
-Filename: "{sys}\schtasks.exe"; Parameters: "/Delete /TN ""LabelBridge - Despertar"" /F"; Flags: runhidden; RunOnceId: "RemoveWakeTask"
-Filename: "{sys}\taskkill.exe"; Parameters: "/IM LabelBridge.exe /F"; Flags: runhidden; RunOnceId: "CloseBackground"
+Filename: "{sys}\schtasks.exe"; Parameters: "/Delete /TN ""LabelBridge - Sin sesión ({username})"" /F"; Flags: runhidden; RunOnceId: "RemoveBackgroundTask"
+Filename: "{sys}\schtasks.exe"; Parameters: "/Delete /TN ""LabelBridge - Despertar ({username})"" /F"; Flags: runhidden; RunOnceId: "RemoveWakeTask"
+Filename: "{sys}\taskkill.exe"; Parameters: "/IM LabelBridge.exe /F /FI ""SESSION eq 0"""; Flags: runhidden; RunOnceId: "CloseBackground"
 ; El inicio automático lo gestiona la app (Ajustes); al desinstalar se elimina.
 Filename: "{sys}\reg.exe"; Parameters: "delete ""HKCU\Software\Microsoft\Windows\CurrentVersion\Run"" /v LabelBridge /f"; Flags: runhidden; RunOnceId: "RemoveAutostart"
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""LabelBridge API"""; Flags: runhidden; RunOnceId: "RemoveFirewallRule"; Check: IsAdminInstallMode
@@ -131,6 +131,7 @@ const
 
 var
   ShopPage: TInputQueryWizardPage;
+  BackgroundPaused: Boolean;
 
 { Cierra a la fuerza una LabelBridge que no terminó de cerrarse (solo en actualizaciones automáticas). }
 procedure ForceCloseApp();
@@ -139,6 +140,29 @@ var
 begin
   Exec(ExpandConstant('{sys}\taskkill.exe'), '/IM LabelBridge.exe /F', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Sleep(1500);
+end;
+
+{ «Funcionar siempre»: mientras se instala, la tarea «sin sesión» queda en pausa (no abre LabelBridge en segundo plano a
+  mitad de la copia de archivos) y se cierra la copia de segundo plano que hubiera (sesión 0). Al terminar, o si se
+  cancela, la tarea vuelve a quedar activa. Si la tarea no existe, schtasks falla sin más. }
+procedure PauseBackground(Pause: Boolean);
+var
+  ResultCode: Integer;
+  TaskName: String;
+begin
+  TaskName := 'LabelBridge - Sin sesión (' + GetUserNameString + ')';
+  if Pause then
+  begin
+    Exec(ExpandConstant('{sys}\schtasks.exe'), '/Change /TN "' + TaskName + '" /DISABLE', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    BackgroundPaused := ResultCode = 0;
+    Exec(ExpandConstant('{sys}\schtasks.exe'), '/End /TN "' + TaskName + '"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    Exec(ExpandConstant('{sys}\taskkill.exe'), '/IM LabelBridge.exe /F /FI "SESSION eq 0"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  end
+  else if BackgroundPaused then
+  begin
+    Exec(ExpandConstant('{sys}\schtasks.exe'), '/Change /TN "' + TaskName + '" /ENABLE', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    BackgroundPaused := False;
+  end;
 end;
 
 { Espera a que la app se cierre. Actualización automática (silenciosa): espera hasta 90 s y, si sigue abierta,
@@ -224,6 +248,13 @@ end;
 function InitializeSetup(): Boolean;
 begin
   Result := WaitForAppClosed(WizardSilent) and RemoveAdminInstall();
+  if Result then
+    PauseBackground(True);
+end;
+
+procedure DeinitializeSetup();
+begin
+  PauseBackground(False);  { también si se canceló: la tarea nunca queda en pausa }
 end;
 
 function InitializeUninstall(): Boolean;

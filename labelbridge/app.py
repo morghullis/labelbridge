@@ -128,6 +128,7 @@ def main(argv: list[str] | None = None) -> int:
 
         setup_logging()
         _install_exception_hooks()
+        _install_qt_message_handler()  # sin esto, una etiqueta que Windows rechaza se daría por impresa
         return background.run(argv)
 
     from PySide6.QtCore import QEvent
@@ -170,6 +171,9 @@ def main(argv: list[str] | None = None) -> int:
     i18n.set_language(i18n.choose("", hints.get("language", "")))
 
     instance = SingleInstance()
+    from . import background
+
+    background.release_hold()  # abrirla deja trabajar otra vez al segundo plano (al cerrar sesión o reiniciar)
     if "--restart" in argv:  # reinicio pedido por la app (p. ej. al cambiar el idioma)
         instance.wait_until_free(20)
     if not instance.acquire():
@@ -337,6 +341,13 @@ def _run(app, argv: list[str], hints: dict, instance) -> int:
         window.quitting = True
         app.quit()
 
+    def quit_from_menu() -> None:
+        """«Salir» elegido por la persona: tampoco trabaja el segundo plano hasta abrirla otra vez o reiniciar."""
+        from . import background
+
+        background.hold()
+        quit_app()
+
     def start_watchdog() -> None:
         # Si algo se queda colgado al cerrar, el proceso termina igual a los 20 s (la actualización espera a que la
         # app se cierre para instalar). Arranca solo cuando la salida es segura: si se cancela (una compra en curso),
@@ -381,7 +392,7 @@ def _run(app, argv: list[str], hints: dict, instance) -> int:
     tray = Tray(
         ctx,
         window.show_and_raise,
-        quit_app,
+        quit_from_menu,
         lambda: enqueue_test_label(ctx),
         check_updates=window.check_updates_now,
         message_clicked=tray_message_clicked,

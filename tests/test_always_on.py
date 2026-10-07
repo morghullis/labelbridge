@@ -1,146 +1,123 @@
-"""Funcionar siempre: el relevo entre la copia de segundo plano (sin sesión) y la app con ventana, el modo de segundo
-plano trabajando y cerrándose, las tareas de Windows bien formadas y la tarjeta de Ajustes."""
+"""Funcionar siempre: el equipo no se duerme solo mientras LabelBridge está abierto, se pone al día al volver de una
+suspensión, en la Mac se vuelve a abrir si se cierra por un error, y se actualiza sola en un momento tranquilo."""
 
 from __future__ import annotations
 
-import os
-import subprocess
-import sys
-import time
-import xml.etree.ElementTree as ET
-from pathlib import Path
-
 import pytest
 
-ROOT = Path(__file__).resolve().parent.parent
-NS = {"t": "http://schemas.microsoft.com/windows/2004/02/mit/task"}
-
-HOLDER = """
-import sys
-sys.path.insert(0, {root!r})
-from labelbridge.app import _ensure_qt_plugin_path
-_ensure_qt_plugin_path()
-from PySide6.QtCore import QCoreApplication
-from labelbridge.system.single_instance import BACKGROUND, SingleInstance
-app = QCoreApplication([])
-instance = SingleInstance(BACKGROUND, key={key!r})
-assert instance.acquire()
-instance.handoff_requested.connect(app.quit)
-print("ready", flush=True)
-app.exec()
-instance.release()
-print("bye", flush=True)
-"""
+from labelbridge.system import autostart, power
 
 
-def test_the_window_takes_over_from_the_background_copy(qapp):
-    from labelbridge.system.single_instance import APP, BACKGROUND, SingleInstance
+class FakeProcess:
+    def __init__(self, args, **_kwargs) -> None:
+        self.args = args
+        self.terminated = False
 
-    key = f"LabelBridge-prueba-{os.getpid()}-{time.time_ns()}"
-    env = {**os.environ, "QT_QPA_PLATFORM": "offscreen"}
-    holder = subprocess.Popen([sys.executable, "-c", HOLDER.format(root=str(ROOT), key=key)], stdout=subprocess.PIPE,
-                              stderr=subprocess.STDOUT, text=True, env=env)
-    try:
-        assert holder.stdout.readline().strip() == "ready"
-        assert not SingleInstance(BACKGROUND, key=key).acquire()  # otra de segundo plano no la reemplaza
-        window = SingleInstance(APP, key=key)
-        assert window.acquire()  # la app pidió el relevo, la de segundo plano se cerró y la app quedó
-        assert holder.wait(timeout=30) == 0 and "bye" in holder.stdout.read()
-        assert not SingleInstance(BACKGROUND, key=key).acquire()  # con la app abierta, el segundo plano no arranca
-        window.release()
-    finally:
-        if holder.poll() is None:
-            holder.kill()
+    def terminate(self) -> None:
+        self.terminated = True
 
 
-def test_the_background_mode_runs_and_closes_cleanly(qapp, home, caplog):
-    import logging
-
-    from labelbridge import background
-
-    caplog.set_level(logging.INFO)
-    key = f"LabelBridge-prueba-{os.getpid()}-{time.time_ns()}"
-    from labelbridge import i18n
-
-    try:
-        assert background.run(["LabelBridge", "--background", "--exit-after", "0.5", "--instance-key", key],
-                              app=qapp) == 0
-    finally:
-        i18n.set_language("es")  # usa el idioma de su configuración: no debe cambiar el de las demás pruebas
-    assert "trabaja en segundo plano" in caplog.text and "se cerró" in caplog.text
+def test_the_mac_stays_awake_while_the_app_is_open(monkeypatch):
+    launched: list[FakeProcess] = []
+    monkeypatch.setattr(power.sys, "platform", "darwin")
+    monkeypatch.setattr(power.subprocess, "Popen", lambda args, **kw: launched.append(FakeProcess(args)) or launched[-1])
+    keep = power.KeepAwake()
+    assert keep.apply(True) and launched[0].args[:4] == ["/usr/bin/caffeinate", "-i", "-s", "-w"]
+    assert keep.apply(True) and len(launched) == 1  # una sola vez
+    assert keep.apply(False) is False and launched[0].terminated  # apagado en Ajustes: vuelve a dormirse sola
 
 
-def test_the_wake_task_only_wakes_the_pc():
-    from labelbridge import app
+def test_windows_asks_not_to_sleep_without_keeping_the_screen_on(monkeypatch):
+    import ctypes
 
-    assert app.main(["LabelBridge", "--wake"]) == 0  # nada más: no abre ventanas ni toca datos
+    calls: list[int] = []
 
+    class Kernel:
+        @staticmethod
+        def SetThreadExecutionState(flags):  # noqa: N802
+            calls.append(flags)
+            return 1
 
-def _parse(xml: str):
-    return ET.fromstring(xml.replace('encoding="UTF-16"', ""))
-
-
-def test_the_background_task_starts_at_boot_and_every_five_minutes():
-    from labelbridge.system import always_on
-
-    task = _parse(always_on.background_task_xml("PC-BODEGA\\Juan & Ana"))
-    triggers = task.find("t:Triggers", NS)
-    assert triggers.find("t:BootTrigger", NS) is not None
-    assert triggers.find("t:TimeTrigger/t:Repetition/t:Interval", NS).text == "PT5M"
-    principal = task.find("t:Principals/t:Principal", NS)
-    assert principal.find("t:UserId", NS).text == "PC-BODEGA\\Juan & Ana"  # escapado y de vuelta igual
-    assert principal.find("t:LogonType", NS).text == "Password"  # corre sin sesión, con las claves de la cuenta
-    settings = task.find("t:Settings", NS)
-    assert settings.find("t:MultipleInstancesPolicy", NS).text == "IgnoreNew"
-    assert settings.find("t:DisallowStartIfOnBatteries", NS).text == "false"
-    assert settings.find("t:ExecutionTimeLimit", NS).text == "PT0S"  # sin límite: trabaja hasta el relevo
-    assert task.find("t:Actions/t:Exec/t:Arguments", NS).text == "--background"
+    monkeypatch.setattr(power.sys, "platform", "win32")
+    monkeypatch.setattr(ctypes, "windll", type("WinDLL", (), {"kernel32": Kernel})(), raising=False)
+    keep = power.KeepAwake()
+    assert keep.apply(True)
+    assert calls == [power.ES_CONTINUOUS | power.ES_SYSTEM_REQUIRED]  # sin ES_DISPLAY_REQUIRED: la pantalla se apaga
+    keep.release()
+    assert calls[-1] == power.ES_CONTINUOUS
 
 
-def test_the_wake_task_wakes_the_pc_without_a_password():
-    from labelbridge.system import always_on
-
-    task = _parse(always_on.wake_task_xml("PC\\juan"))
-    assert task.find("t:Settings/t:WakeToRun", NS).text == "true"
-    assert task.find("t:Principals/t:Principal/t:LogonType", NS).text == "S4U"
-    assert task.find("t:Triggers/t:TimeTrigger/t:Repetition/t:Interval", NS).text == "PT10M"
-    assert task.find("t:Triggers/t:BootTrigger", NS) is None
-    assert task.find("t:Actions/t:Exec/t:Arguments", NS).text == "--wake"
+def test_waking_up_from_sleep_catches_up_at_once():
+    gaps: list[float] = []
+    watcher = power.ResumeWatcher(gaps.append, every=30)
+    start = watcher.last
+    assert not watcher.check(start + 31)  # una vuelta normal
+    assert watcher.check(start + 31 + 3600)  # una hora suspendido
+    assert gaps and gaps[0] == pytest.approx(3600)
 
 
-def test_the_settings_card_shows_each_piece_and_asks_before_changing(qapp, monkeypatch):
-    from labelbridge.system import always_on
-    from labelbridge.ui import always_on_card
-
-    monkeypatch.setattr(always_on, "status", lambda: always_on.Status(30, False, True))
-    card = always_on_card.AlwaysOnCard()
-    deadline = time.time() + 5
-    while card.status is None and time.time() < deadline:
-        qapp.processEvents()
-    assert card.status is not None
-    sleep_pill, sleep_btn = card.rows["sleep"]
-    assert "30 min" in sleep_pill.text() and sleep_btn.text() == "Aplicar" and sleep_btn.isEnabled()
-    assert card.rows["wake"][1].text() == "Activar" and card.rows["background"][1].text() == "Quitar"
-    applied: list[int] = []
-    monkeypatch.setattr(always_on, "prevent_sleep", lambda: applied.append(1))
-    monkeypatch.setattr(always_on_card, "confirm", lambda *a: False)
-    card._act("sleep")  # sin confirmar, no se cambia nada en Windows
-    qapp.processEvents()
-    assert applied == []
+def test_the_mac_reopens_the_app_after_a_crash_but_not_after_quitting(tmp_path):
+    agent = autostart.mac_agent(tmp_path / "LabelBridge.app")
+    assert agent["KeepAlive"] == {"SuccessfulExit": False} and agent["RunAtLoad"] is True
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="fuera de Windows")
-def test_outside_windows_there_is_nothing_to_configure():
-    from labelbridge.system import always_on
+# --- actualizar sola ---------------------------------------------------------------------------
 
-    assert not always_on.supported()
+@pytest.fixture()
+def auto(core, monkeypatch):
+    from test_orders import _ui_context
+
+    from labelbridge.ui import auto_update
+    from labelbridge.updater import UpdateInfo
+
+    ctx = _ui_context(core)
+    events: dict = {"downloads": [], "installs": [], "quits": 0, "announced": []}
+
+    class Window:
+        def quit_app(self) -> None:
+            events["quits"] += 1
+
+        def announce_update(self, info, prompt=True, automatic=True) -> None:
+            events["announced"].append((info.version, automatic))
+
+    monkeypatch.setattr(auto_update.updater, "can_install", lambda: True)
+    monkeypatch.setattr(auto_update.updater, "download",
+                        lambda info, *a, **k: events["downloads"].append(info.version) or "/tmp/LabelBridge-Setup.exe")
+    monkeypatch.setattr(auto_update.updater, "install_and_restart", lambda path: events["installs"].append(str(path)))
+    monkeypatch.setattr(auto_update, "run_async", lambda fn, done, failed=None: done(fn()))
+    updater = auto_update.AutoUpdater.__new__(auto_update.AutoUpdater)
+    auto_update.QObject.__init__(updater)
+    updater.window, updater.ctx, updater.info, updater.installer = Window(), ctx, None, None
+    updater.timer = auto_update.QTimer(updater)
+    info = UpdateInfo(version="99.0.0", url="https://x/y.exe", size=1, notes="- x", sha256="0" * 64)
+    return updater, ctx, events, info
 
 
-def test_the_status_reads_the_sleep_minutes_windows_gives(monkeypatch):
-    from labelbridge.system import always_on, windows_admin
+def test_a_new_version_installs_itself_when_nothing_is_happening(auto):
+    updater, ctx, events, info = auto
+    assert updater.offer(info) and events["downloads"] == ["99.0.0"]
+    assert events["installs"] and events["quits"] == 1
+    assert "99.0.0" in ctx.store.kv_get("update:installed")  # al abrirse: las novedades
 
-    monkeypatch.setattr(windows_admin, "power_settings", lambda: {"sleep_after_minutes_plugged": 0,
-                                                                  "sleep_after_minutes_battery": 15})
-    monkeypatch.setattr(always_on, "task_exists", lambda name: name == always_on.WAKE_TASK)
-    status = always_on.status()
-    assert status.never_sleeps and status.wake and not status.background
+
+def test_it_waits_while_printing_and_respects_the_setting(auto, monkeypatch):
+    updater, ctx, events, info = auto
+    monkeypatch.setattr(ctx.store, "working_now", lambda now=None: 1)  # una guía imprimiéndose
+    assert updater.offer(info) and events["installs"] == [] and updater.timer.isActive()
+    monkeypatch.setattr(ctx.store, "working_now", lambda now=None: 0)
+    assert updater.try_install() and events["quits"] == 1
+    updater.info = None
+    ctx.cfg.data.general.auto_install_updates = False
+    assert not updater.offer(info)  # apagado en Ajustes: se pregunta como antes
+    ctx.cfg.data.general.auto_install_updates = True
+    ctx.store.kv_set("update:auto_failed", "99.0.0")
+    assert not updater.offer(info)  # esa versión ya falló sola: decide la persona
+
+
+def test_jobs_waiting_for_a_retry_later_do_not_block_updates(core):
+    from labelbridge.models import JobRequest
+
+    job, _ = core.store.add(JobRequest(external_id="x", title="Guía", content=b"^XA^XZ", format="zpl"), "shopify")
+    assert core.store.working_now() == 1  # lista para imprimirse ya
+    core.store._conn.execute("UPDATE jobs SET next_attempt_at=? WHERE id=?", (job["created_at"] + 3600, job["id"]))
+    assert core.store.working_now(now=job["created_at"]) == 0  # espera un reintento en una hora

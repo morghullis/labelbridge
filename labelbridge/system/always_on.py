@@ -4,9 +4,9 @@ Tres piezas, cada una la activa la persona en Ajustes → General → «Funciona
 
 - **No suspenderse enchufada:** la energía de Windows sin suspensión ni hibernación con corriente, y cerrar la tapa
   no hace nada (powercfg; si Windows lo pide, con permiso de administrador).
-- **Despertarse si la suspenden:** la tarea «LabelBridge - Despertar» despierta la PC cada 10 minutos (temporizador de
+- **Despertarse si la suspenden:** la tarea «LabelBridge - Despertar (cuenta)» despierta la PC cada 10 minutos (temporizador de
   activación); LabelBridge, que seguía abierta, retoma y no la deja volver a dormirse sola. No necesita contraseña.
-- **Sin sesión iniciada:** la tarea «LabelBridge - Sin sesión» abre LabelBridge en segundo plano al encender el equipo
+- **Sin sesión iniciada:** la tarea «LabelBridge - Sin sesión (cuenta)» abre LabelBridge en segundo plano al encender el equipo
   y cada 5 minutos (si ya está abierta, termina enseguida). Corre con la cuenta de la persona aunque no haya iniciado
   sesión, así usa la misma configuración y las mismas claves: por eso Windows guarda la contraseña de esa cuenta en la
   tarea. La pide Windows en su propia ventana de seguridad; LabelBridge no la guarda ni la ve después.
@@ -29,8 +29,13 @@ from ..i18n import tr
 
 log = logging.getLogger(__name__)
 
-BACKGROUND_TASK = "LabelBridge - Sin sesión"
-WAKE_TASK = "LabelBridge - Despertar"
+def _task_name(what: str) -> str:
+    """Una tarea por cuenta de Windows (dos cuentas en la misma PC no se pisan): «LabelBridge - Sin sesión (juan)»."""
+    return f"LabelBridge - {what} ({os.environ.get('USERNAME', 'usuario')})"
+
+
+BACKGROUND_TASK = _task_name("Sin sesión")
+WAKE_TASK = _task_name("Despertar")
 BACKGROUND_EVERY_MINUTES = 5
 WAKE_EVERY_MINUTES = 10
 # Task Scheduler: crear o actualizar y los tipos de inicio de sesión.
@@ -39,14 +44,16 @@ LOGON_PASSWORD, LOGON_S4U, LOGON_INTERACTIVE = 1, 2, 3
 ERROR_CANCELLED = 1223
 WRONG_PASSWORD = 0x8007052E  # «El nombre de usuario o la contraseña no son correctos»
 NOT_FOUND = 0x80070002
-# powercfg: con corriente, sin suspensión ni hibernación, la tapa no hace nada y se permiten los despertadores.
-POWER_COMMANDS = (
+# powercfg: con corriente, sin suspensión ni hibernación y la tapa no hace nada; aparte, permitir los despertadores.
+NO_SLEEP_COMMANDS = (
     ("powercfg", "/change", "standby-timeout-ac", "0"),
     ("powercfg", "/change", "hibernate-timeout-ac", "0"),
     ("powercfg", "/setacvalueindex", "SCHEME_CURRENT", "SUB_BUTTONS", "LIDACTION", "0"),
-    ("powercfg", "/setacvalueindex", "SCHEME_CURRENT", "SUB_SLEEP", "RTCWAKE", "1"),
-    ("powercfg", "/setactive", "SCHEME_CURRENT"),
 )
+WAKE_TIMER_COMMANDS = (("powercfg", "/setacvalueindex", "SCHEME_CURRENT", "SUB_SLEEP", "RTCWAKE", "1"),)
+APPLY = ("powercfg", "/setactive", "SCHEME_CURRENT")  # los /setacvalueindex cuentan recién con esto
+# Lo que deja una tarea al terminar (LastTaskResult) que no es un error.
+TASK_OK = {0, 0x41301, 0x41303, 0x41306}  # bien · corriendo · todavía no corrió · se cortó al cerrarse
 
 
 class AlwaysOnError(Exception):
@@ -158,20 +165,29 @@ def remove_task(name: str) -> None:
 
 
 def task_exists(name: str) -> bool:
+    return task_result(name) is not None
+
+
+def task_result(name: str) -> int | None:
+    """Lo que dejó la tarea la última vez que corrió (0 = bien), o None si la tarea no existe."""
     import pywintypes
 
     try:
-        _folder().GetTask(name)
-        return True
+        task = _folder().GetTask(name)
     except pywintypes.com_error:
-        return False
+        return None
+    try:
+        return int(task.LastTaskResult) & 0xFFFFFFFF
+    except (pywintypes.com_error, TypeError, ValueError):
+        return 0
 
 
 def enable_wake() -> None:
-    """La tarea que despierta la PC cada 10 minutos (sin contraseña) y los despertadores permitidos en la energía."""
+    """La tarea que despierta la PC cada 10 minutos (sin contraseña) y los despertadores permitidos en la energía (solo
+    eso: la suspensión queda como estaba)."""
     user = current_user()
     _register(WAKE_TASK, wake_task_xml(user), user, None, LOGON_S4U)
-    prevent_sleep()  # incluye «permitir temporizadores de activación»
+    _powercfg(WAKE_TIMER_COMMANDS)
 
 
 def enable_background(parent_window: int = 0) -> bool:
@@ -188,21 +204,28 @@ def enable_background(parent_window: int = 0) -> bool:
 
 # --- la energía ------------------------------------------------------------------------------------------------------
 def prevent_sleep() -> None:
-    """Con corriente: sin suspensión ni hibernación, la tapa no hace nada y se permiten los despertadores."""
+    """Con corriente: sin suspensión ni hibernación y cerrar la tapa no hace nada."""
+    _powercfg(NO_SLEEP_COMMANDS)
+    log.info("Funcionar siempre: la PC no se suspende enchufada")
+
+
+def _powercfg(commands: tuple) -> None:
+    """Los cambios de energía y su /setactive. Si Windows no deja alguno, se repiten como administrador (Windows pide
+    el permiso), siempre con /setactive al final para que cuenten."""
     from . import windows_admin
 
     failed = []
-    for command in POWER_COMMANDS:
+    for command in (*commands, APPLY):
         result = subprocess.run(command, capture_output=True, timeout=20,
                                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         if result.returncode != 0:
             failed.append(command)
-    if failed:  # algunos equipos lo permiten solo como administrador: Windows pide el permiso
+    if failed:
+        elevated = [command for command in failed if command != APPLY] + [APPLY]
         try:
-            windows_admin._run_elevated_script("\n".join(f"  & {' '.join(command)}" for command in failed))
+            windows_admin._run_elevated_script("\n".join(f"  & {' '.join(command)}" for command in elevated))
         except RuntimeError as exc:
             raise AlwaysOnError(tr("No se pudo cambiar la energía de Windows: {0}", exc)) from None
-    log.info("Funcionar siempre: la PC no se suspende enchufada")
 
 
 @dataclass
@@ -210,10 +233,21 @@ class Status:
     sleep_minutes_ac: int | None  # 0 = nunca; None = no se pudo leer
     wake: bool
     background: bool
+    background_problem: str = ""  # la tarea «sin sesión» existe pero falló la última vez (p. ej. cambió la contraseña)
 
     @property
     def never_sleeps(self) -> bool:
         return self.sleep_minutes_ac == 0
+
+
+def problem_text(result: int) -> str:
+    """Lo que dejó la tarea, para la persona (vacío si no es un error)."""
+    if result in TASK_OK:
+        return ""
+    if result in (WRONG_PASSWORD, 0x8007052F, 0x80070569):  # contraseña, restricción de cuenta, sin derecho
+        return tr("Windows no pudo iniciar la tarea con tu cuenta (¿cambiaste la contraseña?). Quítala y vuelve a "
+                  "activarla.")
+    return tr("La última vez terminó con el código 0x{0:08X}. Revisa el Registro.", result)
 
 
 def status() -> Status:
@@ -224,7 +258,9 @@ def status() -> Status:
     except Exception:  # noqa: BLE001  sin dato se muestra «no se pudo leer»
         log.warning("Funcionar siempre: no se pudo leer la energía de Windows", exc_info=True)
         sleep_ac = None
-    return Status(sleep_ac, task_exists(WAKE_TASK), task_exists(BACKGROUND_TASK))
+    background = task_result(BACKGROUND_TASK)
+    return Status(sleep_ac, task_exists(WAKE_TASK), background is not None,
+                  problem_text(background) if background is not None else "")
 
 
 # --- la contraseña, en la ventana de seguridad de Windows -----------------------------------------------------------

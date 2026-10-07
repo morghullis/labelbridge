@@ -52,6 +52,9 @@ class AlwaysOnCard(Card):
             grid.addWidget(action, row, 2, Qt.AlignmentFlag.AlignVCenter)
             self.rows[key] = (pill, action)
         self.add(layout=grid)
+        self.problem = label("", "Warning", wrap=True)  # la tarea «sin sesión» falló: qué pasó y qué hacer
+        self.problem.setVisible(False)
+        self.add(self.problem)
         self.status: always_on.Status | None = None
         self.refresh()
 
@@ -82,6 +85,10 @@ class AlwaysOnCard(Card):
             pill.set_state("ok" if on else "off", tr("Activo") if on else tr("Apagado"))
             action.setText(tr("Quitar") if on else (tr("Activar…") if key == "background" else tr("Activar")))
             action.setEnabled(True)
+        if status.background_problem:  # existe pero no está funcionando: nunca un «Activo» engañoso
+            self.rows["background"][0].set_state("error", tr("Con problemas"))
+        self.problem.setText(status.background_problem)
+        self.problem.setVisible(bool(status.background_problem))
 
     # --- cambios ----------------------------------------------------------------------------------------------------
     def _act(self, key: str) -> None:
