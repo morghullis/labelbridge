@@ -29,6 +29,7 @@ query LabelBridgeReport($first: Int!, $after: String, $query: String!) {
       test
       tags
       sourceName
+      app { name }
       currentSubtotalPriceSet { shopMoney { amount currencyCode } }
       totalDiscountsSet { shopMoney { amount } }
       totalShippingPriceSet { shopMoney { amount } }
@@ -36,7 +37,7 @@ query LabelBridgeReport($first: Int!, $after: String, $query: String!) {
       customer { numberOfOrders }
       shippingAddress { provinceCode countryCodeV2 }
       lineItems(first: 20) { nodes { title quantity discountedTotalSet { shopMoney { amount } } } }
-      fulfillments(first: 3) { createdAt deliveredAt estimatedDeliveryAt }
+      fulfillments(first: 3) { createdAt inTransitAt deliveredAt estimatedDeliveryAt trackingInfo(first: 1) { number } }
       events(
         first: 10
         sortKey: CREATED_AT
@@ -53,6 +54,8 @@ REPORT_QUERY_NO_CUSTOMERS = REPORT_QUERY.replace("      customer { numberOfOrder
 TIMEZONE_QUERY = "query LabelBridgeShop { shop { ianaTimezone timezoneOffsetMinutes currencyCode } }"
 
 HISTORY_WEEKS = 4  # el promedio con el que se compara la semana
+MIN_ORDERS = 5  # con menos pedidos, un solo pedido mueve demasiado los porcentajes: no se sacan conclusiones de ellos
+TEST_TITLES = {"test", "prueba", "test order", "pedido de prueba"}  # productos que delatan un pedido de prueba
 SHIP_TARGET_HOURS = 48  # meta propia: preparado en 2 días
 LATE_GRACE_HOURS = 24  # una entrega cuenta como atrasada un día después de la fecha estimada
 CHANNELS = {
@@ -79,7 +82,8 @@ class OrderFacts:
     channel: str
     region: str
     products: list[tuple[str, float, int]] = field(default_factory=list)  # (producto, venta, unidades)
-    ship_hours: float | None = None  # horas hasta la primera preparación
+    ship_hours: float | None = None  # horas hasta que salió de verdad (guía comprada, seguimiento o en camino)
+    fulfilled: bool = False  # Shopify lo tiene como preparado (con o sin seguimiento)
     late: bool = False
 
 
@@ -95,6 +99,9 @@ def facts_of(order: dict, now: float) -> OrderFacts | None:
     """Los números de un pedido; None para los pedidos de prueba (no cuentan en las ventas)."""
     tags = [str(tag).lower() for tag in order.get("tags") or []]
     if order.get("test") or any(word in tag for tag in tags for word in TEST_TAGS):
+        return None
+    titles = [str(item.get("title") or "").strip().lower() for item in (order.get("lineItems") or {}).get("nodes") or []]
+    if titles and all(title in TEST_TITLES for title in titles):  # «test»: un pedido de prueba sin la etiqueta
         return None
     created = iso_ts(order.get("createdAt"))
     labels = label_events(order)
@@ -112,11 +119,18 @@ def facts_of(order: dict, now: float) -> OrderFacts | None:
     else:
         returning = None
     fulfillments = order.get("fulfillments") or []
-    first = min((iso_ts(f.get("createdAt")) for f in fulfillments if f.get("createdAt")), default=0.0)
+    first = _shipped_at(fulfillments, labels)
     address = order.get("shippingAddress") or {}
     country = str(address.get("countryCodeV2") or "")
     region = str(address.get("provinceCode") or "") if country in ("US", "") else country
     source = str(order.get("sourceName") or "")
+    app = str((order.get("app") or {}).get("name") or "").strip()
+    if source in CHANNELS:
+        channel = tr(CHANNELS[source])
+    elif app:
+        channel = app  # el nombre del canal en Shopify (p. ej. la app de tu web o de un marketplace)
+    else:
+        channel = tr("Otra app") if source.isdigit() or not source else source
     return OrderFacts(
         created=created,
         cancelled=bool(order.get("cancelledAt")),
@@ -127,13 +141,24 @@ def facts_of(order: dict, now: float) -> OrderFacts | None:
         label_cost=round(sum(e.get("cost", 0.0) for e in labels.values() if not e.get("voided")), 2),
         units=units,
         returning=returning,
-        channel=tr(CHANNELS[source]) if source in CHANNELS else (tr("Otra app") if source.isdigit() or not source
-                                                                 else source),
+        channel=channel,
         region=region,
         products=products,
         ship_hours=(first - created) / 3600 if first and created else None,
+        fulfilled=bool(fulfillments),
         late=any(_late(f, now) for f in fulfillments),
     )
+
+
+def _shipped_at(fulfillments: list[dict], labels: dict[str, dict]) -> float:
+    """Cuándo salió de verdad: la guía comprada, una preparación con número de seguimiento o «en camino». Una
+    preparación sin seguimiento no cuenta (hay tiendas que marcan todo como preparado al entrar el pedido)."""
+    moments = [entry.get("at", 0.0) for entry in labels.values() if not entry.get("voided")]
+    for fulfillment in fulfillments:
+        if any((info or {}).get("number") for info in fulfillment.get("trackingInfo") or []):
+            moments.append(iso_ts(fulfillment.get("createdAt")))
+        moments.append(iso_ts(fulfillment.get("inTransitAt")))
+    return min((moment for moment in moments if moment), default=0.0)
 
 
 def _late(fulfillment: dict, now: float) -> bool:
@@ -159,7 +184,7 @@ class WeekNumbers:
     discount_share: float | None = None  # % de pedidos con descuento
     shipped_on_time: float | None = None  # % preparados en SHIP_TARGET_HOURS (de los que ya debían estarlo)
     median_ship_hours: float | None = None
-    shipping_margin: float | None = None  # envío cobrado − costo de guías
+    shipping_margin: float | None = None  # envío cobrado − costo de guías (pedidos con guía comprada en Shopify)
     late: int = 0
     daily_sales: list[float] = field(default_factory=lambda: [0.0] * 7)
     daily_orders: list[int] = field(default_factory=lambda: [0] * 7)
@@ -169,9 +194,11 @@ def _share(part: float, whole: float) -> float | None:
     return round(part * 100 / whole, 1) if whole else None
 
 
-def week_numbers(facts: list[OrderFacts], start: datetime, now: float) -> WeekNumbers:
-    """Los números de los pedidos creados en la semana que empieza en `start` (lunes 00:00, hora de la tienda)."""
-    begin, end = start.timestamp(), (start + timedelta(days=7)).timestamp()
+def week_numbers(facts: list[OrderFacts], start: datetime, now: float,
+                 length: timedelta = timedelta(days=7)) -> WeekNumbers:
+    """Los números de los pedidos creados desde `start` (lunes 00:00, hora de la tienda) durante `length` (la semana
+    entera, o lo que va de ella para comparar «hasta hoy» con los mismos días de las semanas anteriores)."""
+    begin, end = start.timestamp(), (start + length).timestamp()
     week = [f for f in facts if begin <= f.created < end]
     valid = [f for f in week if not f.cancelled]
     numbers = WeekNumbers(orders=len(valid), cancelled=len(week) - len(valid))
@@ -191,13 +218,17 @@ def week_numbers(facts: list[OrderFacts], start: datetime, now: float) -> WeekNu
     refunded = sum(f.refunded for f in valid)
     numbers.refund_share = _share(refunded, numbers.sales + refunded)
     numbers.discount_share = _share(sum(1 for f in valid if f.discount > 0), len(valid))
-    due = [f for f in valid if f.ship_hours is not None or now - f.created >= SHIP_TARGET_HOURS * 3600]
+    # Cuentan los que salieron (se sabe cuándo) y los que siguen sin preparar pasadas las 48 h. Los preparados sin
+    # seguimiento no se sabe cuándo salieron: no cuentan (nunca un «tarde» ni un 100 % que no se puede saber).
+    due = [f for f in valid if f.ship_hours is not None
+           or (not f.fulfilled and now - f.created >= SHIP_TARGET_HOURS * 3600)]
     on_time = [f for f in due if f.ship_hours is not None and f.ship_hours <= SHIP_TARGET_HOURS]
     numbers.shipped_on_time = _share(len(on_time), len(due))
     hours = [f.ship_hours for f in valid if f.ship_hours is not None]
     numbers.median_ship_hours = round(statistics.median(hours), 1) if hours else None
-    if any(f.label_cost or f.shipping_charged for f in valid):
-        numbers.shipping_margin = round(sum(f.shipping_charged - f.label_cost for f in valid), 2)
+    labeled = [f for f in valid if f.label_cost > 0]  # solo donde se sabe lo que costó la guía (comprada en Shopify)
+    if labeled:
+        numbers.shipping_margin = round(sum(f.shipping_charged - f.label_cost for f in labeled), 2)
     numbers.late = sum(1 for f in valid if f.late)
     return numbers
 
@@ -326,17 +357,26 @@ def build_report(orders: list[dict], now: float, tz: tzinfo, currency: str = "US
                  missing: list[str] | None = None) -> WeeklyReport:
     facts = [f for f in (facts_of(order, now) for order in orders) if f is not None]
     start = week_start(now, tz, weeks_back)
-    current = week_numbers(facts, start, now)
-    previous = week_numbers(facts, start - timedelta(weeks=1), now)
-    history = [week_numbers(facts, start - timedelta(weeks=back), now) for back in range(1, HISTORY_WEEKS + 1)]
+    complete = now >= (start + timedelta(days=7)).timestamp()
+    # Una semana a medias se compara con los mismos días de las anteriores (lunes a hoy contra lunes a «hoy»).
+    length = timedelta(days=7) if complete else timedelta(seconds=max(0.0, now - start.timestamp()))
+    current = week_numbers(facts, start, now, length)
+    previous = week_numbers(facts, start - timedelta(weeks=1), now, length)
+    history = [week_numbers(facts, start - timedelta(weeks=back), now, length) for back in range(1, HISTORY_WEEKS + 1)]
     metrics = _metrics(current, previous, history)
-    week = [f for f in facts if start.timestamp() <= f.created < (start + timedelta(days=7)).timestamp()
-            and not f.cancelled]
+    week = [f for f in facts if start.timestamp() <= f.created < (start + length).timestamp() and not f.cancelled]
     findings, strengths = _findings(current, previous, history, week, metrics)
+    notes = list(missing or [])
+    if current.orders and current.shipped_on_time is None and any(f.fulfilled for f in week):
+        notes.append(tr("Preparados en 2 días: tus pedidos se marcan preparados sin número de seguimiento, así que no "
+                        "se sabe cuándo salieron. Con las guías compradas por LabelBridge se mide solo."))
+    if 0 < current.orders < MIN_ORDERS:
+        notes.append(tr("Con pocos pedidos ({0}) los porcentajes cambian mucho de una semana a otra: las alertas por "
+                        "porcentaje empiezan desde {1} pedidos.", current.orders, MIN_ORDERS))
     report = WeeklyReport(
         start=start.date().isoformat(),
         end=(start + timedelta(days=6)).date().isoformat(),
-        complete=now >= (start + timedelta(days=7)).timestamp(),
+        complete=complete,
         currency=currency,
         generated_at=now,
         metrics=metrics,
@@ -347,9 +387,9 @@ def build_report(orders: list[dict], now: float, tz: tzinfo, currency: str = "US
         regions=Counter(f.region for f in week if f.region).most_common(5),
         findings=findings,
         strengths=strengths,
-        comparisons=_comparisons(current, missing or []),
+        comparisons=_comparisons(current, notes),
         plan=_plan(findings),
-        missing=list(missing or []),
+        missing=notes,
     )
     return report
 
@@ -417,7 +457,7 @@ def _findings(current: WeekNumbers, previous: WeekNumbers, history: list[WeekNum
             tr("Revisa que la tienda esté abierta y que el pago funcione (haz un pedido de prueba)."),
             tr("Mira si se cayó alguna campaña o anuncio que traía visitas."),
         ], 100))
-    elif base and current.sales < base * 0.8 and history_orders(history) >= 3:
+    elif base and current.sales < base * 0.8 and history_orders(history) >= 2 * MIN_ORDERS:
         drop = round((1 - current.sales / base) * 100)
         findings.append(Finding("sales_down", "critical", tr("Las ventas bajaron {0}", pct(drop)), tr(
             "{0} esta semana contra {1} de promedio en las 4 anteriores.", _money_text(current.sales),
@@ -426,14 +466,15 @@ def _findings(current: WeekNumbers, previous: WeekNumbers, history: list[WeekNum
             tr("Vuelve a contactar a quienes ya compraron: un correo con novedades suele traer ventas en días."),
             tr("Si bajó por temporada, planea una promoción corta en vez de descuentos permanentes."),
         ], 80 + drop / 10))
-    elif base and current.sales > base * 1.2:
+    elif base and current.sales > base * 1.2 and history_orders(history) >= 2 * MIN_ORDERS:
         rise = round((current.sales / base - 1) * 100)
         strengths.append(Finding("sales_up", "strength", tr("Las ventas subieron {0}", pct(rise)), tr(
             "{0} esta semana contra {1} de promedio.", _money_text(current.sales), _money_text(base)), [
             tr("Anota qué cambió (publicación, anuncio, producto) para repetirlo."),
         ], rise))
 
-    if current.shipped_on_time is not None:
+    enough = current.orders >= MIN_ORDERS  # los porcentajes de pocos pedidos no dicen mucho
+    if current.shipped_on_time is not None and enough:
         if current.shipped_on_time < 80:
             findings.append(Finding("slow_shipping", "critical", tr("Pedidos que tardan en salir"), tr(
                 "Solo el {0} se preparó en 2 días (mediana: {1} h).", pct(current.shipped_on_time),
@@ -442,7 +483,7 @@ def _findings(current: WeekNumbers, previous: WeekNumbers, history: list[WeekNum
                 tr("Revisa a diario la pestaña Pedidos → «Necesitan acción»."),
                 tr("Promete en la tienda un plazo de preparación que sí puedas cumplir."),
             ], 70 + (80 - current.shipped_on_time) / 2))
-        elif current.shipped_on_time >= 95 and current.orders >= 3:
+        elif current.shipped_on_time >= 95:
             strengths.append(Finding("fast_shipping", "strength", tr("Envíos rápidos"), tr(
                 "El {0} de los pedidos se preparó en 2 días.", pct(current.shipped_on_time)), [
                 tr("Dilo en la tienda («enviamos en 48 h»): la rapidez también vende."),
@@ -456,21 +497,21 @@ def _findings(current: WeekNumbers, previous: WeekNumbers, history: list[WeekNum
             tr("Usa el tamaño de caja y el peso reales: las guías se cobran por eso."),
             tr("Si ofreces envío gratis, súmalo al precio o ponle un mínimo de compra."),
         ], 60 + min(loss, 200) / 10))
-    elif current.shipping_margin is not None and current.shipping_margin >= 0 and current.orders >= 3:
+    elif current.shipping_margin is not None and current.shipping_margin >= 0 and enough:
         strengths.append(Finding("shipping_covered", "strength", tr("El envío se paga solo"), tr(
             "Lo cobrado de envío cubrió las guías (quedan {0}).", _money_text(current.shipping_margin)), [], 20))
 
-    if current.refund_share is not None and current.refund_share > 10:
+    if current.refund_share is not None and current.refund_share > 10 and enough:
         findings.append(Finding("refunds", "critical", tr("Muchos reembolsos"), tr(
             "Se reembolsó el {0} de lo vendido.", pct(current.refund_share)), [
             tr("Lee el motivo de cada reembolso en Shopify y busca lo que se repite (talla, foto, demora)."),
             tr("Mejora la descripción y las fotos del producto que más se devuelve."),
         ], 55 + current.refund_share / 2))
-    elif current.refund_share is not None and current.refund_share < 5 and current.orders >= 3:
+    elif current.refund_share is not None and current.refund_share < 5 and enough:
         strengths.append(Finding("few_refunds", "strength", tr("Casi sin reembolsos"), tr(
             "Solo el {0} de lo vendido se reembolsó.", pct(current.refund_share)), [], 25))
 
-    if current.returning_share is not None and current.orders >= 3:
+    if current.returning_share is not None and enough:
         if current.returning_share < 15:
             findings.append(Finding("few_returning", "watch", tr("Pocos clientes vuelven"), tr(
                 "El {0} de los pedidos fue de clientes que ya habían comprado.", pct(current.returning_share)), [
@@ -490,14 +531,14 @@ def _findings(current: WeekNumbers, previous: WeekNumbers, history: list[WeekNum
             tr("Si se repite con una paquetería, cambia la regla en Pedidos → Reglas de paquetería."),
         ], 30 + current.late * 3))
 
-    if current.discount_share is not None and current.discount_share > 40 and current.orders >= 3:
+    if current.discount_share is not None and current.discount_share > 40 and enough:
         findings.append(Finding("discounts", "watch", tr("Muchas ventas con descuento"), tr(
             "El {0} de los pedidos usó un descuento.", pct(current.discount_share)), [
             tr("Usa descuentos con fecha de fin y para productos concretos, no para toda la tienda."),
         ], 25))
 
     revenue = sum(sum(amount for _t, amount, _q in f.products) for f in week)
-    if revenue and len(week) >= 3:
+    if revenue and len(week) >= MIN_ORDERS:
         best = max(((title, sum(a for f in week for t, a, _q in f.products if t == title))
                     for f in week for title, _a, _q in f.products), key=lambda item: item[1])
         share = round(best[1] * 100 / revenue)
@@ -507,7 +548,26 @@ def _findings(current: WeekNumbers, previous: WeekNumbers, history: list[WeekNum
                 tr("Asegura su stock y prepara 1 o 2 productos parecidos para no depender solo de él."),
             ], 20))
 
-    if current.cancelled and current.cancelled * 100 / max(1, current.orders + current.cancelled) > 10:
+    # Pocos pedidos por semana: lo que más mueve la tienda es atraer más compras (y es lo primero del plan).
+    weekly = [w.orders for w in history] + [current.orders]
+    per_week = sum(weekly) / len(weekly)
+    if per_week < MIN_ORDERS:
+        findings.append(Finding("low_volume", "watch", tr("Pocos pedidos por semana"), tr(
+            "Promedio de {0} pedido(s) por semana en el último mes.", decimal(per_week, 1)), [
+            tr("Publica 3 veces por semana en redes las piezas puestas, con el enlace a la tienda."),
+            tr("Pide a cada cliente una reseña con foto: ayuda a que las visitas se animen a comprar."),
+            tr("Revisa que tus productos más vistos tengan buenas fotos, precio claro y el envío a la vista."),
+        ], 45))
+
+    aov_reference = BENCHMARKS["aov_jewelry"]
+    if current.aov is not None and current.orders >= 2 and current.aov >= aov_reference.value:
+        strengths.append(Finding("high_aov", "strength", tr("Ticket promedio alto"), tr(
+            "Tus pedidos promedian {0}, por encima de la referencia de joyería en línea ({1}, {2}; estimación).",
+            _money_text(current.aov), _money_text(aov_reference.value), aov_reference.source), [
+            tr("Ofrece piezas que combinen (cadenas, estuches, grabado) para subirlo aún más."),
+        ], 30))
+
+    if current.cancelled and current.cancelled * 100 / max(1, current.orders + current.cancelled) > 10 and enough:
         findings.append(Finding("cancellations", "watch", tr("Pedidos cancelados"), tr(
             "{0} pedido(s) cancelado(s) esta semana.", current.cancelled), [
             tr("Revisa en Shopify por qué se cancelaron (pago, stock, fraude)."),
@@ -540,9 +600,14 @@ def _comparisons(current: WeekNumbers, missing: list[str]) -> list[Comparison]:
     ]
 
 
-def _plan(findings: list[Finding]) -> list[str]:
-    """Las 3 acciones de más impacto (la primera de cada problema, en orden)."""
-    plan = [finding.actions[0] for finding in findings if finding.actions][:3]
+def _plan(findings: list[Finding], size: int = 3) -> list[str]:
+    """Las `size` acciones de más impacto: la primera de cada problema (en orden) y, si faltan, las siguientes."""
+    plan = [finding.actions[0] for finding in findings if finding.actions][:size]
+    for finding in findings:
+        for action in finding.actions[1:]:
+            if len(plan) >= size:
+                break
+            plan.append(action)
     if not plan:
         plan = [
             tr("Mantén lo que funciona: revisa Pedidos cada mañana y que la compra de guías siga automática."),

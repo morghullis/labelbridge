@@ -201,12 +201,14 @@ labelbridge/
   discovery.py         búsqueda de impresoras en la red
   printing/            motor: driver, RAW 9100, IPP, ZPL, PDF, código de barras; routing.py = por qué impresora sale cada cosa
   labels/              etiqueta de pedido (Qt y ZPL nativo)
-  connectors/          API local, n8n y Shopify
+  connectors/          API local, n8n y Shopify; store_report.py = reporte semanal, benchmarks.py = referencias del
+                       sector (con fuente)
   assistant/           asistente: herramientas, permisos, consumo, conversación y filtro de secretos
     providers/         Claude, OpenAI, Gemini y API compatibles (formato de cada API, sin reglas propias)
   security/            cifrado, política de seguridad, límites, auditoría y registros sin secretos
   system/              inicio con el equipo (Windows o Mac), instancia única, instalar impresoras, qué cambia en Mac (platform.py)
-  ui/                  interfaz (PySide6); theme.py = colores y estilos, navigation.py = menú lateral, barra inferior y
+  ui/                  interfaz (PySide6); charts.py = gráficos, theme.py = colores y estilos, navigation.py = menú
+                       lateral, barra inferior y
                        estado, notice_bar.py = avisos en la ventana, mascot.py = la máscara animada,
                        assistant_dock.py = bubble y chat flotante
 assets/locale/         traducciones (en.json)
@@ -225,6 +227,12 @@ Los datos de la app (configuración, cola, registros) se guardan en `%LOCALAPPDA
 - **Ancho**: ninguna pantalla puede obligar a una barra para desplazarse a los lados en la ventana más angosta (760 px; `tests/test_redesign.py` lo comprueba en todas). Para filas de controles: `SplitRow` (dos grupos que se apilan), `FlowLayout` (pasan a la línea siguiente), `form_layout()` (la etiqueta sube sobre el campo) y `FlowRow` (franjas de números).
 - **Animaciones**: cortas (120–200 ms) y con `motion_enabled()` (respeta «menos animaciones» de Windows).
 - **Errores**: ninguno en silencio. Lo que falla en segundo plano pasa por `run_async(…, on_error)` o `errors.report()`; el texto para la persona sale de `errors.user_message()`; un `except` que sigue de largo deja al menos una línea en el registro; `window_closed()` solo ignora el `RuntimeError` de una ventana que ya se cerró. Los errores no atrapados y las advertencias de Qt van al registro y se avisan (`app.py`). `tests/test_no_silent_errors.py` cubre los casos.
+
+## Reporte semanal (para quien programa)
+
+- El cálculo está en `labelbridge/connectors/store_report.py` (sin pantalla ni red, probado en `tests/test_store_report.py`); la consulta, en `ShopifyService.weekly_report` (validada con el esquema de Shopify); la pestaña, en `ui/pages/report.py`; el asistente, en `assistant/report_tools.py`.
+- Semanas de lunes a domingo en la hora de la tienda. La rapidez se mide solo con señales reales de envío (guía comprada, seguimiento o en camino); el margen de envío, solo con guías compradas en Shopify. Con menos de 5 pedidos no hay alertas por porcentaje.
+- Las referencias del sector viven en `connectors/benchmarks.py`, cada una con fuente, enlace y fecha de consulta: para actualizarlas, cambia el valor y `checked` ahí (nunca un número sin fuente).
 
 ## Seguridad
 

@@ -2,6 +2,16 @@
 
 English version of [CHANGELOG.md](CHANGELOG.md). Each published version shows these notes in the app's update window when the app is in English, and on the English download page.
 
+## 1.17.0
+
+- **Weekly store report** (new **Report** tab, under Operation). Every Monday at 8 a.m. (store time) LabelBridge prepares the report for the week that just ended and lets you know:
+  - The week's numbers vs. the previous week and the 4-week average: sales, orders, average order value, returning customers, fulfilled within 2 days, refunds, discounts, shipping charged vs. what labels cost and late deliveries, plus sales by day.
+  - **What to fix**, with concrete steps, **what's going well** and the **plan for this week**.
+  - **Industry comparison**: your store vs. public e-commerce and jewelry averages (Dynamic Yield, NRF, Baymard, Little Stream), each with its source and marked as an estimate.
+  - With few orders it draws no conclusions from percentages (and says so), and a week in progress is compared with the same days of previous weeks.
+- **The assistant reads the report** and explains it: ask it "how is the store doing?" or "what should I improve this week?".
+- You can view previous weeks (they're saved on the computer) or recalculate with **Refresh**. Everything stays in the app: nothing is emailed.
+
 ## 1.16.0
 
 - **The order label prints on another printer.** In Shopify → **Where each document prints** you choose the printer for the shipping label, the one for the order label (the one that prints first, with the order number, items and address) and the one for metafield labels, each with **Print test**. If the order label and the shipping label print on the same printer it warns you (even if they have different names) and, if you don't have another one, it takes you to add it. On an office printer with letter paper, the order label prints as a packing slip. The assistant sees and changes it too.

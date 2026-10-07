@@ -49,12 +49,15 @@ def order(when: datetime, subtotal: float, *, discount: float = 0.0, refunded: f
         node["customer"] = {"numberOfOrders": str(customer_orders)} if customer_orders is not None else None
     if ship_after_hours is not None:
         node["fulfillments"].append({
+            "trackingInfo": [{"number": "9400111899223344556677"}],
             "createdAt": (when + timedelta(hours=ship_after_hours)).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "deliveredAt": delivered.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if delivered else None,
             "estimatedDeliveryAt": estimated.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if estimated else None,
         })
-    if label_cost is not None:
-        node["events"]["nodes"].append({"createdAt": iso, "message": f"Se compró una etiqueta de envío por ${label_cost:.2f}",
+    if label_cost is not None:  # la guía se compra al prepararlo (o al entrar el pedido, si no se dice cuándo)
+        bought = when + timedelta(hours=ship_after_hours or 0)
+        bought_iso = bought.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        node["events"]["nodes"].append({"createdAt": bought_iso, "message": f"Se compró una etiqueta de envío por ${label_cost:.2f}",
                                         "action": "shipping_label_created_success", "arguments": [node["legacyResourceId"]]})
     return node
 
@@ -64,10 +67,11 @@ def day(offset_days: int, hour: int = 12) -> datetime:
     return LAST_MONDAY + timedelta(days=offset_days, hours=hour)
 
 
-def history(weekly_sales: float = 1000.0, weeks: int = 4) -> list[dict]:
-    """Semanas anteriores con ventas parejas (para el promedio)."""
-    return [order(LAST_MONDAY - timedelta(weeks=back) + timedelta(days=2, hours=12), weekly_sales, ship_after_hours=20)
-            for back in range(1, weeks + 1)]
+def history(weekly_sales: float = 1200.0, weeks: int = 4, per_week: int = 3) -> list[dict]:
+    """Semanas anteriores con ventas parejas (para el promedio): `per_week` pedidos por semana."""
+    return [order(LAST_MONDAY - timedelta(weeks=back) + timedelta(days=1 + index, hours=12), weekly_sales / per_week,
+                  ship_after_hours=20)
+            for back in range(1, weeks + 1) for index in range(per_week)]
 
 
 # --- semanas y zona horaria ------------------------------------------------------------------------------------
@@ -104,7 +108,7 @@ def test_week_numbers_leave_out_tests_and_cancellations():
     assert report.metric("refunds").value == pytest.approx(7.1)  # 100 de 1.400
     assert report.metric("discounts").value == pytest.approx(33.3)
     assert report.metric("ship_margin").value == pytest.approx(12 - 9.54 - 12.0)
-    assert sales.previous == 1000 and sales.average == 1000 and sales.change == 30.0
+    assert sales.previous == 1200 and sales.average == 1200 and sales.change == 8.3
     assert report.top_products[0][0] == "Anillo"
     assert report.channels == [("Tienda en línea", 3)] and report.regions == [("FL", 3)]
 
@@ -124,8 +128,7 @@ def test_late_deliveries_are_counted():
 
 # --- qué arreglar, qué va bien y el plan -------------------------------------------------------------------------
 def test_a_sales_drop_and_shipping_losses_become_critical_points_with_steps():
-    orders = [order(day(1), 300, shipping=0, label_cost=15, ship_after_hours=60),
-              order(day(2), 200, shipping=0, label_cost=12, ship_after_hours=70)] + history(1500)
+    orders = [order(day(i), 100, shipping=0, label_cost=15, ship_after_hours=60 + i) for i in range(5)] + history(1500)
     report = build_report(orders, NOW, MIAMI)
     keys = [f.key for f in report.findings]
     assert {"sales_down", "shipping_loss", "slow_shipping"} <= set(keys)
@@ -135,7 +138,7 @@ def test_a_sales_drop_and_shipping_losses_become_critical_points_with_steps():
 
 
 def test_good_weeks_list_strengths():
-    orders = [order(day(i), 600, customer_orders=4, ship_after_hours=6, shipping=15, label_cost=9) for i in range(4)]
+    orders = [order(day(i), 600, customer_orders=4, ship_after_hours=6, shipping=15, label_cost=9) for i in range(5)]
     report = build_report(orders + history(800), NOW, MIAMI)
     strengths = {f.key for f in report.strengths}
     assert {"sales_up", "fast_shipping", "loyal", "shipping_covered", "few_refunds"} <= strengths
@@ -285,3 +288,60 @@ def test_report_page_asks_to_connect_the_store_first(core, qapp):
     assert not page.connect_btn.isHidden() and page.body.isHidden()
     page.connect_btn.click()
     assert went == ["shopify"]
+
+
+def test_orders_marked_fulfilled_on_arrival_do_not_count_as_shipped_fast():
+    """Tiendas que marcan todo «preparado» al entrar el pedido (sin seguimiento): no es un envío de verdad."""
+    auto = order(day(1), 120, with_customer=True)
+    auto["fulfillments"] = [{"createdAt": auto["createdAt"], "inTransitAt": None, "deliveredAt": None,
+                             "estimatedDeliveryAt": None, "trackingInfo": []}]
+    auto["app"] = {"name": "Jewel Linker"}
+    auto["sourceName"] = "137963896833"
+    auto["totalShippingPriceSet"] = {"shopMoney": {"amount": "40.0"}}
+    report = build_report([auto], NOW, MIAMI)
+    assert report.metric("on_time").value is None  # sin datos, nunca un 100 % falso
+    assert report.metric("ship_margin").value is None  # la guía se compró fuera de Shopify: no se sabe el margen
+    assert report.channels == [("Jewel Linker", 1)]  # el nombre del canal, no un número
+
+
+def test_orders_still_unfulfilled_after_two_days_count_as_late():
+    waiting = order(day(1), 150)  # sin preparar, de hace casi una semana
+    report = build_report([waiting], NOW, MIAMI)
+    assert report.metric("on_time").value == 0  # este sí se sabe: no salió
+
+
+def test_a_week_in_progress_is_compared_with_the_same_days_before():
+    tuesday = datetime(2026, 10, 6, 10, 0, tzinfo=MIAMI)  # «esta semana»: lunes y parte del martes
+    this_week = [order(tuesday - timedelta(hours=20), 300)]
+    last_week = [order(day(0), 300), order(day(4), 900)]  # lunes y viernes de la semana pasada
+    report = build_report(this_week + last_week, tuesday.timestamp(), MIAMI, weeks_back=0)
+    sales = report.metric("sales")
+    assert not report.complete and sales.previous == 300  # solo el lunes de la semana pasada, no el viernes
+    assert not [f for f in report.findings if f.key in ("sales_down", "no_sales")]
+
+
+def test_few_orders_do_not_trigger_percentage_alerts_and_say_why():
+    two = [order(day(1), 100, refunded=50, ship_after_hours=5), order(day(2), 100, ship_after_hours=5)]
+    report = build_report(two, NOW, MIAMI)
+    assert not [f for f in report.findings if f.key == "refunds"]  # 1 reembolso de 2 pedidos no es una tendencia
+    assert any("pocos pedidos" in note for note in report.missing)
+
+
+def test_orders_with_only_test_products_are_left_out():
+    sample = order(day(1), 2.0, products=[("test", 2.0, 1)])
+    assert facts_of(sample, NOW) is None
+
+
+def test_few_orders_a_week_becomes_the_first_thing_to_work_on():
+    report = build_report([order(day(1), 600, ship_after_hours=5), order(day(3), 590, ship_after_hours=5)]
+                          + history(1200, per_week=1), NOW, MIAMI)
+    low = next(f for f in report.findings if f.key == "low_volume")
+    assert low.severity == "watch" and len(low.actions) == 3
+    assert report.plan == low.actions  # el plan se completa con los pasos del mismo punto
+
+
+def test_a_high_average_order_is_a_strength_with_its_source():
+    report = build_report([order(day(1), 600, ship_after_hours=5), order(day(3), 590, ship_after_hours=5)],
+                          NOW, MIAMI)
+    high = next(f for f in report.strengths if f.key == "high_aov")
+    assert "Dynamic Yield" in high.evidence and "estimación" in high.evidence

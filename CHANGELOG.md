@@ -2,6 +2,16 @@
 
 Cada versión publicada muestra estas notas en la ventana de actualización de la app y en la página de descargas.
 
+## 1.17.0
+
+- **Reporte semanal de la tienda** (pestaña nueva **Reporte**, en Operación). Cada lunes a las 8 (hora de la tienda) LabelBridge prepara el reporte de la semana que terminó y te avisa:
+  - Los números de la semana contra la anterior y el promedio de 4 semanas: ventas, pedidos, ticket promedio, clientes que vuelven, preparados en 2 días, reembolsos, descuentos, lo cobrado de envío contra lo que costaron las guías y entregas atrasadas, más las ventas por día.
+  - **Lo que hay que arreglar**, con pasos concretos, **lo que va bien** y el **plan para esta semana**.
+  - **Comparación con el sector**: tu tienda contra promedios públicos de comercio electrónico y joyería (Dynamic Yield, NRF, Baymard, Little Stream), cada uno con su fuente y marcado como estimación.
+  - Con pocos pedidos no saca conclusiones de los porcentajes (y lo dice), y una semana en curso se compara con los mismos días de las anteriores.
+- **El asistente lee el reporte** y te lo explica: pregúntale «¿cómo va la tienda?» o «¿qué mejoro esta semana?».
+- Puedes ver semanas anteriores (quedan guardadas en el equipo) o recalcularlo con **Actualizar**. Todo queda en la app: no se envía por email.
+
 ## 1.16.0
 
 - **La etiqueta del pedido sale por otra impresora.** En Shopify → **Por dónde sale cada cosa** eliges la impresora de la guía, la de la etiqueta del pedido (la que sale primero, con el número de pedido, los productos y la dirección) y la de las guías de un metafield, cada una con **Imprimir prueba**. Si la etiqueta del pedido y la guía salen por la misma impresora te avisa (aunque tengan nombres distintos) y, si no tienes otra, te lleva a agregarla. En una impresora de oficina con hoja carta, la etiqueta del pedido sale como hoja de empaque. El asistente también lo ve y lo cambia.
