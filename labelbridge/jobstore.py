@@ -175,7 +175,8 @@ class JobStore:
         for key in ("headers", "meta"):
             try:
                 job[key] = json.loads(self._open(key, job["id"], job[key] or "") or "{}")
-            except json.JSONDecodeError:
+            except json.JSONDecodeError as exc:  # el trabajo sigue (p. ej. sin el tamaño de la guía), pero queda escrito
+                log.warning("Trabajo %s: «%s» ilegible (%s); se usa vacío", job["id"], key, exc)
                 job[key] = {}
         return job
 
@@ -413,8 +414,10 @@ class JobStore:
         if job.get("payload_path"):
             try:
                 Path(job["payload_path"]).unlink()
-            except OSError:
-                pass
+            except FileNotFoundError:
+                pass  # ya no estaba
+            except OSError as exc:  # queda en la carpeta de la cola (cifrado): se anota para limpiarlo
+                log.warning("No se pudo borrar el archivo del trabajo %s: %s", job.get("id"), exc)
 
     def cleanup(self, retention_days: int) -> int:
         cutoff = time.time() - max(1, retention_days) * 86400

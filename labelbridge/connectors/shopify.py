@@ -297,7 +297,10 @@ def package_input(p) -> dict[str, Any]:
 def _iso_to_ts(value: str) -> float:
     try:
         return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
-    except (AttributeError, ValueError):
+    except AttributeError:  # sin fecha
+        return 0.0
+    except ValueError:
+        log.warning("Shopify: fecha ilegible %r (el pedido no cuenta como nuevo)", value)
         return 0.0
 
 
@@ -615,6 +618,7 @@ class ShopifyService(BackgroundService):
         self._cycle_lock = threading.Lock()
         self._deliveries_at = time.time() - DELIVERY_CHECK_SECONDS + 120  # la primera, a los 2 minutos
         self._resets = 0  # «Reprocesar» durante una vuelta: esa vuelta no pisa el cursor nuevo
+        self._tag_problem = ""  # el último motivo por el que no se pudo poner el tag (ya avisado)
         self.overview_truncated = False
         events.subscribe(self._on_event)
         engine.url_auth_providers.append(self._auth_headers_for)
@@ -627,7 +631,8 @@ class ShopifyService(BackgroundService):
             return {}
         try:
             return {"X-Shopify-Access-Token": client.access_token()}
-        except ShopifyError:
+        except ShopifyError as exc:  # la descarga sigue sin token y falla con 401: que el motivo real quede escrito
+            log.warning("Shopify: no se pudo obtener el token para descargar un documento: %s", exc)
             return {}
 
     def enabled(self) -> bool:
@@ -666,7 +671,8 @@ class ShopifyService(BackgroundService):
     def ledger(self, legacy: str) -> dict:
         try:
             return json.loads(self.store.kv_get(self._ledger_key(str(legacy))) or "{}")
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as exc:
+            log.warning("Shopify: historial del pedido %s ilegible (%s): se ignora", legacy, exc)
             return {}
 
     def ledgers(self) -> dict[str, dict]:
@@ -675,8 +681,8 @@ class ShopifyService(BackgroundService):
         for key, value in self.store.kv_items(prefix).items():
             try:
                 out[key[len(prefix):]] = json.loads(value)
-            except json.JSONDecodeError:
-                continue
+            except json.JSONDecodeError as exc:
+                log.warning("Shopify: historial del pedido %s ilegible (%s): se ignora", key[len(prefix):], exc)
         return out
 
     def _note(self, legacy: str, state: str, **data: Any) -> None:
@@ -747,7 +753,8 @@ class ShopifyService(BackgroundService):
         cursor = self.store.kv_get(self._key("cursor")) or _ts_to_iso(since)
         try:
             resume = json.loads(self.store.kv_get(self._key("resume")) or "null")
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as exc:  # se vuelve a empezar desde el cursor (sin perder pedidos)
+            log.warning("Shopify: punto de la paginación ilegible (%s): se sigue desde el cursor", exc)
             resume = None
         if resume:
             # Muchos pedidos en la última vuelta: seguimos donde quedó la paginación.
@@ -862,7 +869,11 @@ class ShopifyService(BackgroundService):
                 self.store.mark_seen(key)
 
         if s.metafield_label and not manual:
-            for url in extract_urls(str((order.get("metafield") or {}).get("value") or "")):
+            raw = str((order.get("metafield") or {}).get("value") or "")
+            urls = extract_urls(raw)
+            if raw.strip() and not urls:  # tiene algo, pero no una dirección: avisar una vez por pedido
+                self._invalid_metafield(legacy, name, raw)
+            for url in urls:
                 digest = hashlib.sha1(url.encode()).hexdigest()[:16]
                 key = self._key(f"order:{legacy}:mf:{digest}")
                 if self.store.seen(key):
@@ -1072,6 +1083,21 @@ class ShopifyService(BackgroundService):
         self.events.notify(tr("Pedido nuevo {0}", order.get("name") or ""), " · ".join(p for p in parts if p),
                            kind="new_order")
 
+    def _invalid_metafield(self, legacy: str, name: str, raw: str) -> None:
+        key = self._key(f"order:{legacy}:mf:invalid")
+        if self.store.seen(key):
+            return
+        self.store.mark_seen(key)
+        s = self.cfg.data.shopify
+        log.warning("Shopify: el metafield %s.%s de %s no trae una URL http(s): %r", s.metafield_namespace,
+                    s.metafield_key, name, raw[:120])
+        self.events.notify(
+            tr("Pedido {0}: el metafield no trae una etiqueta", name),
+            tr("{0} no tiene una dirección http(s) de un PDF o ZPL, así que no se imprimió nada. Revisa lo que guarda "
+               "ahí n8n, tu web o el ERP.", f"{s.metafield_namespace}.{s.metafield_key}"),
+            "error", kind="print_error",
+        )
+
     def _flow_is_buying(self, legacy: str, order: dict) -> bool:
         """Shopify Flow está comprando (o compró) la FedEx de este pedido: LabelBridge lo anotó así, o es reciente y
         cumple la regla del flujo aunque la vuelta todavía no lo haya visto (Flow compra en segundos)."""
@@ -1186,9 +1212,29 @@ class ShopifyService(BackgroundService):
         return created
 
     def _pending(self) -> dict[str, dict]:
+        return self._load_map("pending", N_("las compras de guías en curso"))
+
+    def _load_map(self, name: str, what: str) -> dict[str, dict]:
+        """Un registro guardado (compras en curso, guías por traer de Shopify). Si está dañado no se pierde en
+        silencio: el texto se guarda aparte, queda anotado y se avisa para revisar los pedidos recientes."""
+        key = self._key(name)
+        raw = self.store.kv_get(key) or "{}"
         try:
-            return json.loads(self.store.kv_get(self._key("pending")) or "{}")
-        except json.JSONDecodeError:
+            value = json.loads(raw)
+            if not isinstance(value, dict):
+                raise ValueError(f"se esperaba un objeto y llegó {type(value).__name__}")
+            return value
+        except ValueError as exc:  # json.JSONDecodeError es un ValueError
+            backup = f"{key}:danado:{int(time.time())}"
+            self.store.kv_set(backup, raw)
+            self.store.kv_set(key, "{}")
+            log.error("Shopify: el registro %s estaba dañado (%s); se guardó en %s y se empieza vacío", name, exc, backup)
+            self.events.notify(
+                tr("Revisa los pedidos recientes"),
+                tr("Se dañó el registro de {0}: alguna guía ya comprada podría no imprimirse sola. Revisa en Pedidos "
+                   "los de las últimas horas.", tr(what)),
+                "error", kind="action",
+            )
             return {}
 
     def _save_pending(self, pending: dict[str, dict]) -> None:
@@ -1260,10 +1306,7 @@ class ShopifyService(BackgroundService):
 
     # --- guías compradas en Shopify (FedEx y las que esperaban a una persona) ------------------------
     def _to_fetch(self) -> dict[str, dict]:
-        try:
-            return json.loads(self.store.kv_get(self._key("fetch")) or "{}")
-        except json.JSONDecodeError:
-            return {}
+        return self._load_map("fetch", N_("las guías por traer de Shopify"))
 
     def _queue_fetch(self, legacy: str, meta: dict) -> None:
         items = self._to_fetch()
@@ -1646,8 +1689,13 @@ class ShopifyService(BackgroundService):
                 continue
             try:
                 client.add_tags(gid, [tag])
-            except ShopifyError as exc:
+            except ShopifyError as exc:  # no se reintenta (es un permiso, no la red): se avisa una vez por motivo
                 log.warning("Shopify: no se pudo etiquetar el pedido (%s). ¿Falta el scope write_orders?", exc)
+                if str(exc) != self._tag_problem:
+                    self._tag_problem = str(exc)
+                    self.events.notify(tr("No se pudo agregar el tag «{0}»", tag), tr(
+                        "{0}. La guía se imprimió igual; revisa que la app tenga el permiso write_orders o quita el tag "
+                        "en Shopify → Filtros.", exc), "error")
             except (net.NetworkError, net.HttpError) as exc:  # sin red: se vuelve a intentar en la próxima vuelta
                 self._tag_queue.appendleft(gid)
                 log.warning("Shopify: sin conexión para etiquetar el pedido: %s", exc)

@@ -110,6 +110,13 @@ QLabel#Warning {{ color: #5E4200; background: transparent; border: none; border-
 QLabel#Hint {{ color: {C.TEXT}; background: transparent; border: none; border-left: 3px solid {C.DIVIDER};
     padding: 2px 0 2px 10px; }}
 QLabel#Overdue {{ color: {C.CRITICAL}; font-weight: 600; font-size: {Font.SMALL}px; }}
+/* Aviso dentro de la ventana (ui/notice_bar.py): arriba de la pantalla, con la línea del color del aviso. */
+QFrame#NoticeBar {{ background: {C.SURFACE}; border: none; border-left: 3px solid {C.CRITICAL};
+    border-bottom: 1px solid {C.DIVIDER}; }}
+QFrame#NoticeBar[level="warn"] {{ border-left-color: #E8A72B; }}
+QFrame#NoticeBar[level="info"] {{ border-left-color: {C.INFO}; }}
+QLabel#NoticeTitle {{ color: {C.TEXT_STRONG}; font-weight: 600; }}
+QLabel#NoticeText {{ color: {C.TEXT_SECONDARY}; }}
 
 /* Tarjetas: blancas sobre el gris, sin borde. */
 QFrame#Card {{ background: {C.SURFACE}; border: none; border-radius: 12px; }}

@@ -23,6 +23,7 @@ from ..system.platform import pick
 from . import icons
 from .context import AppContext
 from .navigation import BottomNav, Destination, NavItem, StatusIndicator, fade_in
+from .notice_bar import NoticeBar
 from .pages.dashboard import DashboardPage
 from .pages.guide import GuidePage
 from .pages.guide import is_complete as guide_complete
@@ -34,7 +35,7 @@ from .pages.orders import OrdersPage
 from .pages.printers import PrintersPage
 from .pages.settings import SettingsPage
 from .pages.shopify import ShopifyPage
-from .widgets import label
+from .widgets import error, label
 
 log = logging.getLogger(__name__)
 
@@ -105,6 +106,9 @@ class MainWindow(QMainWindow):
         content = QVBoxLayout()
         content.setContentsMargins(0, 0, 0, 0)
         content.setSpacing(0)
+        # Los errores que afectan a la persona, arriba de la pantalla (además del aviso junto al reloj).
+        self.notice = NoticeBar(lambda: self.navigate("logs"))
+        content.addWidget(self.notice)
         self.stack = QStackedWidget()
         self.stack.setObjectName("Content")
         content.addWidget(self.stack, 1)
@@ -228,7 +232,12 @@ class MainWindow(QMainWindow):
 
     def open_assistant(self, connect: bool = False, provider: str | None = None) -> None:
         """Muestra la ventana y abre el chat del asistente (con «Conecta tu IA» si se pide)."""
-        if self.assistant is None:
+        if self.assistant is None:  # sin asistente en esta compilación: se dice en vez de no hacer nada
+            log.warning("Se pidió abrir el asistente, pero no está disponible")
+            self.show_and_raise()
+            self.notice.show_notice(tr("El asistente no está disponible"),
+                                    tr("Esta copia de LabelBridge no pudo cargar el asistente. Revisa la pestaña Registro."),
+                                    "warn")
             return
         if not self.isVisible() or self.isMinimized():
             self.show_and_raise()
@@ -303,8 +312,10 @@ class MainWindow(QMainWindow):
             self.bottom_nav.setVisible(narrow)
 
     def _on_event(self, kind: str, data) -> None:
-        if kind in ("paused", "job"):
+        if kind in ("paused", "job", "engine"):
             self._update_status()
+        elif kind == "notify" and isinstance(data, dict) and data.get("level") == "error":
+            self.notice.show_notice(str(data.get("title") or ""), str(data.get("message") or ""), "error")
         elif kind == "update" and data is not None:
             self.announce_update(data)
 
@@ -389,11 +400,13 @@ class MainWindow(QMainWindow):
         dialog.show()
 
     def _update_status(self) -> None:
-        """El estado de abajo: en pausa, sin impresora, imprimiendo (el punto late) o listo."""
+        """El estado de abajo: problema al imprimir, en pausa, sin impresora, imprimiendo (el punto late) o listo."""
         general = self.ctx.cfg.data.general
         queued = self.ctx.store.counts()["queued"]
         detail = tr("{0} · {1} en cola", general.agent_name, queued)
-        if general.paused:
+        if self.ctx.engine.problem:  # el motor tuvo un error inesperado (y lo está reintentando)
+            state, title, detail = "error", tr("Problema al imprimir"), self.ctx.engine.problem
+        elif general.paused:
             state, title = "warn", tr("En pausa")
         elif not self.ctx.cfg.data.printers:
             state, title = "error", tr("Sin impresora")
@@ -414,9 +427,17 @@ class MainWindow(QMainWindow):
 
         args = ["--show", "--restart"]
         if getattr(sys, "frozen", False):
-            QProcess.startDetached(sys.executable, args)
+            started = QProcess.startDetached(sys.executable, args)
         else:
-            QProcess.startDetached(sys.executable, ["-m", "labelbridge", *args], str(Path(__file__).resolve().parents[2]))
+            started = QProcess.startDetached(sys.executable, ["-m", "labelbridge", *args],
+                                             str(Path(__file__).resolve().parents[2]))
+        if isinstance(started, tuple):  # PySide devuelve (ok, pid)
+            started = started[0]
+        if not started:  # sin la copia nueva, cerrar esta dejaría de imprimir: se queda abierta y se avisa
+            log.error("No se pudo reiniciar LabelBridge (%s)", sys.executable)
+            error(self, APP_NAME, tr("No se pudo reiniciar LabelBridge. Sigue abierta como estaba; ciérrala y ábrela "
+                                     "de nuevo para ver el cambio."))
+            return
         self.quit_app()
 
     def connect_store(self, test: bool = False) -> None:

@@ -40,26 +40,65 @@ def _install_spanish_translator(app) -> None:
 
         base = Path(PySide6.__file__).resolve().parent
         folders += [str(base / "translations"), str(base / "Qt" / "translations")]
-    except Exception:
-        pass
+    except Exception as exc:  # noqa: BLE001  quedan las carpetas de Qt; a lo sumo, algún botón estándar en inglés
+        log.info("No se encontraron las traducciones de PySide6: %s", exc)
     translator = QTranslator(app)
     for folder in folders:
         if translator.load(QLocale(QLocale.Language.Spanish), "qtbase", "_", folder):
             app.installTranslator(translator)
             app._labelbridge_translator = translator  # mantener la referencia viva
             return
+    log.info("Sin traducción de Qt al español: los botones estándar pueden salir en inglés")
 
 
 def _install_exception_hooks() -> None:
+    """Un error que nadie atrapó (un clic, un temporizador, un hilo) queda en el registro con su traza y se avisa: así
+    un botón que «no hace nada» siempre dice por qué."""
+    from . import errors
+
     def excepthook(exc_type, exc, tb) -> None:
+        if issubclass(exc_type, KeyboardInterrupt):
+            sys.__excepthook__(exc_type, exc, tb)
+            return
         log.critical("Error no controlado", exc_info=(exc_type, exc, tb))
+        errors.notify(tr("Algo falló en LabelBridge"), errors.user_message(exc))
 
     def thread_hook(args: threading.ExceptHookArgs) -> None:
+        if args.exc_type is SystemExit:
+            return
         log.critical("Error no controlado en hilo %s", args.thread.name if args.thread else "?",
                      exc_info=(args.exc_type, args.exc_value, args.exc_traceback))
+        if args.exc_value is not None:
+            errors.notify(tr("Algo falló en segundo plano"), errors.user_message(args.exc_value))
 
     sys.excepthook = excepthook
     threading.excepthook = thread_hook
+
+
+def _install_qt_message_handler() -> None:
+    """Las advertencias de Qt (la impresora, el spooler, imágenes…) van al registro en vez de perderse en la consola,
+    que la app instalada no tiene."""
+    from PySide6.QtCore import QtMsgType, qInstallMessageHandler
+
+    from .printing.outputs import QT_LOGGER
+
+    qt_log = logging.getLogger(QT_LOGGER)  # las impresiones miran aquí si el sistema rechazó un trabajo
+    levels = {QtMsgType.QtDebugMsg: logging.DEBUG, QtMsgType.QtInfoMsg: logging.INFO,
+              QtMsgType.QtWarningMsg: logging.WARNING, QtMsgType.QtCriticalMsg: logging.ERROR,
+              QtMsgType.QtFatalMsg: logging.CRITICAL}
+    noise = ("qt.qpa.fonts",)  # avisos conocidos que no dicen nada útil
+
+    def handler(mode, context, message: str) -> None:
+        category = getattr(context, "category", "") or ""
+        if category.startswith(noise):
+            return
+        prefix = f"[{category}] " if category and category != "default" else ""
+        try:
+            qt_log.log(levels.get(mode, logging.WARNING), "%s%s", prefix, message)
+        except Exception:  # noqa: BLE001  si el registro mismo falla no hay dónde anotarlo, y Qt no puede caerse aquí
+            return
+
+    qInstallMessageHandler(handler)
 
 
 def _watch_dock(app, window) -> None:
@@ -82,33 +121,17 @@ def main(argv: list[str] | None = None) -> int:
 
         return self_test(argv)
 
-    from PySide6.QtCore import QEvent, QTimer
+    from PySide6.QtCore import QEvent
     from PySide6.QtGui import QFont
-    from PySide6.QtWidgets import QApplication, QMessageBox, QSystemTrayIcon
+    from PySide6.QtWidgets import QApplication, QMessageBox
 
     from . import i18n
-    from .config import ConfigManager
-    from .events import Events
-    from .jobstore import JobStore
-    from .logging_setup import memory_handler, setup_logging
-    from .paths import config_path, data_dir, db_path, logs_dir, spool_dir
-    from .printing.engine import PrintEngine
-    from .secret_store import SecretStore
-    from .security.audit import AuditLog
-    from .security.crypto import CryptoError, DataProtector
-    from .security.policy import SecurityPolicy
-    from .services import Services
-    from .system import autostart, installer_hints
+    from .logging_setup import setup_logging
+    from .paths import logs_dir
+    from .system import installer_hints
     from .system.single_instance import SingleInstance
     from .ui import icons
-    from .ui.actions import enqueue_test_label
-    from .ui.context import AppContext, QtBridge
-    from .ui.main_window import MainWindow
-    from .ui.update_dialog import WhatsNewDialog
-    from .updater import failed_update, pending_whats_new
-    from .ui.pages.guide import is_complete as guide_complete
     from .ui.theme import apply_theme
-    from .ui.tray import Tray
 
     class Application(QApplication):
         """Avisa cuando se pide cerrar la app entera (Salir, Cmd+Q, «Salir» del Dock o al cerrar sesión)."""
@@ -120,6 +143,11 @@ def main(argv: list[str] | None = None) -> int:
                 self.quit_requested()
             return super().event(event)
 
+    # El registro, antes que nada: lo que pase al arrancar (el idioma, el instalador) también queda escrito.
+    setup_logging()
+    _install_exception_hooks()
+    _install_qt_message_handler()
+
     QApplication.setApplicationName(APP_NAME)
     QApplication.setOrganizationName(APP_NAME)
     QApplication.setApplicationVersion(__version__)
@@ -128,9 +156,6 @@ def main(argv: list[str] | None = None) -> int:
     # Idioma provisional (el del instalador o el de Windows) hasta leer la configuración.
     hints = installer_hints.read()
     i18n.set_language(i18n.choose("", hints.get("language", "")))
-
-    setup_logging()
-    _install_exception_hooks()
 
     instance = SingleInstance()
     if "--restart" in argv:  # reinicio pedido por la app (p. ej. al cambiar el idioma)
@@ -151,6 +176,43 @@ def main(argv: list[str] | None = None) -> int:
         app.setFont(QFont("Segoe UI", 10))
     apply_theme(app)  # siempre claro, aunque Windows esté en modo oscuro
     app.setWindowIcon(icons.app_icon())
+    try:
+        return _run(app, argv, hints, instance)
+    except Exception as exc:
+        from . import errors
+
+        log.critical("LabelBridge no pudo abrir", exc_info=True)
+        QMessageBox.critical(None, APP_NAME, tr(
+            "LabelBridge no pudo abrir: {0}\n\nEl detalle quedó en el registro, en la carpeta {1}. Vuelve a abrirla; "
+            "si se repite, envía ese archivo a soporte.", errors.user_message(exc), logs_dir()))
+        return 0  # ya se avisó: en la Mac, launchd no la vuelve a abrir en un bucle de ventanas
+
+
+def _run(app, argv: list[str], hints: dict, instance) -> int:
+    """Lo que hace falta para trabajar: datos, servicios, ventana y bandeja. Corre el programa hasta que se cierra."""
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QMessageBox, QSystemTrayIcon
+
+    from . import errors, i18n
+    from .config import ConfigManager
+    from .events import Events
+    from .jobstore import JobStore
+    from .logging_setup import memory_handler
+    from .paths import config_path, data_dir, db_path, logs_dir, spool_dir
+    from .printing.engine import PrintEngine
+    from .secret_store import SecretStore
+    from .security.audit import AuditLog
+    from .security.crypto import CryptoError, DataProtector
+    from .security.policy import SecurityPolicy
+    from .services import Services
+    from .system import autostart, installer_hints
+    from .ui.actions import enqueue_test_label
+    from .ui.context import AppContext, QtBridge
+    from .ui.main_window import MainWindow
+    from .ui.pages.guide import is_complete as guide_complete
+    from .ui.tray import Tray
+    from .ui.update_dialog import WhatsNewDialog
+    from .updater import failed_update, pending_whats_new
 
     secrets = SecretStore(data_dir() / "secrets.json")
     try:
@@ -170,6 +232,8 @@ def main(argv: list[str] | None = None) -> int:
     if language == "es":
         _install_spanish_translator(app)  # botones estándar de Qt (Sí, No, Cancelar…)
     log.info("Idioma de la interfaz: %s", language)
+    if cfg.load_problem:  # la configuración no se pudo leer: se empezó de cero (y se dice dónde quedó la copia)
+        QMessageBox.warning(None, APP_NAME, cfg.load_problem)
     connect_store = "--connect-store" in argv or installer_hints.apply(cfg, hints)
     # Con la clave del instalador la tienda se prueba y se activa sola al abrirse (ver ShopifyPage.connected).
     auto_connect = installer_hints.apply_secret(secrets, cfg, hints)
@@ -183,6 +247,7 @@ def main(argv: list[str] | None = None) -> int:
     bridge = QtBridge(events, cfg)
     memory_handler.add_listener(bridge.forward_log)
     ctx = AppContext(cfg, secrets, store, engine, services, events, bridge)
+    errors.set_notifier(lambda title, text: events.notify(title, text, "error"))
 
     window = MainWindow(ctx)
 
@@ -194,7 +259,12 @@ def main(argv: list[str] | None = None) -> int:
         # Si algo se queda colgado al cerrar, el proceso termina igual a los 20 s (la actualización espera a que la
         # app se cierre para instalar). Arranca solo cuando la salida es segura: si se cancela (una compra en curso),
         # la app sigue.
-        watchdog = threading.Timer(20.0, lambda: os._exit(0))
+        def force_exit() -> None:
+            log.warning("El cierre tardó más de 20 s: se termina el proceso")
+            logging.shutdown()
+            os._exit(0)
+
+        watchdog = threading.Timer(20.0, force_exit)
         watchdog.daemon = True  # no retrasa un cierre normal
         watchdog.start()
 
@@ -229,29 +299,39 @@ def main(argv: list[str] | None = None) -> int:
         _watch_dock(app, window)
 
     def ensure_tray(attempts_left: int = 10) -> None:
-        # Al iniciar sesión en Windows la bandeja puede tardar unos segundos en existir.
+        # Al iniciar sesión en Windows la bandeja puede tardar unos segundos en existir. Si no aparece, la ventana
+        # queda a la vista (los errores se ven arriba de la pantalla) y se sigue probando cada minuto.
         if QSystemTrayIcon.isSystemTrayAvailable():
             tray.show()
-        elif attempts_left > 0:
-            QTimer.singleShot(3000, lambda: ensure_tray(attempts_left - 1))
-        else:
-            log.warning("No hay bandeja del sistema: se muestra la ventana")
+            return
+        if attempts_left == 0:
+            log.warning("No hay bandeja del sistema: se muestra la ventana y se sigue probando cada minuto")
             window.show()
+        QTimer.singleShot(3000 if attempts_left > 0 else 60_000, lambda: ensure_tray(max(0, attempts_left - 1)))
 
     engine.start()
     services.start()
     try:
         autostart.apply(cfg.data.general.start_with_windows)
-    except OSError:
-        log.warning("No se pudo configurar el inicio automático", exc_info=True)
+    except OSError as exc:
+        errors.report(tr("No se pudo configurar el inicio automático"), exc,
+                      tr("{0}. Revísalo en Ajustes → General.", errors.user_message(exc)))
 
     # Funcionar siempre: el equipo no se duerme solo mientras la app está abierta (la pantalla sí se apaga) y, si
     # vuelve de una suspensión, todo se pone al día enseguida.
     from .system.power import KeepAwake, ResumeWatcher
 
     keep_awake = KeepAwake()
-    keep_awake.apply(cfg.data.general.keep_awake)
-    bridge.config_saved.connect(lambda _section: keep_awake.apply(cfg.data.general.keep_awake))
+
+    def stay_awake(_section: str = "") -> None:
+        wanted = cfg.data.general.keep_awake
+        if not keep_awake.apply(wanted) and wanted and sys.platform in ("win32", "darwin"):
+            errors.report(tr("El equipo podría dormirse"), message=tr(
+                "No se pudo evitar que el equipo se duerma mientras LabelBridge está abierto: si se duerme, no imprime. "
+                "Revisa la energía del equipo (o pídeselo al asistente)."))
+
+    stay_awake()
+    bridge.config_saved.connect(stay_awake)
     app.aboutToQuit.connect(keep_awake.release)
 
     def caught_up(_gap: float) -> None:
@@ -287,8 +367,11 @@ def main(argv: list[str] | None = None) -> int:
 
     code = app.exec()
     log.info("Cerrando %s…", APP_NAME)
-    tray.hide()
-    services.stop()
-    engine.stop()
-    store.close()
+    errors.set_notifier(None)  # cerrando: ya no hay dónde avisar
+    for step, close in (("bandeja", tray.hide), ("servicios", services.stop), ("impresión", engine.stop),
+                        ("base de datos", store.close)):
+        try:
+            close()
+        except Exception:  # noqa: BLE001  un paso que falla al cerrar no impide los siguientes (y queda anotado)
+            log.exception("Al cerrar: falló %s", step)
     return code

@@ -5,6 +5,7 @@ Cada paso se marca como listo solo cuando la app comprueba que de verdad está h
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -31,6 +32,9 @@ from ...updater import UPDATES_PAGE
 from ..actions import enqueue_test_label
 from ..context import AppContext
 from ..widgets import Card, Page, Pill, ScaledImage, button, copy_to_clipboard, label, repolish, run_dialog
+
+log = logging.getLogger(__name__)
+
 
 @dataclass
 class Step:
@@ -328,11 +332,23 @@ STEPS: list[Step] = [
 ]
 
 
+_failed_checks: set[str] = set()  # pasos cuya comprobación falló (se anota una vez por sesión)
+
+
 def _safe(check: Callable[[AppContext], bool], ctx: AppContext) -> bool:
+    """¿Está listo el paso? Si la comprobación misma falla, el paso queda pendiente y se anota por qué."""
     try:
         return bool(check(ctx))
-    except Exception:
+    except Exception:  # noqa: BLE001  la guía siempre se muestra; el paso dudoso queda pendiente
+        name = getattr(check, "__name__", repr(check))
+        if name not in _failed_checks:
+            _failed_checks.add(name)
+            log.exception("Guía: no se pudo comprobar el paso %s", name)
         return False
+
+
+def step_done(step: "Step", ctx: AppContext) -> bool:
+    return _safe(step.check, ctx)
 
 
 def progress(ctx: AppContext) -> tuple[int, int]:

@@ -27,6 +27,7 @@ from ..secret_store import EMAIL_PASSWORD, SecretStore
 log = logging.getLogger(__name__)
 
 REPEAT_SECONDS = 600  # el mismo aviso no se manda dos veces en este tiempo
+FAILURE_NOTICE_SECONDS = 3600  # un envío que falla se avisa como mucho una vez por hora
 MAX_SUBJECT = 150
 MAX_BODY = 8000
 
@@ -44,6 +45,9 @@ class EmailSender:
         self._lock = threading.Lock()
         self._queue: queue.Queue[tuple[str, str]] = queue.Queue(maxsize=50)
         self._worker: threading.Thread | None = None
+        self.events = events
+        self._warned_problem = ""  # el último «falta…» que ya se avisó (se avisa una vez por problema)
+        self._failure_noticed_at = 0.0  # el último aviso de un envío fallido (como mucho uno por hora)
         if events is not None:
             events.subscribe(self._on_event)
 
@@ -92,8 +96,14 @@ class EmailSender:
                 return False
             self._recent = {k: t for k, t in self._recent.items() if now - t < REPEAT_SECONDS}
             self._recent[key] = now
-        if self.problem():
+        problem = self.problem()
+        if problem:  # los avisos por email están pedidos pero no pueden salir: se dice una vez, no en cada aviso
+            if problem != self._warned_problem:
+                self._warned_problem = problem
+                log.warning("Avisos por email sin enviar: %s", problem)
+                self._notify(tr("Los avisos por email no salen"), problem)  # el texto ya dice dónde arreglarlo
             return False
+        self._warned_problem = ""
         try:
             self._queue.put_nowait((subject, body))
         except queue.Full:
@@ -117,6 +127,14 @@ class EmailSender:
                 self._deliver(subject, body)
             except EmailError as exc:
                 log.warning("No se pudo enviar el aviso por email «%s»: %s", subject, exc)
+                if time.time() - self._failure_noticed_at > FAILURE_NOTICE_SECONDS:
+                    self._failure_noticed_at = time.time()
+                    self._notify(tr("No se pudo enviar un aviso por email"),
+                                 tr("{0}. Prueba el envío en Ajustes → Email.", exc))
+
+    def _notify(self, title: str, text: str) -> None:
+        if self.events is not None:
+            self.events.notify(title, text, "error")
 
     def _deliver(self, subject: str, body: str) -> int:
         e = self.cfg.data.email

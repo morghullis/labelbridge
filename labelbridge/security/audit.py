@@ -45,7 +45,7 @@ class AuditLog:
                     with self.path.open("a", encoding="utf-8") as handle:
                         handle.write(line)
                 except OSError:
-                    log.debug("No se pudo escribir el registro de auditoría", exc_info=True)
+                    log.warning("No se pudo escribir el registro de seguridad", exc_info=True)
         return entry
 
     def _rotate(self) -> None:

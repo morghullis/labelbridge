@@ -5,10 +5,14 @@ from __future__ import annotations
 import logging
 import threading
 
+from .. import errors
 from .. import events as ev
 from ..i18n import tr
 
 log = logging.getLogger(__name__)
+
+RESTART_FIRST_SECONDS = 15  # tras un error inesperado, el servicio vuelve a arrancar solo
+RESTART_MAX_SECONDS = 300
 
 
 class BackgroundService:
@@ -89,8 +93,21 @@ class BackgroundService:
         self.events.emit(ev.CONNECTOR, {"name": self.name, "state": state, "message": message})
 
     def _run_safe(self, stop: threading.Event, wake: threading.Event) -> None:
-        try:
-            self.run(stop, wake)
-        except Exception as exc:
-            log.exception("El servicio %s se detuvo por un error", self.name)
-            self.set_status("error", tr("Detenido por un error: {0}", exc))
+        """Un error inesperado no apaga el servicio para siempre: queda anotado, se avisa y se reinicia solo, cada vez
+        más espaciado (15 s, 30 s, 1 min… hasta 5 min) para no insistir sin pausa si el problema sigue."""
+        failures = 0
+        while not stop.is_set():
+            try:
+                self.run(stop, wake)
+                return  # terminó porque se pidió parar (o porque se apagó)
+            except Exception as exc:  # noqa: BLE001  cualquier falla del servicio se anota, se avisa y se reintenta
+                failures += 1
+                delay = min(RESTART_MAX_SECONDS, RESTART_FIRST_SECONDS * 2 ** min(failures - 1, 5))
+                log.exception("El servicio %s se detuvo por un error (vez %d); se reinicia en %d s",
+                              self.name, failures, delay)
+                reason = errors.user_message(exc)
+                self.set_status("error", tr("Se detuvo por un error: {0}. Se reinicia solo en {1} s.", reason, delay))
+                errors.notify(tr("{0} se detuvo por un error", tr(self.label)),
+                              tr("{0}. LabelBridge lo reinicia solo; si se repite, revisa la pestaña Registro.", reason))
+            if not self.sleep(stop, wake, delay):
+                return

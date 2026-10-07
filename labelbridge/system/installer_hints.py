@@ -47,8 +47,10 @@ def forget_store() -> None:
 
     try:
         winreg.DeleteKey(winreg.HKEY_CURRENT_USER, SETUP_KEY)
-    except OSError:
-        pass
+    except FileNotFoundError:
+        pass  # ya no estaba
+    except OSError as exc:  # quedaría la clave del instalador en el registro de Windows: que se sepa
+        log.warning("No se pudo borrar los datos del instalador del registro de Windows: %s", exc)
 
 
 def apply(cfg, hints: dict[str, str]) -> bool:

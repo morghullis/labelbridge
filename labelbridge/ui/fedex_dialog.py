@@ -18,9 +18,10 @@ from ..connectors.shopify import admin_url
 from ..i18n import tr
 from .context import AppContext
 from .purchase_dialog import box_text, has_saved_box
-from .widgets import button, copy_to_clipboard, label, run_async, step_title
+from .widgets import button, copy_to_clipboard, label, run_async, step_title, window_closed
 
 CHECK_EVERY_MS = 10_000  # cada cuánto se mira si Shopify ya tiene la guía (solo con la ventana abierta)
+CHECK_FAILURES_SHOWN = 3  # tantas vueltas seguidas sin respuesta de Shopify: se muestra el motivo
 
 
 def checklist(ctx: AppContext, row: OrderRow, carrier: str) -> list[tuple[str, str, str, str]]:
@@ -51,6 +52,7 @@ class FedexDialog(QDialog):
         self.carrier = row.carrier or row.rule_carrier or "FedEx"
         self.done = False
         self.checking = False
+        self.failures = 0  # vueltas seguidas en que Shopify no contestó
         self.open_shopify = open_shopify
         self.use_other = False  # «Usar otra paquetería…»: Pedidos abre «Imprimir guía» con la lista de servicios
         # Ventana propia que queda encima del navegador mientras se compra en Shopify (sin bloquear LabelBridge).
@@ -196,10 +198,14 @@ class FedexDialog(QDialog):
 
         def finished(found: dict) -> None:
             self.checking = False
+            self.failures = 0
             self._show_result(found)
 
-        def failed(_message: str) -> None:  # sin conexión un momento: se vuelve a mirar en la próxima vuelta
+        def failed(message: str) -> None:  # sin conexión un momento: se vuelve a mirar en la próxima vuelta
             self.checking = False
+            self.failures += 1
+            if self.failures >= CHECK_FAILURES_SHOWN:  # ya no es un momento: que se vea el motivo
+                self._say(tr("No se pudo revisar el pedido en Shopify: {0}. Se sigue intentando.", message), "Warning")
 
         run_async(lambda: shopify.collect_shopify_label(self.row.legacy, self.row.name),
                   lambda found: self._safe(lambda: finished(found)), lambda message: self._safe(lambda: failed(message)))
@@ -237,7 +243,9 @@ class FedexDialog(QDialog):
     def _safe(self, action) -> None:
         try:
             action()
-        except RuntimeError:  # la ventana se cerró antes de que contestara Shopify
+        except RuntimeError as exc:  # la ventana se cerró antes de que contestara Shopify
+            if not window_closed(exc):
+                raise
             return
 
     # --- acciones ------------------------------------------------------------------------------

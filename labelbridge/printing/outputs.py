@@ -7,8 +7,11 @@ import re
 import socket
 import subprocess
 import sys
+import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Iterator
 
 from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QMarginsF, QRectF, QSizeF, Qt
 from PySide6.QtGui import QImage, QPageLayout, QPageSize, QPainter, QPdfWriter
@@ -20,6 +23,7 @@ from . import QT_PRINT_LOCK, PermanentPrintError, PrintError, ipp, zpl
 from .pages import MM_PER_INCH, PageSource, render_fitted
 
 log = logging.getLogger(__name__)
+QT_LOGGER = "labelbridge.qt"  # donde app.py anota las advertencias de Qt
 
 DEFAULT_LABEL_MM = (101.6, 152.4)
 LABEL_TOP_MM = 6.35  # en una hoja grande la etiqueta va arriba (a ¼ in del borde, fuera del margen no imprimible)
@@ -144,25 +148,63 @@ def print_with_driver(
             printer.setPageSize(_page_size(media))
             printer.setPageOrientation(QPageLayout.Orientation.Portrait)
         printer.setPageMargins(QMarginsF(0, 0, 0, 0), QPageLayout.Unit.Millimeter)
-        painter = QPainter()
-        if not painter.begin(printer):
-            raise PrintError(tr("No se pudo iniciar el trabajo en '{0}' (¿apagada o sin conexión?)", profile.system_name))
-        try:
-            _draw_sources(
-                painter,
-                QRectF(painter.viewport()),
-                float(printer.resolution()),
-                sources,
-                copies=copies,
-                new_page=printer.newPage,
-                rotate=profile.rotate,
-                crop=profile.crop,
-                crisp=profile.media in LABEL_MEDIA or label_mm is not None,
-                target_mm=media,
-                label_mm=label_mm,
-            )
-        finally:
-            painter.end()
+        with _spooler_watch() as spooler:
+            painter = QPainter()
+            if not painter.begin(printer):
+                raise PrintError(tr("No se pudo iniciar el trabajo en '{0}' (¿apagada o sin conexión?)", profile.system_name))
+            try:
+                _draw_sources(
+                    painter,
+                    QRectF(painter.viewport()),
+                    float(printer.resolution()),
+                    sources,
+                    copies=copies,
+                    new_page=printer.newPage,
+                    rotate=profile.rotate,
+                    crop=profile.crop,
+                    crisp=profile.media in LABEL_MEDIA or label_mm is not None,
+                    target_mm=media,
+                    label_mm=label_mm,
+                )
+            finally:
+                ended = painter.end()
+        # El sistema avisa de un trabajo que no llegó a la cola de impresión con una advertencia de Qt (no con un
+        # error): sin esto, se daría por impresa una etiqueta que nunca salió.
+        state = printer.printerState()
+        if not ended or state in (QPrinter.PrinterState.Error, QPrinter.PrinterState.Aborted) or spooler.failures:
+            detail = "; ".join(spooler.failures[:2])
+            log.error("El sistema no aceptó el trabajo en %s (fin=%s, estado=%s) %s", profile.system_name, ended,
+                      state, detail)
+            raise PrintError(tr("El sistema no pudo enviar el trabajo a '{0}'. Revisa que esté encendida, con papel y "
+                                "sin trabajos atascados.", profile.system_name))
+
+
+class _SpoolerWarnings(logging.Handler):
+    """Junta las advertencias de Qt de este hilo mientras se imprime: así avisa Windows que el trabajo no entró en la
+    cola (StartDoc/EndDoc/EndPage failed). Qt las manda al registro con app._install_qt_message_handler."""
+
+    FAILED = re.compile(r"\b(StartDoc|EndDoc|StartPage|EndPage|CreateDC|ResetDC)\b.*\bfailed", re.IGNORECASE)
+
+    def __init__(self) -> None:
+        super().__init__(logging.WARNING)
+        self.thread = threading.get_ident()
+        self.failures: list[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        message = record.getMessage()
+        if record.thread == self.thread and self.FAILED.search(message):
+            self.failures.append(message)
+
+
+@contextmanager
+def _spooler_watch() -> Iterator[_SpoolerWarnings]:
+    watcher = _SpoolerWarnings()
+    qt_log = logging.getLogger(QT_LOGGER)
+    qt_log.addHandler(watcher)
+    try:
+        yield watcher
+    finally:
+        qt_log.removeHandler(watcher)
 
 
 PRINTER_DRIVER_XPS = 0x00000002
@@ -181,11 +223,13 @@ def _is_xps_driver(handle) -> bool:
         attributes = info.get("PrinterDriverAttributes", info.get("dwPrinterDriverAttributes"))
         if attributes is not None:
             return bool(int(attributes) & PRINTER_DRIVER_XPS)
-    except Exception:
-        pass
+    except Exception as exc:  # noqa: BLE001  drivers viejos no tienen el nivel 8: se prueba el respaldo
+        log.info("Driver sin DRIVER_INFO_8 (%s): se mira su versión", exc)
     try:  # respaldo: los drivers v4 informan cVersion = 4
         return int(win32print.GetPrinterDriver(handle, None, 2).get("Version", 3)) >= 4
-    except Exception:
+    except Exception as exc:  # noqa: BLE001  sin datos del driver se manda como siempre (RAW), pero queda anotado
+        log.warning("No se pudo leer el driver de la impresora (%s): se envía como RAW; si es un driver v4/XPS podría "
+                    "ignorar el trabajo", exc)
         return False
 
 

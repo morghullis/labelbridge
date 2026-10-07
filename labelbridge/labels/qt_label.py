@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import logging
+
 from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QFont, QFontMetricsF, QPainter
 
 from ..printing.barcode import code128_widths
 from .order import OrderLabelData
 from ..i18n import tr
+
+log = logging.getLogger(__name__)
 
 FONT_FAMILY = "Arial"
 BLACK = Qt.GlobalColor.black
@@ -92,10 +96,12 @@ class _Canvas:
         try:
             import segno
         except ImportError:
+            log.warning("Etiqueta sin código QR: falta la librería segno")
             return False
         try:
             matrix = [list(row) for row in segno.make(data, error="m", micro=False).matrix_iter(scale=1, border=0)]
-        except Exception:
+        except Exception as exc:  # noqa: BLE001  la etiqueta sale igual, sin el QR
+            log.warning("Etiqueta sin código QR (%s): %s", exc.__class__.__name__, exc)
             return False
         cell = max(1, int(size // len(matrix)))
         ox, oy = round(x + (size - cell * len(matrix)) / 2), round(y)

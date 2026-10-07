@@ -23,7 +23,7 @@ from typing import Any, Callable
 
 import paho.mqtt.client as mqtt
 
-from .. import __version__
+from .. import __version__, errors
 from .. import events as ev
 from .. import net
 from ..config import ConfigManager, MqttSettings, slugify
@@ -178,17 +178,22 @@ class MqttService(BackgroundService):
             log.warning("MQTT: desconectado (%s); reconectando", reason_code)
 
     def _on_publish(self, client: mqtt.Client, userdata, mid: int, reason_code, properties) -> None:
+        # Corre en el hilo de paho: una excepción aquí lo terminaría y la conexión quedaría muda con «Conectado».
         with self._inflight_lock:
             entry = self._inflight.pop(mid, None)
-        if entry is not None:
-            job_id, status, updated_at = entry
+        if entry is None:
+            return
+        job_id, status, updated_at = entry
+        try:
             self.store.mark_acked(job_id, status, updated_at)
+        except Exception:  # noqa: BLE001  la confirmación se vuelve a mandar en la próxima vuelta
+            log.exception("n8n: no se pudo anotar la confirmación de %s; se vuelve a enviar", job_id)
 
     def _on_message(self, client: mqtt.Client, userdata, message: mqtt.MQTTMessage) -> None:
         try:
             self.handle_message(message.topic, message.payload, client.publish)
-        except Exception:
-            log.exception("MQTT: error procesando un mensaje de %s", message.topic)
+        except Exception as exc:  # noqa: BLE001  corre en el hilo de paho: se anota y se avisa, sin cortar la conexión
+            errors.report(tr("n8n: no se pudo procesar un trabajo"), exc)
 
     # --- mensajes -----------------------------------------------------------------------------
     def _report_error(self, publish: Callable[..., Any], job_id: str | None, message: str) -> None:
@@ -217,6 +222,8 @@ class MqttService(BackgroundService):
         if problem:
             log.warning("MQTT: %s en %s", problem, topic)
             self._report_error(publish, topic_id, problem)
+            self.events.notify(tr("n8n mandó un trabajo que no se puede imprimir"), problem, "error",
+                               kind="print_error")
             if per_job:
                 publish(topic, b"", qos=1, retain=True)
             return 0
@@ -231,7 +238,13 @@ class MqttService(BackgroundService):
                     self._resubscribe_at = time.monotonic() + 60
                     log.warning("n8n: %s Se procesará en un minuto.", exc)
                     return new
+                # Bloqueado por seguridad, o demasiados seguidos en un mensaje que el broker no guarda: no se imprime.
+                log.warning("n8n: %s no se imprimió: %s", req.title, exc)
                 self._report_error(publish, req.external_id, str(exc))
+                title = (tr("Demasiados trabajos seguidos de n8n") if exc.status == 429
+                         else tr("Etiqueta bloqueada por seguridad"))
+                self.events.notify(title, tr("{0}: {1}. No se imprimió: vuelve a mandarlo desde n8n.", req.title, exc),
+                                   "error", kind="print_error")
                 continue
             if created:
                 new += 1
@@ -269,7 +282,9 @@ class MqttService(BackgroundService):
                     result = client.publish(f"{t['acks']}/{topic_part(job['external_id'])}", body, qos=1)
                     if result.rc == mqtt.MQTT_ERR_SUCCESS:
                         self._inflight[result.mid] = (job["id"], status, job["updated_at"])
-                if result.rc != mqtt.MQTT_ERR_SUCCESS:
+                if result.rc != mqtt.MQTT_ERR_SUCCESS:  # sin conexión con el broker: se reintenta en la próxima vuelta
+                    log.warning("n8n: no se pudo enviar la confirmación de %s (código %s); se reintenta",
+                                job["title"], result.rc)
                     break
                 if status == "failed":
                     client.publish(t["errors"], body, qos=1)

@@ -29,7 +29,7 @@ from ..connectors.shopify import admin_url, package_input
 from ..i18n import tr
 from . import icons
 from .context import AppContext
-from .widgets import button, label, run_async
+from .widgets import button, label, run_async, window_closed
 
 DIM_UNITS = {"INCHES": "in", "CENTIMETERS": "cm"}
 WEIGHT_UNITS = {"OUNCES": "oz", "POUNDS": "lb", "GRAMS": "g", "KILOGRAMS": "kg"}
@@ -206,6 +206,7 @@ class ServicePicker(QObject):
         self.hint = label("", "Small", wrap=True)
         self.route: ss.Route | None = None
         self.loading = False
+        self.problem = ""  # por qué no se pudo preguntar a Shopify qué ofrece (se usa la lista completa)
         self.with_fedex = fedex
         self.keep_fedex = False  # tus reglas mandan este pedido por FedEx: sigue en la lista aunque Shopify no la liste
         self.combo.currentIndexChanged.connect(lambda _i: self._changed())
@@ -247,6 +248,14 @@ class ServicePicker(QObject):
 
     def set_loading(self, loading: bool) -> None:
         self.loading = loading
+        if loading:
+            self.problem = ""
+        self._changed()
+
+    def set_problem(self, message: str) -> None:
+        """Shopify no contestó qué servicios ofrece: se sigue con la lista completa y se dice por qué."""
+        self.loading = False
+        self.problem = message
         self._changed()
 
     def _changed(self) -> None:
@@ -264,6 +273,9 @@ class ServicePicker(QObject):
             text = tr("Shopify usa el servicio que pagó el cliente o tu paquetería preferida en Shopify.")
         if self.loading:
             text += " " + tr("Consultando qué ofrece Shopify para este envío…")
+        elif self.problem:
+            text += " " + tr("No se pudo preguntar a Shopify qué ofrece para este envío ({0}): se muestran todos.",
+                             self.problem)
         elif self.route is not None and self.route.offered is None and self.route.destination:
             text += " " + tr("(Con el permiso read_shipping verías solo lo que Shopify ofrece para este envío.)")
         self.hint.setText(text)
@@ -401,13 +413,17 @@ class PurchaseDialog(QDialog):
             try:
                 self.services.loading = False
                 self.services.fill(route)
-            except RuntimeError:  # la ventana se cerró antes
+            except RuntimeError as exc:  # la ventana se cerró antes
+                if not window_closed(exc):
+                    raise
                 return
 
-        def failed(_message: str) -> None:
+        def failed(message: str) -> None:
             try:
-                self.services.set_loading(False)
-            except RuntimeError:
+                self.services.set_problem(message)
+            except RuntimeError as exc:  # la ventana se cerró antes
+                if not window_closed(exc):
+                    raise
                 return
 
         run_async(lambda: self.ctx.services.shopify.shipping_route(self.row.legacy), loaded, failed)

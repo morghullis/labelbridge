@@ -59,7 +59,10 @@ class KeepAwake:
             try:
                 import ctypes
 
-                return bool(ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED))
+                if ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED):
+                    return True
+                log.warning("Windows no aceptó mantener despierto el equipo (SetThreadExecutionState devolvió 0)")
+                return False
             except (AttributeError, OSError) as exc:
                 log.warning("No se pudo mantener despierto el equipo: %s", exc)
                 return False

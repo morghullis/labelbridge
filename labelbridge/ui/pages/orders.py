@@ -11,6 +11,7 @@ compra (servicio, caja y aviso); con varios pedidos elegidos, todo con una sola 
 from __future__ import annotations
 
 import csv
+import logging
 import time
 from html import escape
 from datetime import datetime
@@ -38,6 +39,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ... import errors
 from ...config import CARRIERS, FEDEX_SERVICES, FEDEX_SIGNATURES, ShippingRule
 from ...connectors.label_batch import BUY, IN_SHOPIFY, REPRINT, SKIP, plan_for
 from ...connectors.shipping_services import AUTO
@@ -72,6 +74,8 @@ from ..widgets import (
     run_async,
     run_dialog,
 )
+
+log = logging.getLogger(__name__)
 
 PERIODS = (("today", N_("Hoy")), (7, N_("Últimos 7 días")), (30, N_("Últimos 30 días")), (60, N_("Últimos 60 días")))
 STALE_SECONDS = 60
@@ -944,8 +948,9 @@ class OrdersPage(Page):
             for row in rows:
                 try:
                     shopify.mark_fulfilled(row.legacy, row.name)
-                except Exception as exc:  # cada pedido por su lado: se informa al final
-                    problems.append(str(exc))
+                except Exception as exc:  # noqa: BLE001  cada pedido por su lado: se informa al final
+                    log.warning("No se pudo marcar %s como preparado: %s", row.name, exc, exc_info=errors.is_bug(exc))
+                    problems.append(f"{row.name}: {errors.user_message(exc)}")
             return problems
 
         def done(problems: list[str]) -> None:
@@ -1044,8 +1049,14 @@ class OrdersPage(Page):
         if not path:
             return
         rows = sorted(self.all_rows, key=lambda row: row.created, reverse=True)
-        with open(path, "w", newline="", encoding="utf-8-sig") as handle:  # con BOM: Excel lo abre bien
-            writer = csv.writer(handle)
-            writer.writerow([tr(column) for column in CSV_COLUMNS])
-            writer.writerows(csv_rows(rows))
+        try:
+            with open(path, "w", newline="", encoding="utf-8-sig") as handle:  # con BOM: Excel lo abre bien
+                writer = csv.writer(handle)
+                writer.writerow([tr(column) for column in CSV_COLUMNS])
+                writer.writerows(csv_rows(rows))
+        except OSError as exc:  # sin permiso, disco lleno, el archivo abierto en Excel…
+            log.warning("No se pudo exportar a %s: %s", path, exc)
+            error(self, tr("Exportar"), tr("No se pudo guardar el archivo: {0}. Si está abierto en Excel, ciérralo y "
+                                           "vuelve a intentarlo.", exc.strerror or exc))
+            return
         info(self, tr("Exportar"), tr("Se guardaron {0} pedidos en {1}.", len(rows), path))

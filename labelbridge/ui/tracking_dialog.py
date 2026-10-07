@@ -15,7 +15,7 @@ from ..connectors.orders_overview import OrderRow
 from ..connectors.tracking import STEPS, Shipment, Tracking
 from ..i18n import date_text, tr
 from .context import AppContext
-from .widgets import Pill, button, copy_to_clipboard, label, run_async, run_dialog
+from .widgets import Pill, button, copy_to_clipboard, label, run_async, run_dialog, window_closed
 
 DONE, CURRENT, TODO, PROBLEM = "#29845A", "#303030", "#C9C9C9", "#C70A24"
 
@@ -131,13 +131,17 @@ class TrackingDialog(QDialog):
             try:
                 self.refresh_btn.setEnabled(True)
                 self.status.setText(tr("No se pudo cargar el seguimiento: {0}", message))
-            except RuntimeError:  # la ventana se cerró antes
+            except RuntimeError as exc:  # la ventana se cerró antes
+                if not window_closed(exc):
+                    raise
                 return
 
         def loaded(tracking: Tracking) -> None:
             try:
                 self._show(tracking)
-            except RuntimeError:
+            except RuntimeError as exc:  # la ventana se cerró antes
+                if not window_closed(exc):
+                    raise
                 return
 
         run_async(lambda: self.ctx.services.shopify.tracking(self.row.legacy), loaded, failed)

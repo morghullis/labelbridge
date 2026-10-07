@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import logging
 
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -16,11 +17,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .. import errors
 from ..config import MEDIA_PRESETS, PRINTER_KINDS, PrinterProfile
 from ..i18n import N_, tr
 from ..system.platform import pick
 from .context import AppContext
 from .widgets import button, error, form_layout, info, label, run_async
+
+log = logging.getLogger(__name__)
 
 
 class PrinterDialog(QDialog):
@@ -57,8 +61,11 @@ class PrinterDialog(QDialog):
                 from ..printing.outputs import list_system_printers
 
                 names = [p["name"] for p in list_system_printers()]
-            except Exception:
-                pass
+            except Exception as exc:  # noqa: BLE001  se puede escribir el nombre a mano; el motivo se ve abajo
+                log.warning("No se pudo listar las impresoras del sistema: %s", exc, exc_info=errors.is_bug(exc))
+                self.system_name.setToolTip(tr("No se pudo leer la lista de impresoras: {0}. Escribe el nombre "
+                                               "exacto.", errors.user_message(exc)))
+                self.system_name.lineEdit().setPlaceholderText(tr("No se pudo leer la lista: escribe el nombre"))
             if profile.system_name and profile.system_name not in names:
                 names.insert(0, profile.system_name)
             self.system_name.addItems(names)

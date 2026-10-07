@@ -18,7 +18,7 @@ from .connectors.shopify import ShopifyService
 from .i18n import tr
 from .jobstore import JobStore
 from .printing.engine import PrintEngine
-from .secret_store import LOCAL_API_KEY, SecretStore
+from .secret_store import LOCAL_API_KEY, SecretStore, SecretStoreError
 from .updater import UpdateService
 
 log = logging.getLogger(__name__)
@@ -98,9 +98,23 @@ class Services:
             "shopify": self.shopify,
             "general": self.network,
         }
-        if not secrets.get(LOCAL_API_KEY):
-            secrets.set(LOCAL_API_KEY, generate_key())
+        self._ensure_local_api_key(secrets, events)
         cfg.subscribe(self._on_config_saved)
+
+    @staticmethod
+    def _ensure_local_api_key(secrets: SecretStore, events: ev.Events) -> None:
+        """La clave de la API local se crea una sola vez. Si el almacén seguro no la deja leer (p. ej. se negó el
+        permiso del Llavero), no se crea otra: dejaría fuera, sin aviso, a las integraciones que ya usan la de antes."""
+        try:
+            existing = secrets.get(LOCAL_API_KEY, strict=True)
+        except SecretStoreError as exc:
+            log.error("No se pudo leer la clave de la API local: %s", exc)
+            events.notify(tr("No se pudo leer la clave de la API local"), tr(
+                "{0}. Las integraciones que imprimen por la API local no podrán entrar hasta que se pueda leer: "
+                "reinicia LabelBridge y acepta el permiso del almacén de contraseñas.", exc), "error")
+            return
+        if not existing:
+            secrets.set(LOCAL_API_KEY, generate_key())
 
     def all(self) -> list[BackgroundService]:
         return [*self.by_section.values(), self.updates]

@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import socket
 import threading
 import time
@@ -445,6 +446,8 @@ class ConfigManager:
         self._lock = threading.RLock()
         self._listeners: list[Callable[[str], None]] = []
         self._unknown: dict = {}
+        # Si la configuración guardada no se pudo leer: qué pasó y dónde quedó la copia (la app lo dice al abrir).
+        self.load_problem = ""
         self.data: Settings = self._load()
 
     def _read(self, path: Path) -> dict:
@@ -461,13 +464,25 @@ class ConfigManager:
             raw = self._read(source)
             data = _from_dict(Settings, raw)
             self._unknown = _unknown_keys(Settings, raw)
-        except Exception:
+        except Exception:  # noqa: BLE001  dañada, ilegible o de otra clave: se aparta (sin borrarla) y se avisa
             backup = source.with_name(f"{source.stem}.corrupt-{int(time.time())}{source.suffix}")
             log.exception("%s dañado o ilegible; se guarda copia en %s y se usan valores por defecto", source.name, backup)
             try:
                 source.replace(backup)
             except OSError:
-                pass
+                try:  # no se pudo mover (otro programa la tiene abierta): al menos una copia
+                    shutil.copy2(source, backup)
+                except OSError:
+                    log.error("No se pudo guardar una copia de %s: al guardar cambios se reemplazará", source.name,
+                              exc_info=True)
+                    backup = None
+            self.load_problem = (
+                tr("La configuración guardada no se pudo leer y LabelBridge empezó con los valores de fábrica. Revisa "
+                   "Impresoras, Shopify y Ajustes. La anterior quedó guardada en {0}.", backup)
+                if backup is not None else
+                tr("La configuración guardada no se pudo leer y LabelBridge empezó con los valores de fábrica (no se "
+                   "pudo guardar una copia de la anterior). Revisa Impresoras, Shopify y Ajustes.")
+            )
             return Settings()
         general = raw.get("general") if isinstance(raw, dict) else None
         if isinstance(general, dict) and "language" not in general:

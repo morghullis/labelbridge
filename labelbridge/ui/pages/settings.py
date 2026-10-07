@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import sys
 from types import SimpleNamespace
 
@@ -27,7 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ... import APP_NAME, __version__
+from ... import APP_NAME, __version__, errors
 from ...assistant.pricing import price_for
 from ...assistant.providers import (
     PROVIDERS,
@@ -50,6 +51,8 @@ from ...updater import UPDATES_PAGE
 from ..alerts import play_async
 from ..context import AppContext
 from ..widgets import Card, Page, SecretField, button, confirm, error, form_layout, info, label, run_async
+
+log = logging.getLogger(__name__)
 
 GMAIL_APP_PASSWORDS = "https://myaccount.google.com/apppasswords"
 REMIND_OPTIONS = {0: N_("No recordar"), 15: N_("Cada 15 minutos"), 30: N_("Cada 30 minutos"), 60: N_("Cada hora"),
@@ -909,8 +912,10 @@ class SettingsPage(Page):
         self._save_notifications()
         try:
             autostart.apply(g.start_with_windows)
-        except OSError:
-            pass
+        except OSError as exc:
+            log.warning("No se pudo configurar el inicio automático", exc_info=True)
+            error(self, tr("Inicio automático"), tr(
+                "Los ajustes se guardaron, pero no se pudo cambiar el inicio automático: {0}", errors.user_message(exc)))
         if language_changed:
             window = self.window()
             if confirm(self, tr("Idioma"), tr("El idioma cambia al reiniciar LabelBridge. ¿Reiniciar ahora?")) and hasattr(

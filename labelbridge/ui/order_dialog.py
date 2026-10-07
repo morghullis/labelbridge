@@ -7,6 +7,8 @@ aquí: van a la nota del pedido en Shopify (se ven allí y en la hoja de empaque
 
 from __future__ import annotations
 
+import logging
+
 from typing import Callable
 
 from PySide6.QtCore import Qt, QTimer, QUrl
@@ -35,7 +37,9 @@ from ..connectors.shopify_orders import (
 )
 from ..i18n import date_text, tr
 from .context import AppContext
-from .widgets import Pill, button, copy_to_clipboard, error, label, run_async
+from .widgets import Pill, button, copy_to_clipboard, error, label, run_async, window_closed
+
+log = logging.getLogger(__name__)
 
 THUMB = 56
 _thumbs: dict[str, bytes] = {}  # fotos ya descargadas (mientras la app está abierta)
@@ -164,7 +168,8 @@ class OrderDialog(QDialog):
                 self.content.insertWidget(self.content.count() - 1, section)
         urls = [item.image for item in detail.items if item.image]
         if urls:
-            run_async(lambda: _fetch_thumbs(urls), self._set_thumbs)
+            run_async(lambda: _fetch_thumbs(urls), self._set_thumbs,
+                      lambda message: log.info("Sin fotos de los productos de %s: %s", self.row.name, message))
 
     # --- secciones -----------------------------------------------------------------------------
     def _section(self, title: str) -> tuple[QFrame, QVBoxLayout]:
@@ -296,7 +301,9 @@ class OrderDialog(QDialog):
             for photo in self.images.get(url, []):
                 try:
                     photo.setPixmap(scaled)
-                except RuntimeError:  # la ventana se cerró mientras bajaban las fotos
+                except RuntimeError as exc:  # la ventana se cerró mientras bajaban las fotos
+                    if not window_closed(exc):
+                        raise
                     return
 
     # --- acciones ------------------------------------------------------------------------------

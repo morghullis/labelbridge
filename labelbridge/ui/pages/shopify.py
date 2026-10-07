@@ -414,7 +414,7 @@ class ShopifyPage(Page):
         self.test_btn.setEnabled(True)
         self.test_btn.setText(tr("Guardar y probar conexión"))
         self.result.setObjectName("Warning")
-        self.result.setText(f"✗ {message}")
+        self.result.setText(message)
         self.result.setVisible(True)
         self.result.style().unpolish(self.result)
         self.result.style().polish(self.result)

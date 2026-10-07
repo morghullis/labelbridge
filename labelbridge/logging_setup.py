@@ -30,7 +30,8 @@ class MemoryLogHandler(logging.Handler):
     def emit(self, record: logging.LogRecord) -> None:
         try:
             line = self.format(record)
-        except Exception:
+        except Exception:  # noqa: BLE001  logging decide qué hacer con un registro que no se puede formatear
+            self.handleError(record)
             return
         self.lines.append((record.levelno, line))
         with self._lock_listeners:
@@ -38,8 +39,8 @@ class MemoryLogHandler(logging.Handler):
         for callback in listeners:
             try:
                 callback(record.levelno, line)
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001  una pantalla que falla al mostrar el registro no corta el registro
+                self.handleError(record)
 
 
 memory_handler = MemoryLogHandler()

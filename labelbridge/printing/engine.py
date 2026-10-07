@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from .. import errors
 from .. import events as ev
 from .. import net
 from ..config import LABEL_MEDIA, MEDIA_PRESETS, ConfigManager, PrinterProfile
@@ -30,6 +31,7 @@ from .pages import ImageSource, PageSource, PdfSource, VectorSource
 log = logging.getLogger(__name__)
 
 RETRY_DELAYS = (10, 30, 60, 120, 300, 600, 900)
+PREFETCH_RETRY_SECONDS = 60  # una descarga anticipada que falló no se vuelve a probar antes de esto
 # Destinos tcp:// / ipp:// escritos en un trabajo: solo puertos de impresión (evita usar la app
 # para enviar bytes a otros servicios de la red). Las impresoras configuradas no tienen límite.
 ADHOC_PORTS = set(range(9100, 9110)) | {631, 515}
@@ -106,7 +108,10 @@ class PrintEngine:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._last_cleanup = 0.0
+        self._prefetch_failed: dict[str, float] = {}  # trabajo → cuándo falló su descarga (no se reintenta en seguida)
         self.current_job_id: str | None = None
+        # Por qué el motor no está funcionando bien («» si todo va bien): el estado de abajo lo muestra.
+        self.problem = ""
         # Funciones que añaden cabeceras de autenticación a descargas concretas (p. ej. Shopify).
         self.url_auth_providers: list = []
 
@@ -153,8 +158,11 @@ class PrintEngine:
 
     # --- bucle ---------------------------------------------------------------------
     def _loop(self) -> None:
+        """Nada lo detiene salvo stop(): un error inesperado (la base de datos, un trabajo raro) queda anotado, se avisa,
+        el estado de abajo lo muestra y el motor sigue con la vuelta siguiente."""
         log.info("Motor de impresión iniciado")
         while not self._stop.is_set():
+            wait = 5.0
             try:
                 self._prefetch()
                 if not self.paused:
@@ -168,11 +176,25 @@ class PrintEngine:
                     removed = self.store.cleanup(self.cfg.data.general.retention_days)
                     if removed:
                         log.info("Historial: %d trabajos antiguos eliminados", removed)
-            except Exception:
+                wait = self._wait_seconds()
+                self._set_problem("")
+            except Exception as exc:  # noqa: BLE001  el motor no puede morir: se anota, se avisa y sigue
                 log.exception("Error inesperado en el motor de impresión")
-            self._wake.wait(timeout=self._wait_seconds())
+                self._set_problem(errors.user_message(exc))
+                wait = 10.0
+            self._wake.wait(timeout=wait)
             self._wake.clear()
         log.info("Motor de impresión detenido")
+
+    def _set_problem(self, problem: str) -> None:
+        if problem == self.problem:
+            return
+        self.problem = problem
+        self.events.emit(ev.ENGINE, {"problem": problem})
+        if problem:
+            errors.notify(tr("Problema al imprimir"),
+                          tr("{0}. LabelBridge lo vuelve a intentar solo; si se repite, revisa la pestaña Registro.",
+                             problem))
 
     def _wait_seconds(self) -> float:
         next_at = self.store.next_retry_at()
@@ -181,13 +203,25 @@ class PrintEngine:
         return max(0.2, min(5.0, next_at - time.time()))
 
     def _prefetch(self) -> None:
-        """Descarga los archivos de trabajos con URL apenas llegan (las URLs firmadas caducan)."""
+        """Descarga los archivos de trabajos con URL apenas llegan (las URLs firmadas caducan). Si uno falla, siguen los
+        demás (y ese se vuelve a probar en un minuto); sin conexión no se insiste con el resto. Al imprimirlo, el trabajo
+        lo descarga de nuevo y, si sigue fallando, se reintenta y se avisa como cualquier otro error."""
+        now = time.time()
         for job in self.store.needing_download():
+            if now - self._prefetch_failed.get(job["id"], 0.0) < PREFETCH_RETRY_SECONDS:
+                continue
             try:
                 self._download(job)
-            except Exception as exc:
-                log.warning("No se pudo descargar %s todavía: %s", job["title"], exc)
+            except net.NetworkError as exc:
+                log.warning("Sin conexión para descargar %s todavía: %s", job["title"], exc)
+                self._prefetch_failed[job["id"]] = now
                 break
+            except Exception as exc:  # noqa: BLE001  se anota y se sigue con los demás
+                expected = isinstance(exc, (PrintError, net.HttpError))
+                log.warning("No se pudo descargar %s todavía: %s", job["title"], exc, exc_info=not expected)
+                self._prefetch_failed[job["id"]] = now
+            else:
+                self._prefetch_failed.pop(job["id"], None)
 
     def _download(self, job: dict[str, Any]) -> dict[str, Any]:
         from ..security.policy import PolicyDenied
@@ -227,10 +261,23 @@ class PrintEngine:
             self.events.emit(ev.JOB, done)
             # Si sale el aviso o suena lo decide Ajustes → Notificaciones y sonidos.
             self.events.notify(tr("Etiqueta impresa"), f"{job['title']} → {profile.display_name()}", kind="printed")
-        except Exception as exc:
-            self._handle_failure(job, profile, exc)
+        except Exception as exc:  # noqa: BLE001  toda falla de un trabajo pasa por _handle_failure (reintento o aviso)
+            try:
+                self._handle_failure(job, profile, exc)
+            except Exception:  # noqa: BLE001  ni siquiera se pudo anotar la falla (la base de datos)
+                log.exception("No se pudo registrar la falla de %s", job["title"])
+                self._requeue(job)
+                raise  # el bucle lo muestra como problema del motor
         finally:
             self.current_job_id = None
+
+    def _requeue(self, job: dict[str, Any]) -> None:
+        """Que el trabajo no quede «imprimiendo» para siempre: vuelve a la cola (o, si ni eso se puede, al abrir la app
+        otra vez, que devuelve a la cola lo que quedó a medias)."""
+        try:
+            self.store.set_retry(job["id"], tr("Error inesperado al imprimir: se reintenta"), RETRY_DELAYS[1])
+        except Exception:  # noqa: BLE001  la base de datos no responde: se resuelve al reabrir la app
+            log.exception("No se pudo devolver %s a la cola", job["title"])
 
     def _handle_failure(self, job: dict[str, Any], profile: PrinterProfile | None, exc: Exception) -> None:
         retryable = getattr(exc, "retryable", True) if isinstance(exc, PrintError) else True
@@ -240,7 +287,7 @@ class PrintEngine:
                 retryable = False
         else:
             log.exception("Error imprimiendo %s", job["title"])
-            message = tr("Error inesperado: {0}", exc)
+            message = errors.user_message(exc)
         printer_name = profile.display_name() if profile else ""
         attempts = job["attempts"]
         max_retries = max(0, self.cfg.data.general.max_retries)

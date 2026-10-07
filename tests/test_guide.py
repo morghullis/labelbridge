@@ -45,5 +45,6 @@ def test_guide_progress_follows_real_state(core):
     page._run_action("ack:daily", page.cards[0].toggle)
     assert is_complete(ctx)
     page.refresh()
-    assert page.summary_title.text().startswith("✓")
+    assert page.summary_title.text().startswith("¡Todo listo!")
+    assert page.bar.property("complete") is True  # la barra pasa a verde
     assert admin_draft_order_url(ctx) == "https://admin.shopify.com/store/pedroyorubajewelry/draft_orders/new"

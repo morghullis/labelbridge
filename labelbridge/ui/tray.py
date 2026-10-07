@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from typing import Callable
 
@@ -14,6 +15,8 @@ from ..i18n import tr
 from ..system.platform import MAC
 from . import alerts, icons
 from .context import AppContext
+
+log = logging.getLogger(__name__)
 
 
 class Tray(QSystemTrayIcon):
@@ -89,8 +92,10 @@ class Tray(QSystemTrayIcon):
         elif kind == "open_url" and isinstance(data, dict):
             # Solo páginas del admin de Shopify (p. ej. el pedido para «Imprimir etiqueta» de la FedEx de Flow).
             url = str(data.get("url") or "")
-            if url.startswith("https://admin.shopify.com/"):
-                QDesktopServices.openUrl(QUrl(url))
+            if url.startswith("https://admin.shopify.com/") and not QDesktopServices.openUrl(QUrl(url)):
+                log.warning("No se pudo abrir el navegador en %s", url)
+                self.ctx.events.notify(tr("No se pudo abrir el navegador"),
+                                       tr("Abre el pedido a mano en Shopify → Pedidos: {0}", url), "error")
         elif kind == "connector" and isinstance(data, dict) and data.get("state") == "error":
             names = {"shopify": tr("Shopify"), "mqtt": tr("n8n (tiempo real)"), "local_api": tr("API local")}
             name = names.get(data.get("name"), data.get("name"))

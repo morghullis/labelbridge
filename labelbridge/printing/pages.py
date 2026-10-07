@@ -5,6 +5,7 @@ Todo trabaja en píxeles del dispositivo: el llamador indica tamaño destino y D
 
 from __future__ import annotations
 
+import logging
 import os
 import tempfile
 from typing import Callable
@@ -15,6 +16,8 @@ from PySide6.QtPdf import QPdfDocument, QPdfDocumentRenderOptions
 
 from ..i18n import tr
 from . import PermanentPrintError
+
+log = logging.getLogger(__name__)
 
 MM_PER_INCH = 25.4
 PT_PER_MM = 72.0 / MM_PER_INCH
@@ -104,8 +107,10 @@ class PdfSource(PageSource):
             self._doc = None  # type: ignore[assignment]
         try:
             os.unlink(self._path)
-        except OSError:
+        except FileNotFoundError:
             pass
+        except OSError as exc:  # el PDF descifrado quedaría en la carpeta temporal: que se sepa
+            log.warning("No se pudo borrar el PDF temporal %s: %s", self._path, exc)
 
 
 class ImageSource(PageSource):

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import traceback
+import logging
 from typing import Any, Callable
 
 from PySide6.QtCore import (
@@ -39,9 +39,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .. import errors
 from ..i18n import tr
 from . import icons
 from .theme import ACCENT, STATE_COLORS, Color
+
+log = logging.getLogger(__name__)
 
 
 # --- tareas en segundo plano -----------------------------------------------------------------
@@ -52,17 +55,21 @@ class _TaskSignals(QObject):
 
 
 class _Task(QRunnable):
-    def __init__(self, fn: Callable[[], Any]) -> None:
+    def __init__(self, fn: Callable[[], Any], what: str) -> None:
         super().__init__()
         self.fn = fn
+        self.what = what
         self.signals = _TaskSignals()
 
     def run(self) -> None:
         try:
             result = self.fn()
-        except Exception as exc:  # se muestra al usuario
-            traceback.print_exc()
-            self.signals.failed.emit(str(exc) or exc.__class__.__name__)
+        except Exception as exc:  # noqa: BLE001  se anota siempre y se entrega como texto para la persona
+            if errors.is_bug(exc):
+                log.exception("Falló una tarea en segundo plano (%s)", self.what or "sin nombre")
+            else:  # sin red, Shopify, la impresora…: el mensaje ya dice qué pasó
+                log.warning("Falló una tarea en segundo plano (%s): %s", self.what or "sin nombre", exc)
+            self.signals.failed.emit(errors.user_message(exc))
         else:
             self.signals.done.emit(result)
 
@@ -74,9 +81,14 @@ def run_async(
     fn: Callable[[], Any],
     on_done: Callable[[Any], None] | None = None,
     on_error: Callable[[str], None] | None = None,
+    what: str = "",
 ) -> None:
-    """Ejecuta fn fuera del hilo de la UI y entrega el resultado en el hilo de la UI."""
-    task = _Task(fn)
+    """Ejecuta fn fuera del hilo de la UI y entrega el resultado en el hilo de la UI.
+
+    Si falla, queda anotado en el registro y `on_error` recibe un texto para la persona («Error inesperado (KeyError)…»
+    en vez de «'id'»). Sin `on_error` se avisa con el título `what`: ninguna falla pasa en silencio.
+    """
+    task = _Task(fn, what)
     task.setAutoDelete(False)
     _active_tasks.add(task)
 
@@ -87,6 +99,8 @@ def run_async(
         task.signals.done.connect(on_done)
     if on_error:
         task.signals.failed.connect(on_error)
+    else:
+        task.signals.failed.connect(lambda message: errors.notify(what or tr("Algo falló en segundo plano"), message))
     task.signals.done.connect(lambda _r: finish())
     task.signals.failed.connect(lambda _e: finish())
     QThreadPool.globalInstance().start(task)
@@ -116,6 +130,12 @@ def label(text: str = "", name: str | None = None, wrap: bool = False, selectabl
     if selectable:
         lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
     return lbl
+
+
+def window_closed(exc: RuntimeError) -> bool:
+    """¿La ventana ya se cerró? (Qt borró sus piezas y PySide avisa con «…already deleted»). Una respuesta que llega
+    tarde se ignora; cualquier otro RuntimeError es un error de verdad y no se tapa."""
+    return "already deleted" in str(exc)
 
 
 def repolish(widget: QWidget) -> None:

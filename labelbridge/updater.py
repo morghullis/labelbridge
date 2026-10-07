@@ -24,7 +24,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from . import __version__
+from . import __version__, errors
 from . import events as ev
 from . import net
 from .config import ConfigManager
@@ -39,6 +39,7 @@ MANIFEST_URL = UPDATES_PAGE + "latest.json"
 if not is_frozen():  # solo en desarrollo y pruebas: la app instalada siempre usa la página oficial
     MANIFEST_URL = os.environ.get("LABELBRIDGE_UPDATE_URL", MANIFEST_URL)
 CHECK_EVERY = 6 * 3600
+CHECK_FAILURES_NOTICE = 4  # búsquedas seguidas que fallan (un día) antes de avisar
 UPDATE = "update"  # evento con UpdateInfo
 MAX_INSTALLER_BYTES = 300 * 1024 * 1024
 
@@ -347,14 +348,22 @@ class UpdateService(BackgroundService):
     def run(self, stop: threading.Event, wake: threading.Event) -> None:
         if not self.sleep(stop, wake, 25):  # deja arrancar la app primero
             return
+        failures = 0
         while not stop.is_set():
             try:
                 info = self.check_now()
                 if info is not None and info.version != self.cfg.data.general.skipped_version:
                     log.info("Actualización disponible: %s (instalada %s)", info.version, __version__)
                     self.events.emit(UPDATE, info)
-            except Exception as exc:  # sin Internet, página caída...: se reintenta luego
-                log.info("No se pudo buscar actualizaciones: %s", exc)
+                failures = 0
+            except Exception as exc:  # noqa: BLE001  sin Internet, página caída...: se reintenta luego
+                failures += 1
+                log.warning("No se pudo buscar actualizaciones (vez %d): %s", failures, exc,
+                            exc_info=errors.is_bug(exc))
+                if failures == CHECK_FAILURES_NOTICE:  # un día sin poder buscar: que se sepa (una sola vez)
+                    self.events.notify(tr("No se pueden buscar versiones nuevas"), tr(
+                        "Hace un día que falla: {0}. LabelBridge sigue imprimiendo; revisa la conexión a Internet o "
+                        "busca a mano en Ajustes → Actualizaciones.", errors.user_message(exc)), "error")
             if not self.sleep(stop, wake, CHECK_EVERY):
                 break
 
@@ -395,7 +404,8 @@ def _stored_update(store_get: Callable[[str], Any]) -> UpdateInfo | None:
         return None
     try:
         return UpdateInfo.from_json(raw)
-    except Exception:
+    except Exception as exc:  # noqa: BLE001  un registro dañado no impide abrir la app, pero queda anotado
+        log.warning("Registro de la última actualización ilegible (%s): se ignora", exc)
         return None
 
 

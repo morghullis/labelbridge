@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import getpass
+import logging
 import sys
 import time
 
@@ -10,6 +11,8 @@ from PySide6.QtCore import QObject, Signal
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 
 from .. import APP_ID
+
+log = logging.getLogger(__name__)
 
 # El instalador (Inno Setup, AppMutex) usa este nombre para saber si la app está abierta.
 WINDOWS_MUTEX = "LabelBridgeRunningMutex"
@@ -41,7 +44,8 @@ class SingleInstance(QObject):
         QLocalServer.removeServer(self.key)
         self._server = QLocalServer(self)
         self._server.newConnection.connect(self._on_connection)
-        self._server.listen(self.key)
+        if not self._server.listen(self.key):  # otra copia no podría avisar a esta para mostrar la ventana
+            log.warning("No se pudo abrir el canal de instancia única (%s)", self._server.errorString())
         if sys.platform == "win32":
             import ctypes
 

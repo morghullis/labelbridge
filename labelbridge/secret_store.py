@@ -83,6 +83,7 @@ class SecretStore:
             if name in self._cache and (self._cache[name] or not strict):
                 return self._cache[name]  # un vacío en caché no basta en modo estricto: se vuelve a consultar
             value = ""
+            failed = False
             if self._keyring is not None:
                 try:
                     value = self._keyring.get_password(SERVICE, name) or ""
@@ -90,28 +91,30 @@ class SecretStore:
                     if strict:
                         raise SecretStoreError(tr("No se pudo leer {0} del almacén seguro", name)) from exc
                     log.exception("No se pudo leer el secreto %s del almacén seguro", name)
+                    failed = True
             if not value:
                 value = self._read_file().get(name, "")
-            self._cache[name] = value
+            if value or not failed:  # tras un error no se recuerda el vacío: la próxima lectura vuelve a probar
+                self._cache[name] = value
             return value
 
     def set(self, name: str, value: str) -> None:
+        """Guarda el secreto (vacío: lo borra). Si el almacén seguro no lo deja borrar, lanza SecretStoreError: un
+        secreto que se quiso quitar nunca vuelve en silencio."""
         value = (value or "").strip()
         with self._lock:
             self._cache[name] = value
             stored = False
             if self._keyring is not None:
-                try:
-                    if value:
+                if value:
+                    try:
                         self._keyring.set_password(SERVICE, name, value)
-                    else:
-                        try:
-                            self._keyring.delete_password(SERVICE, name)
-                        except Exception:
-                            pass
+                        stored = True
+                    except Exception:
+                        log.exception("No se pudo guardar %s en el almacén seguro; uso archivo", name)
+                else:
+                    self._delete_from_keyring(name)
                     stored = True
-                except Exception:
-                    log.exception("No se pudo guardar %s en el almacén seguro; uso archivo", name)
             data = self._read_file()
             if stored:
                 data.pop(name, None)
@@ -120,6 +123,18 @@ class SecretStore:
             else:
                 data.pop(name, None)
             self._write_file(data)
+
+    def _delete_from_keyring(self, name: str) -> None:
+        from keyring.errors import PasswordDeleteError
+
+        try:
+            self._keyring.delete_password(SERVICE, name)
+        except PasswordDeleteError:
+            return  # no estaba guardado: nada que borrar
+        except Exception as exc:
+            log.exception("No se pudo borrar %s del almacén seguro", name)
+            self._cache.pop(name, None)  # la próxima lectura dice la verdad (sigue guardado)
+            raise SecretStoreError(tr("No se pudo borrar {0} del almacén seguro: sigue guardado", name)) from exc
 
     # --- archivo de respaldo ---------------------------------------------------------------------
     def _read_file(self) -> dict[str, str]:

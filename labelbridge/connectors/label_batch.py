@@ -14,7 +14,7 @@ import threading
 from dataclasses import dataclass, field
 from typing import Callable
 
-from .. import net
+from .. import errors, net
 from ..i18n import N_, tr
 from .orders_overview import OrderRow
 from .shipping_services import AUTO, rejection
@@ -119,8 +119,14 @@ def run_batch(
             if item.plan == IN_SHOPIFY:  # que LabelBridge la imprima sola cuando se compre en Shopify
                 try:
                     shopify.buy_in_shopify(item.row.legacy, item.row.name, item.row.carrier or item.row.rule_carrier)
-                except Exception as exc:  # ya tiene una compra o no se pudo marcar: solo se informa
-                    log.info("Imprimir guías: %s no quedó esperando su guía de Shopify: %s", item.row.name, exc)
+                except Exception as exc:  # noqa: BLE001  ya tiene una compra o no se pudo marcar: se dice en la fila
+                    log.warning("Imprimir guías: %s no quedó esperando su guía de Shopify: %s", item.row.name, exc,
+                                exc_info=errors.is_bug(exc))
+                    item.state, item.detail = "skipped", tr("{0} (no quedó esperando la guía: {1})", item.why,
+                                                            errors.user_message(exc))
+                    summary.skipped += 1
+                    report(index, item)
+                    continue
             item.state, item.detail = "skipped", item.why
             summary.skipped += 1
             report(index, item)

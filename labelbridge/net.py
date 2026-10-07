@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import logging
 import socket
 import ssl
 import urllib.error
@@ -14,6 +15,8 @@ from urllib.parse import urlparse
 
 from . import APP_NAME, __version__
 from .i18n import tr
+
+log = logging.getLogger(__name__)
 
 USER_AGENT = f"{APP_NAME}/{__version__}"
 DEFAULT_MAX_BYTES = 30 * 1024 * 1024
@@ -114,8 +117,8 @@ def ssl_context() -> ssl.SSLContext:
             import certifi
 
             ctx.load_verify_locations(certifi.where())
-        except Exception:
-            pass
+        except Exception as exc:  # noqa: BLE001  quedan los certificados del sistema; si TLS falla, se sabrá por qué
+            log.warning("No se pudieron cargar los certificados de certifi (%s): se usan solo los del sistema", exc)
         _ssl_context = ctx
     return _ssl_context
 

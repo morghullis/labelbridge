@@ -88,6 +88,10 @@ class _Server(ThreadingHTTPServer):
         finally:
             self.slots.release()
 
+    def handle_error(self, request, client_address) -> None:
+        # Sin esto, socketserver escribe la traza en la consola, que la app instalada no tiene: se pierde.
+        log.exception("API local: error atendiendo a %s", client_address[0] if client_address else "?")
+
 
 class _Handler(BaseHTTPRequestHandler):
     server: _Server
@@ -98,6 +102,10 @@ class _Handler(BaseHTTPRequestHandler):
 
     def log_message(self, fmt: str, *args: Any) -> None:
         log.debug("API %s - %s", self.address_string(), fmt % args)
+
+    def log_error(self, fmt: str, *args: Any) -> None:
+        # Pedidos mal formados, tiempos agotados…: van al registro como advertencia (no solo en modo detallado).
+        log.warning("API %s - %s", self.address_string(), fmt % args)
 
     # --- utilidades ------------------------------------------------------------------
     @property

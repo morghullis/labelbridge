@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from datetime import datetime
@@ -21,13 +22,15 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .. import APP_NAME, __version__
+from .. import APP_NAME, __version__, errors
 from .. import updater
 from ..i18n import date_text, decimal, tr
 from ..updater import UpdateInfo
 from . import icons
 from .context import AppContext
 from .widgets import button, label
+
+log = logging.getLogger(__name__)
 
 
 def _size_text(size: int) -> str:
@@ -174,8 +177,10 @@ class UpdateDialog(QDialog):
         def work() -> None:
             try:
                 path = updater.download(self.info, lambda done, total: signals.progress.emit(done, total), self._cancel)
-            except Exception as exc:  # se muestra en la ventana
-                signals.failed.emit(str(exc))
+            except Exception as exc:  # noqa: BLE001  se muestra en la ventana y queda anotado
+                log.warning("No se pudo descargar la versión %s: %s", self.info.version, exc,
+                            exc_info=errors.is_bug(exc))
+                signals.failed.emit(errors.user_message(exc))
             else:
                 signals.finished.emit(str(path))
 
@@ -208,8 +213,10 @@ class UpdateDialog(QDialog):
         self.ctx.store.kv_set("update:installed", self.info.to_json())
         try:
             updater.install_and_restart(installer)
-        except Exception as exc:
-            self._on_failed(str(exc))
+        except Exception as exc:  # noqa: BLE001  se muestra en la ventana y queda anotado
+            log.error("No se pudo instalar la versión %s: %s", self.info.version, exc, exc_info=True)
+            self.ctx.store.kv_set("update:installed", "")  # no quedó instalada: que no se anuncie como hecha
+            self._on_failed(errors.user_message(exc))
             return
         QApplication.processEvents()
         self.quit_app()

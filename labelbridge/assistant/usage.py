@@ -6,6 +6,7 @@ Es igual para todos los proveedores de IA: el costo de cada llamada lo calcula p
 from __future__ import annotations
 
 import json
+import logging
 import threading
 import time
 from collections import deque
@@ -14,6 +15,8 @@ from typing import Callable
 
 from ..i18n import tr
 from .providers import Usage
+
+log = logging.getLogger(__name__)
 
 FIELDS = ("input", "output", "cache_write", "cache_read", "calls", "cost")
 
@@ -33,7 +36,8 @@ class UsageMeter:
     def today(self) -> dict[str, float]:
         try:
             data = json.loads(self.store.kv_get(self._key()) or "{}")
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as exc:  # el gasto de hoy vuelve a cero: queda escrito
+            log.warning("Asistente: registro del gasto de hoy ilegible (%s): se cuenta desde cero", exc)
             data = {}
         return {field: float(data.get(field, 0)) for field in FIELDS}
 

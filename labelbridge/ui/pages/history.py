@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from ... import errors
 from ...connectors.shopify import admin_url
 from ...i18n import N_, date_text, tr
 from ...jobstore import PayloadUnavailable
@@ -48,6 +50,8 @@ from ..widgets import (
     run_async,
     run_dialog,
 )
+
+log = logging.getLogger(__name__)
 
 COLUMNS = [N_("Fecha"), N_("Trabajo"), N_("Origen"), N_("Impresora"), N_("Formato"), N_("Estado"), N_("Intentos"),
            N_("Detalle")]
@@ -297,8 +301,13 @@ class PreviewDialog(QDialog):
         extension = {"pdf": "pdf", "zpl": "zpl", "image": "png"}.get(fmt, "bin")
         name = "".join(c if c.isalnum() or c in "-_ " else "_" for c in job["title"]).strip() or tr("etiqueta")
         target, _ = QFileDialog.getSaveFileName(self, tr("Guardar copia"), f"{name}.{extension}")
-        if target:
+        if not target:
+            return
+        try:
             Path(target).write_bytes(raw)
+        except OSError as exc:
+            log.warning("No se pudo guardar la copia en %s: %s", target, exc)
+            error(self, tr("Guardar copia"), tr("No se pudo guardar el archivo: {0}", exc.strerror or exc))
 
     def _render(self, layout: QVBoxLayout, ctx: AppContext, job: dict[str, Any], raw: bytes) -> None:
         source = None
@@ -335,8 +344,10 @@ class PreviewDialog(QDialog):
             layout.addWidget(scroll, 1)
             if source.count() > 1:
                 layout.addWidget(label(tr("Página 1 de {0}", source.count()), "Muted"))
-        except Exception as exc:
-            layout.addWidget(label(tr("No se pudo generar la vista previa: {0}", exc), "Warning", wrap=True))
+        except Exception as exc:  # noqa: BLE001  se muestra en la ventana y queda anotado
+            log.warning("Vista previa de %s: %s", job.get("title"), exc, exc_info=errors.is_bug(exc))
+            layout.addWidget(label(tr("No se pudo generar la vista previa: {0}", errors.user_message(exc)), "Warning",
+                                   wrap=True))
         finally:
             if source is not None:
                 source.close()

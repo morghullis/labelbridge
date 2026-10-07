@@ -363,14 +363,11 @@ class Toolbox:
         return status
 
     def _guide_status(self, full: bool) -> dict:
-        from ..ui.pages.guide import STEPS
+        from ..ui.pages.guide import STEPS, step_done
 
         steps = []
         for step in STEPS:
-            try:
-                done = bool(step.check(self.ctx))
-            except Exception:
-                done = False
+            done = step_done(step, self.ctx)  # si la comprobación falla, queda pendiente (y anotado)
             steps.append({"key": step.key, "title": step.title, "done": done, "optional": step.optional})
         required = [s for s in steps if not s["optional"]]
         status = {
@@ -798,12 +795,14 @@ class Toolbox:
         if "paused" in a and a["paused"] != g.paused:
             self.ctx.engine.set_paused(a["paused"])
         self._save("general")
+        autostart_problem = ""
         if "start_with_windows" in a:
             try:
                 autostart.apply(g.start_with_windows)
-            except OSError:
-                pass
-        return {
+            except OSError as exc:  # el ajuste quedó guardado, pero el sistema no lo aplicó: que el asistente lo diga
+                log.warning("No se pudo configurar el inicio automático", exc_info=True)
+                autostart_problem = f"El ajuste quedó guardado, pero el sistema no lo aplicó: {exc}"
+        result = {
             "computer_name": g.agent_name,
             "automatic_printing": "en pausa" if g.paused else "activa",
             "start_with_windows": g.start_with_windows,
@@ -815,6 +814,9 @@ class Toolbox:
             "retention_days": g.retention_days,
             "auto_update_check": g.auto_update_check,
         }
+        if autostart_problem:
+            result["start_with_windows_problem"] = autostart_problem
+        return result
 
     def complete_guide_step(self, a: dict) -> dict:
         g = self.ctx.cfg.data.general
