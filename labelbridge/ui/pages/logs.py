@@ -24,7 +24,7 @@ LEVELS = (
 
 class LogsPage(Page):
     def __init__(self, ctx: AppContext) -> None:
-        super().__init__(tr("Registro"), tr("Actividad del agente en tiempo real."))
+        super().__init__(tr("Registro"), tr("Lo que hace LabelBridge, al momento. Útil para revisar un problema o enviarlo a soporte."))
         card = Card()
         row = QHBoxLayout()
         self.level = QComboBox()

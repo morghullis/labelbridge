@@ -127,7 +127,7 @@ class SettingsPage(Page):
             self.save_btn.setVisible(key != "about")
 
     def __init__(self, ctx: AppContext) -> None:
-        super().__init__(tr("Ajustes"), tr("Comportamiento del agente en este equipo."))
+        super().__init__(tr("Ajustes"), tr("Cómo trabaja LabelBridge en este equipo."))
         self.ctx = ctx
         g = ctx.cfg.data.general
         lb = ctx.cfg.data.labels

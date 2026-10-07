@@ -2,13 +2,20 @@
 
 Cada versión publicada muestra estas notas en la ventana de actualización de la app y en la página de descargas.
 
-## 1.17.1
+## 1.18.0
 
+- **Diseño nuevo, oscuro con verde neón.** Fondo oscuro elegante y el verde neón para lo importante: el botón principal, la pestaña activa (con una barra que brilla), el estado de la impresión, los interruptores y los gráficos. Animaciones suaves: el botón principal se enciende al pasar el mouse, cada pantalla entra con un leve deslizamiento y las cifras suben hasta su valor (se apagan con «menos animaciones» de Windows).
+- **Avisos de Windows profesionales:** notificaciones nativas de Windows 10/11 con el nombre y el logo de LabelBridge, el equipo que avisa y un botón para ir directo a lo que avisan (pedidos, historial, reporte o conexiones). Quedan en el Centro de notificaciones.
+- **Acerca de** (Ajustes → Acerca de): la versión, quién desarrolla LabelBridge, el contacto de soporte, **Copiar información del sistema** para pedir ayuda y los documentos legales.
+- **Términos de uso y Política de privacidad:** el instalador los muestra para aceptarlos y la app los pide una vez (también están en la página de descargas). Explican qué datos usa LabelBridge, que se quedan en tu equipo y con qué servicios se comparten solo si tú los conectas.
+- **Aviso del asistente de IA:** antes del primer mensaje, explica qué datos de la tienda se envían al proveedor de inteligencia artificial que elegiste (nunca el email ni el teléfono de tus clientes, ni tus claves).
+- **Actualizaciones más firmes:** si la descarga se corta, sigue donde quedó (hasta 5 intentos); si Windows (Defender) bloquea el instalador, la app explica en palabras claras cómo permitirlo.
 - **El reporte semanal ahora ve las visitas** (con el permiso nuevo `read_reports`; agrégalo con **Copiar permisos** en el Dev Dashboard y publica la versión de la app). Cuenta solo personas, no bots:
   - **Quién llega a pagar y no compra**, comparado con los carritos abandonados del sector (Baymard). Si pasa mucho, aparece primero en **Lo que hay que arreglar**, con pasos: el correo automático de pago abandonado de Shopify (app Messaging), revisar el pago como cliente y mostrar garantía y tiempos junto al botón de pagar.
   - **Visitas que compran**, comparado con la conversión de joyería en línea (Dynamic Yield).
   - Si tu web está fuera de Shopify (como una web propia que manda al pago de Shopify), Shopify solo ve las visitas que llegan al pago: el reporte lo detecta, no inventa una conversión de tu web y mide quién llegó al pago y no compró.
 - Sin el permiso, el reporte sale igual y dice cómo agregarlo (antes pedía ese permiso sin usarlo).
+- Textos más claros en varias pantallas.
 
 ## 1.17.0
 

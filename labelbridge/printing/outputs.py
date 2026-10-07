@@ -251,12 +251,12 @@ def print_raw_system(printer_name: str, data: bytes, title: str) -> None:
             try:
                 win32print.StartDocPrinter(handle, 1, (title or "LabelBridge", None, datatype))
             except pywintypes.error as exc:
-                raise PrintError(tr("El spooler rechazó el trabajo {0}: {1}", datatype, exc.strerror)) from None
+                raise PrintError(tr("Windows no aceptó la etiqueta en la cola de impresión ({0}): {1}", datatype, exc.strerror)) from None
             try:
                 win32print.StartPagePrinter(handle)
                 written = win32print.WritePrinter(handle, data)
                 if written != len(data):
-                    raise PrintError(tr("El spooler solo aceptó {0} de {1} bytes", written, len(data)))
+                    raise PrintError(tr("Windows recibió solo {0} de {1} bytes de la etiqueta", written, len(data)))
                 win32print.EndPagePrinter(handle)
             except BaseException:
                 win32print.AbortPrinter(handle)  # no enviar un trabajo a medias

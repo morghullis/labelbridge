@@ -2,13 +2,20 @@
 
 English version of [CHANGELOG.md](CHANGELOG.md). Each published version shows these notes in the app's update window when the app is in English, and on the English download page.
 
-## 1.17.1
+## 1.18.0
 
+- **New design, dark with neon green.** An elegant dark background and neon green for what matters: the main button, the active tab (with a glowing bar), the print status, switches and charts. Smooth animations: the main button lights up on hover, each screen slides in gently and numbers count up to their value (turned off with Windows' "reduce animations").
+- **Professional Windows notifications:** native Windows 10/11 notifications with LabelBridge's name and logo, the computer that sends them and a button that goes straight to what they're about (orders, history, report or connections). They stay in the Notification Center.
+- **About** (Settings → About): the version, who develops LabelBridge, the support contact, **Copy system information** to get help, and the legal documents.
+- **Terms of Use and Privacy Policy:** the installer shows them to accept and the app asks once (they're also on the download page). They explain what data LabelBridge uses, that it stays on your computer and which services it's shared with only if you connect them.
+- **AI assistant notice:** before the first message, it explains what store data is sent to the artificial intelligence provider you chose (never your customers' email or phone, or your keys).
+- **Sturdier updates:** if the download is cut, it continues where it stopped (up to 5 tries); if Windows (Defender) blocks the installer, the app explains in plain words how to allow it.
 - **The weekly report now sees visits** (with the new `read_reports` permission; add it with **Copy permissions** in the Dev Dashboard and release the app version). It counts people only, not bots:
   - **Who reaches checkout and doesn't buy**, compared with the industry's cart abandonment (Baymard). If it happens a lot, it comes first in **What to fix**, with steps: Shopify's automatic abandoned checkout email (Messaging app), checking checkout as a customer and showing guarantee and delivery times next to the pay button.
   - **Visits that buy**, compared with online jewelry conversion (Dynamic Yield).
   - If your website is outside Shopify (like your own site that sends buyers to Shopify's checkout), Shopify only sees the visits that reach checkout: the report detects it, doesn't invent a conversion for your site and measures who reached checkout and didn't buy.
 - Without the permission, the report still comes and says how to add it (before, it asked for that permission without using it).
+- Clearer wording on several screens.
 
 ## 1.17.0
 

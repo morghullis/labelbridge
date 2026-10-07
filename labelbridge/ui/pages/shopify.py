@@ -49,7 +49,7 @@ class ShopifyPage(Page):
     def __init__(self, ctx: AppContext, navigate: Callable[[str], None] | None = None) -> None:
         super().__init__(
             tr("Shopify"),
-            tr("Conexión directa con tu tienda: LabelBridge revisa los pedidos nuevos e imprime sin pasar por n8n."),
+            tr("Tu tienda conectada directo: LabelBridge revisa los pedidos nuevos, compra las guías e imprime solo."),
         )
         self.ctx = ctx
         s = ctx.cfg.data.shopify
