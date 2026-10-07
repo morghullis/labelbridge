@@ -482,7 +482,7 @@ def pct(value: float | None, digits: int = 1) -> str:
     text = decimal(value, digits)
     if digits:
         text = text.rstrip("0").rstrip(",.")
-    return tr("{0} %", text)
+    return tr("{0} %", text).replace(" %", "\u00a0%")  # el «%» nunca queda solo en la línea de abajo
 
 
 def _findings(current: WeekNumbers, previous: WeekNumbers, history: list[WeekNumbers], week: list[OrderFacts],
