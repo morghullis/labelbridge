@@ -52,6 +52,8 @@ def core(qapp, home):
     cfg.data.general.default_printer_id = printer.id
     cfg.data.general.auto_discover = False  # las pruebas nunca escanean la red
     cfg.data.general.auto_update_check = False
+    cfg.data.general.terms_accepted = 99  # ya aceptados (las pruebas de la aceptación los ponen en 0)
+    cfg.data.assistant.ai_notice_accepted = 99
     cfg.save()
     store = JobStore(paths.db_path(), paths.spool_dir())
     events = Events()

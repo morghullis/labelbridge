@@ -49,6 +49,7 @@ from ...system import autostart, sounds
 from ...system.platform import pick
 from ...updater import UPDATES_PAGE
 from ..alerts import play_async
+from .about import AboutPanel
 from ..context import AppContext
 from ..widgets import Card, Page, SecretField, button, confirm, error, form_layout, info, label, run_async
 
@@ -96,6 +97,7 @@ SETTINGS_TABS = (
     ("label", N_("Etiqueta")),
     ("assistant", N_("Asistente")),
     ("security", N_("Seguridad")),
+    ("about", N_("Acerca de")),
 )
 
 
@@ -113,7 +115,7 @@ class _TabStack(QStackedWidget):
 
 class SettingsPage(Page):
     def show_tab(self, key: str) -> None:
-        """Muestra la pestaña de Ajustes `key` (general, alerts, email, label, assistant, security)."""
+        """Muestra la pestaña de Ajustes `key` (general, alerts, email, label, assistant, security, about)."""
         index = [k for k, _t in SETTINGS_TABS].index(key)
         for position in range(self.tab_stack.count()):
             policy = QSizePolicy.Policy.Preferred if position == index else QSizePolicy.Policy.Ignored
@@ -346,6 +348,7 @@ class SettingsPage(Page):
         row.addStretch(1)
         security.add(layout=row)
         tabs["security"].addWidget(security)
+        tabs["about"].addWidget(AboutPanel(lambda: self.window().check_updates_now()))
 
         updates = Card(tr("Actualizaciones"), tr("LabelBridge busca versiones nuevas y se actualiza solo, sin cortar "
                                                  "nada que esté imprimiendo o comprando."))

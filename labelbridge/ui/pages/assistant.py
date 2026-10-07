@@ -869,9 +869,15 @@ class AssistantPage(QWidget):
         if self.busy:
             return
         text = self.input.toPlainText().strip()
-        if text:
+        if text and self._ai_notice_ok():  # si no se acepta el aviso, el texto se queda escrito
             self.input.clear()
             self.send_text(text)
+
+    def _ai_notice_ok(self) -> bool:
+        """Antes del primer mensaje, el aviso de qué datos van al proveedor de IA (una vez por versión del aviso)."""
+        from ..legal_dialog import ensure_ai_notice
+
+        return ensure_ai_notice(self.ctx.cfg, self.window())
 
     def _send_or_stop(self) -> None:
         if self.busy:
@@ -880,7 +886,7 @@ class AssistantPage(QWidget):
             self.send_current()
 
     def send_text(self, text: str) -> None:
-        if self.busy or not text.strip() or not self.conversation.has_key():
+        if self.busy or not text.strip() or not self.conversation.has_key() or not self._ai_notice_ok():
             return
         cleaned = self.guard.clean(text)
         self._add(bubble(cleaned.display_text, "user"))

@@ -2,7 +2,8 @@
 Shopify (dirección, Client ID y Client secret). La app pasa la clave al almacén seguro de Windows, borra lo que dejó el
 instalador, prueba la conexión y, si funciona, activa la tienda (ver ShopifyPage).
 
-Valores en HKCU\\Software\\LabelBridge (Language) y HKCU\\Software\\LabelBridge\\Setup (ShopDomain, ClientId,
+Valores en HKCU\\Software\\LabelBridge (Language y TermsAccepted: la versión de los términos aceptada en el
+instalador) y HKCU\\Software\\LabelBridge\\Setup (ShopDomain, ClientId,
 ClientSecret).
 """
 
@@ -24,7 +25,7 @@ def read() -> dict[str, str]:
     import winreg
 
     hints: dict[str, str] = {}
-    for key, names in ((KEY, (("Language", "language"),)), (SETUP_KEY, (("ShopDomain", "shop"), ("ClientId", "client_id"), ("ClientSecret", "client_secret")))):
+    for key, names in ((KEY, (("Language", "language"), ("TermsAccepted", "terms_accepted"))), (SETUP_KEY, (("ShopDomain", "shop"), ("ClientId", "client_id"), ("ClientSecret", "client_secret")))):
         try:
             with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key) as handle:
                 for name, field in names:

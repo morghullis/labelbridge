@@ -108,6 +108,7 @@ class GeneralSettings:
     max_retries: int = 5
     retention_days: int = 30
     language: str = ""  # es | en; vacío: el que se eligió en el instalador o el de Windows
+    terms_accepted: int = 0  # versión de los términos y la privacidad aceptada (legal.TERMS_VERSION)
 
 
 # Avisos que se pueden configurar: aviso junto al reloj y sonido de cada uno.
@@ -349,6 +350,7 @@ class AssistantSettings:
     # asistente no tiene herramientas para cambiarlos) y cada acción pide permiso en una ventana.
     pc_tools: bool = False  # revisar y configurar impresoras, cola de impresión, red, energía y Configuración de Windows
     screen_control: bool = False  # ver la pantalla y usar mouse y teclado (solo con Claude)
+    ai_notice_accepted: int = 0  # versión del aviso de datos del asistente aceptada (legal.AI_NOTICE_VERSION)
 
 
 @dataclass

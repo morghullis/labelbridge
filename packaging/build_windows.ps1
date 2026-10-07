@@ -19,9 +19,11 @@ Remove-Item Env:QT_QPA_PLATFORM
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller falló" }
 
 $version = & $py -c "import labelbridge; print(labelbridge.__version__)"
+$terms = & $py -c "from labelbridge import legal; print(legal.TERMS_VERSION)"
+& $py packaging\make_legal.py  # términos y privacidad para la página «Acuerdo de licencia»
 $iscc = Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"
 if (Test-Path $iscc) {
-    & $iscc "/DAppVersion=$version" packaging\installer.iss
+    & $iscc "/DAppVersion=$version" "/DTermsVersion=$terms" packaging\installer.iss
     Write-Host "Instalador listo en dist\installer\LabelBridge-Setup-$version.exe" -ForegroundColor Green
 } else {
     Write-Warning "Ejecutable listo en dist\LabelBridge\. Instala Inno Setup 6 (https://jrsoftware.org/isdl.php) para generar el instalador."

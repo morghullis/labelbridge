@@ -188,6 +188,29 @@ def main(argv: list[str] | None = None) -> int:
         return 0  # ya se avisó: en la Mac, launchd no la vuelve a abrir en un bucle de ventanas
 
 
+def _terms_accepted(cfg, hints: dict) -> bool:
+    """Términos de uso y privacidad: aceptados antes (en la app o en el instalador de Windows) o ahora, una vez por
+    versión de los documentos. Sin aceptarlos, la app no empieza a trabajar."""
+    from PySide6.QtWidgets import QDialog
+
+    from . import legal
+    from .ui.legal_dialog import terms_dialog
+
+    general = cfg.data.general
+    if general.terms_accepted >= legal.TERMS_VERSION:
+        return True
+    from_installer = hints.get("terms_accepted", "")
+    if from_installer.isdigit() and int(from_installer) >= legal.TERMS_VERSION:
+        general.terms_accepted = int(from_installer)
+    elif terms_dialog().exec() == QDialog.DialogCode.Accepted:
+        general.terms_accepted = legal.TERMS_VERSION
+    else:
+        return False
+    cfg.save("general")
+    log.info("Términos de uso y privacidad aceptados (versión %s)", general.terms_accepted)
+    return True
+
+
 def _run(app, argv: list[str], hints: dict, instance) -> int:
     """Lo que hace falta para trabajar: datos, servicios, ventana y bandeja. Corre el programa hasta que se cierra."""
     from PySide6.QtCore import QTimer
@@ -234,6 +257,9 @@ def _run(app, argv: list[str], hints: dict, instance) -> int:
     log.info("Idioma de la interfaz: %s", language)
     if cfg.load_problem:  # la configuración no se pudo leer: se empezó de cero (y se dice dónde quedó la copia)
         QMessageBox.warning(None, APP_NAME, cfg.load_problem)
+    if not _terms_accepted(cfg, hints):
+        log.info("No se aceptaron los términos de uso: LabelBridge se cierra sin empezar")
+        return 0
     connect_store = "--connect-store" in argv or installer_hints.apply(cfg, hints)
     # Con la clave del instalador la tienda se prueba y se activa sola al abrirse (ver ShopifyPage.connected).
     auto_connect = installer_hints.apply_secret(secrets, cfg, hints)

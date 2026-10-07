@@ -86,8 +86,10 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true  # un comando que falla detiene el paso
           $version = python -c "import labelbridge; print(labelbridge.__version__)"
+          $terms = python -c "from labelbridge import legal; print(legal.TERMS_VERSION)"
+          python packaging\make_legal.py  # términos y privacidad para la página «Acuerdo de licencia»
           choco install innosetup -y --no-progress
-          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=$version" packaging\installer.iss
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=$version" "/DTermsVersion=$terms" packaging\installer.iss
 
       # Microsoft Defender con firmas al día: si marca el instalador o la app (falso positivo de programas nuevos sin
       # firma digital), la actualización no llega a las PCs. Por ahora informa (no frena la versión).

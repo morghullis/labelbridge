@@ -1,7 +1,8 @@
 """Publica una versión en la página pública de descargas (GitHub Pages de labelbridge-updates).
 
 Genera: index.html y en.html (página de descarga en español y en inglés), latest.json (lo consulta la app, con las
-novedades en los dos idiomas), el instalador de Windows, el .dmg de Mac (si se compiló) y el icono. También las
+novedades en los dos idiomas), el instalador de Windows, el .dmg de Mac (si se compiló), el icono y la política de
+privacidad y los términos de uso (los mismos textos de la app, assets/legal). También las
 versiones anteriores desde la 1.5 (versions.json y la sección «Todas las versiones»): con --fetch-archive se bajan de
 los Releases privados con `gh`.
 Con --push sube todo a la rama gh-pages usando la llave de despliegue UPDATES_DEPLOY_KEY.
@@ -27,6 +28,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+CONTACT_EMAIL = "tonymonzon94@gmail.com"  # el mismo de labelbridge/legal.py (este script no importa la app)
 BASE_URL = "https://morghullis.github.io/labelbridge-updates/"
 UPDATES_REPO = "git@github.com:morghullis/labelbridge-updates.git"
 # Llave pública oficial de GitHub (api.github.com/meta): no se acepta ningún otro servidor.
@@ -195,6 +197,10 @@ TEXTS = {
                          "impresoras y tu historial. La app te avisará de las versiones nuevas y puedes omitirlas.",
         "current": "Actual",
         "whats_new": "Novedades",
+        "legal": '<a href="privacidad.html">Política de privacidad</a> · <a href="terminos.html">Términos de uso</a> · '
+                 'Contacto: <a href="mailto:{email}">{email}</a>',
+        "back": "← Volver a la descarga",
+        "home": "./",
     },
     "en": {
         "lang": "en",
@@ -227,6 +233,10 @@ TEXTS = {
                          "store, printers and history. The app will tell you about new versions and you can skip them.",
         "current": "Current",
         "whats_new": "What's new",
+        "legal": '<a href="privacy.html">Privacy Policy</a> · <a href="terms.html">Terms of Use</a> · '
+                 'Contact: <a href="mailto:{email}">{email}</a>',
+        "back": "← Back to download",
+        "home": "en.html",
     },
 }
 
@@ -373,6 +383,7 @@ PAGE = """<!doctype html>
   <div class="auto">{auto}</div>
 
   <footer>
+    {legal}<br>
     {sha}: {sha256}<br>
     {mac_sha}
     {manifest}: <a href="latest.json">latest.json</a>
@@ -391,6 +402,76 @@ PAGE = """<!doctype html>
 </body>
 </html>
 """
+
+
+LEGAL_PAGES = (("privacidad.html", "privacy", "es"), ("terminos.html", "terms", "es"),
+               ("privacy.html", "privacy", "en"), ("terms.html", "terms", "en"))
+LEGAL_PAGE = """<!doctype html>
+<html lang="{lang}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{title} · LabelBridge</title>
+<style>
+  body {{ margin: 0; font-family: "Segoe UI", system-ui, -apple-system, Roboto, Arial, sans-serif; color: #efe6d4;
+         background: #0f0c08; line-height: 1.65; }}
+  main {{ max-width: 760px; margin: 0 auto; padding: 40px 20px 64px; }}
+  a {{ color: #d9ae55; }}
+  h1 {{ font-size: 32px; margin: 18px 0 6px; color: #fcebbd; }}
+  h2 {{ font-size: 19px; margin: 28px 0 6px; color: #fcebbd; }}
+  code {{ background: #1d1710; border-radius: 6px; padding: 1px 6px; }}
+  ul {{ padding-left: 22px; }}
+</style>
+</head>
+<body><main>
+<a href="{home}">{back}</a>
+{body}
+</main></body>
+</html>
+"""
+
+
+def markdown_html(markdown: str) -> str:
+    """El Markdown sencillo de los documentos legales (títulos, párrafos, listas, **negritas** y `código`)."""
+
+    def inline(text: str) -> str:
+        text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", html.escape(text))
+        return re.sub(r"`(.+?)`", r"<code>\1</code>", text)
+
+    out: list[str] = []
+    in_list = False
+    for raw in markdown.splitlines():
+        line = raw.strip()
+        if line.startswith("- "):
+            if not in_list:
+                out.append("<ul>")
+                in_list = True
+            out.append(f"<li>{inline(line[2:])}</li>")
+            continue
+        if in_list:
+            out.append("</ul>")
+            in_list = False
+        if not line:
+            continue
+        if line.startswith("## "):
+            out.append(f"<h2>{inline(line[3:])}</h2>")
+        elif line.startswith("# "):
+            out.append(f"<h1>{inline(line[2:])}</h1>")
+        else:
+            out.append(f"<p>{inline(line)}</p>")
+    if in_list:
+        out.append("</ul>")
+    return "\n".join(out)
+
+
+def legal_pages(out: Path) -> None:
+    """La política de privacidad y los términos de uso, en español y en inglés (enlazados al pie de la descarga)."""
+    for page, name, lang in LEGAL_PAGES:
+        text = (ROOT / "assets" / "legal" / f"{name}.{lang}.md").read_text(encoding="utf-8")
+        title = text.splitlines()[0].lstrip("# ").strip()
+        words = TEXTS[lang]
+        (out / page).write_text(LEGAL_PAGE.format(lang=lang, title=html.escape(title), home=words["home"],
+                                                  back=words["back"], body=markdown_html(text)), encoding="utf-8")
 
 
 def build_site(out: Path, archive: Path | None = None, installer: Path | None = None,
@@ -430,6 +511,7 @@ def build_site(out: Path, archive: Path | None = None, installer: Path | None = 
     ], indent=2), encoding="utf-8")
     shutil.copy2(ROOT / "assets" / "icon.png", out / "icon.png")
     (out / ".nojekyll").write_text("", encoding="utf-8")
+    legal_pages(out)
     manifest = {
         "version": version,
         "published_at": published.isoformat().replace("+00:00", "Z"),
@@ -453,6 +535,7 @@ def build_site(out: Path, archive: Path | None = None, installer: Path | None = 
         (out / page).write_text(
             PAGE.format(
                 **{**words, "meta": meta, "notes_title": words["notes_title"].format(version=html.escape(version)),
+                   "legal": words["legal"].format(email=CONTACT_EMAIL),
                    "req": words["req"].format(size=size_text(len(data), lang))},
                 installer=installer.name,
                 mac_download=mac_download,

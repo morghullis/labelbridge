@@ -13,6 +13,9 @@
 #define AppName "LabelBridge"
 #define AppExe "LabelBridge.exe"
 #define AppPublisher "LabelBridge"
+#ifndef TermsVersion
+  #define TermsVersion "1"
+#endif
 #define Images "..\build\installer"
 
 [Setup]
@@ -49,9 +52,11 @@ CloseApplications=yes
 ShowLanguageDialog=yes
 UsePreviousLanguage=yes
 
+; La página «Acuerdo de licencia» (Acepto / No acepto): términos de uso y política de privacidad, los mismos textos
+; de la app (packaging/make_legal.py los pasa a RTF desde assets/legal).
 [Languages]
-Name: "english"; MessagesFile: "compiler:Default.isl"
-Name: "spanish"; MessagesFile: "compiler:Languages\Spanish.isl"
+Name: "english"; MessagesFile: "compiler:Default.isl"; LicenseFile: "..\build\legal\license-en.rtf"
+Name: "spanish"; MessagesFile: "compiler:Languages\Spanish.isl"; LicenseFile: "..\build\legal\license-es.rtf"
 
 [CustomMessages]
 english.NetworkGroup=Network:
@@ -93,6 +98,9 @@ Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"; Parameters: "--s
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Parameters: "--show"; Tasks: desktopicon
 
 [Registry]
+; Los términos aceptados en el instalador (solo si se vio la página: no en las actualizaciones silenciosas). La app no
+; los vuelve a pedir.
+Root: HKCU; Subkey: "Software\LabelBridge"; ValueType: string; ValueName: "TermsAccepted"; ValueData: "{#TermsVersion}"; Check: not WizardSilent
 ; El idioma elegido: la app lo usa mientras no se cambie en Ajustes.
 Root: HKCU; Subkey: "Software\LabelBridge"; ValueType: string; ValueName: "Language"; ValueData: "en"; Languages: english; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\LabelBridge"; ValueType: string; ValueName: "Language"; ValueData: "es"; Languages: spanish; Flags: uninsdeletekey
