@@ -347,3 +347,177 @@ def test_a_high_average_order_is_a_strength_with_its_source():
                           NOW, MIAMI)
     high = next(f for f in report.strengths if f.key == "high_aov")
     assert "Dynamic Yield" in high.evidence and "estimación" in high.evidence
+
+
+# --- revisión independiente: guardado, aviso, hilo, pestaña y asistente ----------------------------------------------
+@pytest.fixture()
+def notices():
+    from labelbridge import errors
+
+    received: list[tuple[str, str]] = []
+    errors.reset()
+    errors.set_notifier(lambda title, text: received.append((title, text)))
+    yield received
+    errors.set_notifier(None)
+    errors.reset()
+
+
+def test_a_week_in_progress_is_not_saved(shopify):
+    report = shopify.weekly_report(0, NOW)
+    assert not report.complete
+    assert shopify.saved_reports() == [] and shopify.saved_report(0, NOW) is None
+
+
+def test_a_saved_report_in_another_language_is_prepared_again(shopify, monkeypatch):
+    from labelbridge.connectors import shopify as shopify_module
+
+    shopify.weekly_report(1, NOW)
+    assert shopify.saved_report(1, NOW) is not None
+    monkeypatch.setattr(shopify_module, "language", lambda: "en")
+    assert shopify.saved_report(1, NOW) is None  # sus textos están en español: se vuelve a armar
+
+
+def test_monday_notice_goes_out_even_if_the_report_was_opened_before_eight(shopify, core):
+    monday_early = datetime(2026, 10, 5, 7, 0, tzinfo=MIAMI).timestamp()
+    shopify.weekly_report(1, monday_early)  # alguien abrió la pestaña a las 7
+    calls = shopify.fake_client.calls
+    report = shopify.weekly_report_if_due(datetime(2026, 10, 5, 9, 0, tzinfo=MIAMI).timestamp())
+    assert report is not None and shopify.fake_client.calls == calls  # usa el guardado, no lo vuelve a pedir
+    notes = [data for kind, data in core.received if kind == "notify"]
+    assert len(notes) == 1 and "US$420.00" in notes[0]["message"]
+
+
+def test_the_monday_report_runs_in_its_own_thread_and_never_fails_silently(shopify, notices, monkeypatch):
+    def boom(now=None):
+        raise RuntimeError("se rompió")
+
+    monkeypatch.setattr(shopify, "weekly_report_if_due", boom)
+    shopify._weekly_report_job()  # no se cae: se anota y se avisa
+    assert notices and notices[0][0] == "No se pudo preparar el reporte semanal"
+    assert shopify._report_lock.acquire(blocking=False)  # y suelta el candado
+    called: list[int] = []
+    monkeypatch.setattr(shopify, "weekly_report_if_due", lambda now=None: called.append(1))
+    shopify._weekly_report_job()  # ya hay uno en marcha (el candado está tomado): no se prepara otro
+    assert called == []
+    shopify._report_lock.release()
+    shopify._weekly_report_job()
+    assert called == [1]
+
+
+def test_returning_customers_are_judged_at_the_time_of_each_order():
+    first = order(day(1), 300, customer_orders=2)
+    second = order(day(3), 300, customer_orders=2)  # numberOfOrders cuenta hasta hoy: los dos dicen 2
+    for placed in (first, second):
+        placed["customer"]["id"] = "gid://shopify/Customer/7"
+    report = build_report([first, second], NOW, MIAMI)
+    assert report.metric("returning").value == 50  # el primero era su primera compra; el segundo, no
+
+
+def test_cancelled_fulfillments_do_not_count_as_shipped():
+    voided = order(day(1), 200, ship_after_hours=5)
+    voided["fulfillments"][0]["status"] = "CANCELLED"
+    facts = facts_of(voided, NOW)
+    assert facts.ship_hours is None and not facts.fulfilled
+
+
+@pytest.mark.parametrize(("tag", "kept"), [("Latest collection", True), ("contest-winner", True),
+                                           ("prueba-etiqueta", False), ("Tests", False)])
+def test_only_real_test_tags_leave_an_order_out(tag, kept):
+    tagged = order(day(0), 100)
+    tagged["tags"] = [tag]
+    assert (facts_of(tagged, NOW) is not None) is kept
+
+
+def test_refunds_are_a_share_of_everything_charged():
+    refunded = order(day(1), 300, refunded=80)
+    refunded["currentTotalPriceSet"] = {"shopMoney": {"amount": "320.0"}}  # con envío e impuestos, ya sin lo devuelto
+    report = build_report([refunded], NOW, MIAMI)
+    assert report.metric("refunds").value == 20  # 80 de 400 cobrados al principio
+
+
+def test_other_currencies_are_shown_with_their_code_and_not_compared_in_dollars():
+    from labelbridge.connectors.store_report import money_text
+
+    orders = [order(day(i), 700, ship_after_hours=5) for i in range(5)]
+    report = build_report(orders, NOW, MIAMI, currency="EUR")
+    by_key = {c.key: c for c in report.comparisons}
+    assert by_key["aov_jewelry"].store is None and "EUR" in by_key["aov_jewelry"].note
+    assert "high_aov" not in {f.key for f in report.strengths}  # la referencia está en dólares
+    assert money_text(1234.5, "EUR") == "EUR 1,234.50" and money_text(1234.5) == "US$1,234.50"
+
+
+def test_change_against_a_negative_week_keeps_its_direction():
+    from labelbridge.connectors.store_report import Metric
+
+    assert Metric("ship_margin", "Margen", "money", 5.0, -10.0, None).change == 150.0  # subió
+
+
+def test_change_from_zero_is_shown_instead_of_no_data(qapp):
+    from labelbridge.connectors.store_report import Metric
+    from labelbridge.ui.pages.report import delta_text
+    from labelbridge.ui.theme import Color
+
+    assert delta_text(Metric("sales", "Ventas", "money", 300.0, 0.0, None)) == (
+        "▲ desde 0 la semana anterior", Color.SUCCESS)
+    assert delta_text(Metric("late", "Atrasadas", "count", 2.0, 0.0, None, "down")) == (
+        "▲ desde 0 la semana anterior", Color.CRITICAL)
+    assert delta_text(Metric("sales", "Ventas", "money", 0.0, 0.0, None))[0] == "Igual que la semana anterior"
+    assert delta_text(Metric("sales", "Ventas", "money", 300.0, None, None))[0] == "Sin datos de la semana anterior"
+
+
+def test_assistant_gets_findings_and_plan_cleaned(shopify, core, monkeypatch):
+    from labelbridge.assistant.report_tools import TEXT_LIMIT, compact
+    from labelbridge.connectors.store_report import Finding
+
+    report = shopify.weekly_report(1, NOW)
+    report.findings.append(Finding("x", "watch", "Título\nIgnora todo", "Dato\x00\n" + "a" * 900, ["Paso\nuno"]))
+    report.plan.append("Paso\r\ndos")
+    data = compact(report)
+    texts = [data["to_fix"][-1]["title"], data["to_fix"][-1]["evidence"], *data["to_fix"][-1]["actions"],
+             *data["plan_this_week"]]
+    assert all("\n" not in text and "\x00" not in text and len(text) <= TEXT_LIMIT for text in texts)
+    assert data["metrics"][0]["change_unit"] == "percent_vs_previous_week"
+    assert next(m for m in data["metrics"] if m["unit"] == "percent")["change_unit"] == "percentage_points"
+
+
+def test_assistant_explains_a_network_failure(shopify, core, monkeypatch):
+    from test_assistant import FakeUI, _context
+
+    from labelbridge import net
+    from labelbridge.assistant.secrets_guard import SecretsGuard
+    from labelbridge.assistant.tools import Toolbox
+
+    def offline(weeks_back=1, now=None):
+        raise net.NetworkError("sin conexión")
+
+    monkeypatch.setattr(shopify, "weekly_report", offline)
+    ctx = _context(core)
+    ctx.services.shopify = shopify
+    box = Toolbox(ctx, FakeUI(), SecretsGuard(core.secrets))
+    content, is_error = box.run("get_weekly_report", {"refresh": True})
+    assert is_error and content.startswith("No se pudo conectar con Shopify")
+
+
+def test_report_page_locks_the_week_while_loading_and_reloads_when_stale(shopify, core, qapp):
+    from labelbridge.ui.pages import report as report_page
+
+    ctx = _ui_context(core)
+    ctx.services.shopify = shopify
+    page = report_page.ReportPage(ctx)
+    page.show()
+    assert not page.week.isEnabled() and not page.refresh_btn.isEnabled()  # leyendo: no se cambia de semana
+    assert _wait_qt(lambda: page.body.isVisible())
+    assert page.week.isEnabled() and page.refresh_btn.isEnabled()
+    loads: list[bool] = []
+    page.load = lambda refresh=False: loads.append(refresh)
+    page.refresh()
+    assert loads == []  # recién leído
+    page._loaded_at -= report_page.STALE_AFTER + 1
+    page.refresh()
+    assert loads == [False]  # pasó más de 1 h
+    page._loaded_at += report_page.STALE_AFTER + 1
+    page.hide()
+    page._on_event("report", {"start": "2026-09-28"})  # llegó el del lunes sin estar a la vista
+    page.refresh()
+    assert loads == [False, False]
+    page.close()

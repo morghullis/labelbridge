@@ -8,14 +8,16 @@ reporte de la semana que terminó se prepara solo el lunes (y queda guardado); �
 
 from __future__ import annotations
 
+import time
 from datetime import date, datetime, timedelta
+from functools import partial
 from html import escape
 from typing import Callable
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QComboBox, QFrame, QGridLayout, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
-from ...connectors.store_report import Comparison, Finding, Metric, WeeklyReport, pct
+from ...connectors.store_report import Comparison, Finding, Metric, WeeklyReport, money_text, pct
 from ...i18n import N_, date_text, decimal, tr
 from ..charts import DailyBars
 from ..context import AppContext
@@ -27,22 +29,19 @@ WEEKS = ((1, N_("Semana pasada")), (0, N_("Esta semana (hasta hoy)")), (2, N_("H
 DAYS = (N_("Lun"), N_("Mar"), N_("Mié"), N_("Jue"), N_("Vie"), N_("Sáb"), N_("Dom"))
 KPIS = ("sales", "orders", "aov", "returning", "on_time")
 SEVERITY = {"critical": N_("Importante"), "watch": N_("Para revisar"), "strength": N_("Va bien")}
+STALE_AFTER = 3600  # al volver a la pestaña, lo mostrado hace más de 1 h se vuelve a leer
 
 
 def day_text(day: date, year: bool = True) -> str:
     return date_text(datetime(day.year, day.month, day.day), year=year, clock="")
 
 
-def money(value: float | None, decimals: int = 2) -> str:
-    return "—" if value is None else f"US${value:,.{decimals}f}"
-
-
-def metric_text(metric: Metric, value: float | None = None) -> str:
+def metric_text(metric: Metric, value: float | None = None, currency: str = "USD") -> str:
     value = metric.value if value is None else value
     if value is None:
         return "—"
     if metric.unit == "money":
-        return money(value)
+        return money_text(value, currency)
     if metric.unit == "percent":
         return pct(value)
     if metric.unit == "hours":
@@ -53,6 +52,13 @@ def metric_text(metric: Metric, value: float | None = None) -> str:
 def delta_text(metric: Metric) -> tuple[str, str]:
     """El cambio contra la semana anterior y su color: verde si mejoró, rojo si empeoró (con flecha: nunca solo color)."""
     change = metric.change
+    if metric.previous == 0 and metric.unit != "percent" and metric.value is not None:
+        if not metric.value:
+            return tr("Igual que la semana anterior"), Color.TEXT_SECONDARY
+        # Desde 0 no hay porcentaje, pero sí un cambio que mostrar (no «sin datos»).
+        up = metric.value > 0
+        good = up == (metric.better == "up")
+        return tr("{0} desde 0 la semana anterior", "▲" if up else "▼"), Color.SUCCESS if good else Color.CRITICAL
     if change is None:
         return tr("Sin datos de la semana anterior"), Color.TEXT_SECONDARY
     if abs(change) < 0.05:
@@ -138,6 +144,8 @@ class ReportPage(Page):
         self.navigate = navigate
         self.loading = False
         self.report: WeeklyReport | None = None
+        self._loaded_at = 0.0  # cuándo se mostró (reloj monotónico): para leerlo de nuevo si quedó viejo
+        self._stale = False  # llegó el reporte del lunes mientras no se veía (o mientras se leía otro)
 
         self.week = QComboBox()
         for weeks_back, text in WEEKS:
@@ -176,7 +184,7 @@ class ReportPage(Page):
         body.addWidget(strip)
 
         chart_card = Card(tr("Ventas por día"))
-        self.chart = DailyBars(lambda value: money(value, 0))
+        self.chart = DailyBars(lambda value: money_text(value, self._currency(), 0))
         chart_card.add(self.chart)
         self.table = label("", "Small")
         self.table.setTextFormat(Qt.TextFormat.RichText)
@@ -260,6 +268,9 @@ class ReportPage(Page):
         self.chart.setVisible(not showing)
         self.table_btn.setText(tr("Ver gráfico") if showing else tr("Ver como tabla"))
 
+    def _currency(self) -> str:
+        return self.report.currency if self.report else "USD"
+
     # --- datos -------------------------------------------------------------------------------------------------
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
@@ -267,9 +278,21 @@ class ReportPage(Page):
             self._loaded_once = True
             self.load()
 
+    def refresh(self) -> None:
+        """Al volver a la pestaña: se lee de nuevo si llegó el reporte del lunes mientras no se veía, si lo mostrado
+        tiene más de 1 h o si la última vez falló (p. ej. sin internet)."""
+        if not self._loaded_once or self.loading:
+            return  # la primera vez lo lee showEvent
+        if self._stale or self.report is None or time.monotonic() - self._loaded_at > STALE_AFTER:
+            self.load()
+
     def _on_event(self, kind: str, data) -> None:
-        if kind == "report" and self.isVisible() and self.week.currentData() == 1:
+        if kind != "report":
+            return
+        if self.isVisible() and not self.loading and self.week.currentData() == 1:
             self.load()  # el del lunes ya está guardado: se muestra sin volver a calcularlo
+        else:
+            self._stale = True  # se lee al volver a la pestaña
 
     def load(self, refresh: bool = False) -> None:
         if self.loading:
@@ -282,7 +305,8 @@ class ReportPage(Page):
         self.connect_btn.setVisible(False)
         weeks_back = int(self.week.currentData() or 0)
         self.loading = True
-        self.refresh_btn.setEnabled(False)
+        self._stale = False
+        self._set_busy(True)
         self.status.setText(tr("Preparando el reporte con los pedidos de Shopify…"))
         self.notice.setVisible(False)
         shopify = self.ctx.services.shopify
@@ -293,17 +317,24 @@ class ReportPage(Page):
 
         run_async(work, self._show, self._failed, what=tr("Preparar el reporte"))
 
+    def _set_busy(self, busy: bool) -> None:
+        """Mientras se lee, ni otra semana ni «Actualizar»: lo que se ve siempre es de la semana elegida."""
+        self.refresh_btn.setEnabled(not busy)
+        self.week.setEnabled(not busy)
+
     def _failed(self, message: str) -> None:
         self.loading = False
-        self.refresh_btn.setEnabled(True)
+        self._set_busy(False)
         self.status.setText("")
         self.notice.setText(tr("No se pudo preparar el reporte: {0}", message))
         self.notice.setVisible(True)
 
     def _show(self, report: WeeklyReport) -> None:
         self.loading = False
-        self.refresh_btn.setEnabled(True)
+        self._set_busy(False)
         self.report = report
+        self._loaded_at = time.monotonic()
+        money = partial(money_text, currency=report.currency)
         start, end = date.fromisoformat(report.start), date.fromisoformat(report.end)
         self.status.setText(tr("Del {0} al {1}{2} · preparado el {3}", day_text(start), day_text(end),
                                "" if report.complete else tr(" (hasta hoy)"), date_text(report.generated_at)))
@@ -312,11 +343,11 @@ class ReportPage(Page):
             if metric is None:
                 continue
             title.setText(tr(metric.title))
-            value.setText(metric_text(metric))
+            value.setText(metric_text(metric, currency=report.currency))
             text, color = delta_text(metric)
             delta.setText(text)
             delta.setStyleSheet(f"color: {color};")
-            average.setText(tr("Promedio 4 sem.: {0}", metric_text(metric, metric.average))
+            average.setText(tr("Promedio 4 sem.: {0}", metric_text(metric, metric.average, report.currency))
                             if metric.average is not None else "")
             average.setToolTip(tr("Promedio de las 4 semanas anteriores"))
         details = [tr("{0} · {1} pedido(s)", day_text(start + timedelta(days=i), year=False), count)
@@ -330,7 +361,7 @@ class ReportPage(Page):
         self._clear(self.compare_list)
         for item in report.comparisons:
             self.compare_list.addWidget(ComparisonRow(item, money))
-        self._fill_mix(report)
+        self._fill_mix(report, money)
         self.missing.setText(" ".join(report.missing))
         self.missing.setVisible(bool(report.missing))
         self.body.setVisible(True)
@@ -347,7 +378,7 @@ class ReportPage(Page):
         for finding in findings:
             layout.addWidget(FindingRow(finding))
 
-    def _fill_mix(self, report: WeeklyReport) -> None:
+    def _fill_mix(self, report: WeeklyReport, money: Callable[[float | None], str]) -> None:
         if report.top_products:
             rows = "".join(
                 f"<tr><td>{escape(title)}</td><td align='right'>&nbsp;&nbsp;{money(sales)}</td>"

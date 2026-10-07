@@ -22,10 +22,10 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import urlencode, urlparse
 
+from .. import errors, net
 from .. import events as ev
-from .. import net
 from ..config import ConfigManager, ShopifySettings
-from ..i18n import N_, tr
+from ..i18n import N_, language, tr
 from ..jobstore import JobStore
 from ..models import JobRequest
 from ..printing.engine import PrintEngine
@@ -41,6 +41,7 @@ from .store_report import (
     TIMEZONE_QUERY,
     WeeklyReport,
     build_report,
+    money_text,
     store_timezone,
     week_start,
 )
@@ -655,6 +656,7 @@ class ShopifyService(BackgroundService):
         self._deliveries_at = time.time() - DELIVERY_CHECK_SECONDS + 120  # la primera, a los 2 minutos
         self._report_checked_at = time.time() - REPORT_CHECK_SECONDS + 300  # la primera, a los 5 minutos
         self._shop_zone: tuple[float, dict] | None = None  # (cuándo, zona y moneda de la tienda)
+        self._report_lock = threading.Lock()  # un solo reporte del lunes a la vez
         self._resets = 0  # «Reprocesar» durante una vuelta: esa vuelta no pisa el cursor nuevo
         self._tag_problem = ""  # el último motivo por el que no se pudo poner el tag (ya avisado)
         self.overview_truncated = False
@@ -767,10 +769,7 @@ class ShopifyService(BackgroundService):
                         log.warning("Shopify: no se pudieron revisar las entregas: %s", exc)
                 if time.time() - self._report_checked_at >= REPORT_CHECK_SECONDS:
                     self._report_checked_at = time.time()
-                    try:
-                        self.weekly_report_if_due()
-                    except (ShopifyError, net.NetworkError, net.HttpError) as exc:  # se vuelve a probar en 30 min
-                        log.warning("Shopify: no se pudo preparar el reporte semanal: %s", exc)
+                    threading.Thread(target=self._weekly_report_job, name="reporte-semanal", daemon=True).start()
                 self.set_status("ok", tr("Conectado a {0} · revisado a las {1}{2}", client.shop, time.strftime('%H:%M:%S'), summary))
             except (ShopifyError, net.NetworkError, net.HttpError) as exc:
                 failures += 1
@@ -983,20 +982,23 @@ class ShopifyService(BackgroundService):
 
     def weekly_report(self, weeks_back: int = 1, now: float | None = None) -> WeeklyReport:
         """El reporte de la semana de hace `weeks_back` semanas (1: la que terminó; 0: esta, hasta hoy), con los
-        pedidos de Shopify y el costo de las guías. Se guarda: la pestaña y el asistente lo leen sin volver a preguntar."""
+        pedidos de Shopify y el costo de las guías. Una semana terminada se guarda: la pestaña y el asistente la leen sin
+        volver a preguntar (la de esta semana cambia con cada pedido: no se guarda)."""
         now = now or time.time()
         shop = self._zone(now)
         zone = store_timezone(shop)
         since = week_start(now, zone, weeks_back) - timedelta(weeks=HISTORY_WEEKS)
         orders, truncated = self.client().report_orders(_ts_to_iso(since.timestamp()))
         missing = []
-        if truncated:
-            missing.append(tr("Hubo más pedidos de los que se leen de una vez: los números son de los primeros 1.200."))
+        if truncated:  # llegan los más nuevos primero: lo que falta es lo más viejo (el promedio), no la semana
+            missing.append(tr("Hubo más pedidos de los que se leen de una vez (1.200): el promedio de las semanas "
+                              "anteriores puede quedar corto."))
         if orders and all(not order.get("customer") for order in orders):
             missing.append(tr("Clientes que vuelven: la app no puede ver a los clientes (permiso read_customers y datos "
                               "protegidos aprobados en el Dev Dashboard)."))
         report = build_report(orders, now, zone, str(shop.get("currencyCode") or "USD"), weeks_back, missing)
-        self._save_report(report)
+        if report.complete:  # una semana a medias no se guarda: no reemplaza al reporte de la semana entera
+            self._save_report(report)
         return report
 
     def _save_report(self, report: WeeklyReport) -> None:
@@ -1018,31 +1020,49 @@ class ShopifyService(BackgroundService):
         return sorted(reports, key=lambda report: report.start, reverse=True)
 
     def saved_report(self, weeks_back: int = 1, now: float | None = None) -> WeeklyReport | None:
-        """El reporte ya guardado de esa semana (sin volver a pedir los pedidos), si lo hay."""
+        """El reporte ya guardado de esa semana (sin volver a pedir los pedidos), si lo hay: solo semanas enteras y en
+        el idioma de ahora (si se cambió el idioma, se vuelve a armar)."""
         now = now or time.time()
         start = week_start(now, store_timezone(self._zone(now)), weeks_back).date().isoformat()
-        return next((report for report in self.saved_reports() if report.start == start), None)
+        return next((report for report in self.saved_reports()
+                     if report.start == start and report.complete and report.language == language()), None)
 
     def weekly_report_if_due(self, now: float | None = None) -> WeeklyReport | None:
-        """Desde el lunes a las 8 (hora de la tienda), el reporte de la semana que terminó, una sola vez, con aviso."""
+        """Desde el lunes a las 8 (hora de la tienda), el reporte de la semana que terminó, con su aviso una sola vez
+        (aunque alguien ya lo haya abierto antes de las 8: el aviso se anota aparte)."""
         now = now or time.time()
         zone = store_timezone(self._zone(now))
         local = datetime.fromtimestamp(now, zone)
         if local.weekday() == 0 and local.hour < REPORT_READY_HOUR:
             return None
         start = week_start(now, zone, 1).date().isoformat()
-        if self.store.kv_get(self._key(f"report:{start}")):
+        notified = self._key(f"report-notified:{start}")
+        if self.store.kv_get(notified):
             return None
-        report = self.weekly_report(1, now)
+        report = self.saved_report(1, now) or self.weekly_report(1, now)
+        self.store.kv_set(notified, "1")
         sales = report.metric("sales")
         self.events.notify(
             tr("Tu reporte semanal está listo"),
             tr("Semana del {0} al {1}: {2} en ventas. Ábrelo en LabelBridge → Reporte.", report.start, report.end,
-               f"US${(sales.value or 0):,.2f}" if sales else "—"),
+               money_text(sales.value if sales else None, report.currency)),
             kind="report",
         )
         self.events.emit(ev.REPORT, {"start": report.start})
         return report
+
+    def _weekly_report_job(self) -> None:
+        """El reporte del lunes, en su propio hilo: leer semanas de pedidos no frena la compra ni la impresión."""
+        if not self._report_lock.acquire(blocking=False):
+            return  # ya se está preparando
+        try:
+            self.weekly_report_if_due()
+        except (ShopifyError, net.NetworkError, net.HttpError) as exc:  # se vuelve a probar en 30 min
+            log.warning("Shopify: no se pudo preparar el reporte semanal: %s", exc)
+        except Exception as exc:  # noqa: BLE001  un error inesperado se anota y se avisa; la impresión sigue igual
+            errors.report(tr("No se pudo preparar el reporte semanal"), exc)
+        finally:
+            self._report_lock.release()
 
     def check_deliveries(self, now: float | None = None) -> int:
         """Retrasos y problemas de entrega de los últimos 30 días: cada uno avisa una vez (con su sonido) y la
