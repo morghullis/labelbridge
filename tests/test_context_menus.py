@@ -56,3 +56,27 @@ def test_printer_and_home_menus(core):
     home.table.selectRow(0)
     assert [text for text, _on in _texts(home._recent_menu())] == ["Reimprimir (sin pagar otra guía)",
                                                                    "Ver en Historial"]
+
+
+def test_history_reprints_each_selected_order_from_shopify_when_the_copy_is_gone(core, monkeypatch):
+    from PySide6.QtCore import QItemSelectionModel
+
+    from labelbridge.ui.pages import history as history_page
+
+    first = _shipping_job(core, "21", 0, order="1001")
+    second = _shipping_job(core, "22", 0, order="2002")
+    page = history_page.HistoryPage(_ui_context(core))
+    page.refresh()
+    flags = QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows
+    for row in range(2):
+        page.view.selectionModel().select(page.model.index(row, 0), flags)
+    monkeypatch.setattr(core.store, "reprint", lambda job_id, printer=None: None)  # copias ilegibles
+    asked: list = []
+    monkeypatch.setattr(page.ctx.services.shopify, "reprint_label", lambda order, name: asked.append(order) or 1)
+    pending: list = []  # como en la app: las tareas corren después, cuando el bucle ya terminó
+    monkeypatch.setattr(history_page, "run_async", lambda work, done, failed: pending.append(work))
+    page._reprint()
+    for work in pending:
+        work()
+    assert sorted(asked) == ["1001", "2002"] and first["id"] != second["id"]  # cada pedido, el suyo
+

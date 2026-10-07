@@ -286,6 +286,11 @@ def test_reprint_uses_the_labels_still_active_in_shopify(core, monkeypatch):
     shopify.labels = {"8": {"voided": True}}
     with pytest.raises(ShopifyError, match="activa"):
         service.reprint_label("1601", "#1601")
+    # La copia de aquí ya no se puede leer: la misma guía se trae otra vez de Shopify (nunca se compra otra).
+    shopify.labels = {"9": {"voided": False, "at": 2.0}}
+    monkeypatch.setattr(core.store, "reprint", lambda job_id, printer=None: None)
+    assert service.reprint_label("1601", "#1601") == 1 and shopify.fetched[-1] == "9"
+    assert any("(reimpresión)" in job["title"] for job in core.store.list(limit=20))
 
 
 def test_choosing_fedex_waits_for_shopify_and_prints_it_even_without_auto_buy(core):

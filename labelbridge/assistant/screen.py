@@ -271,7 +271,13 @@ class ScreenControl:
                                   "tareas). El asistente no usa LabelBridge con el teclado.")
             repeat = max(1, min(int(args.get("repeat") or 1), MAX_REPEAT))
             what = tr("Pulsar las teclas {0}", combo) + (tr(" ({0} veces)", repeat) if repeat > 1 else "")
-            return what, [], lambda: backend.key(combo, repeat)
+
+            def press() -> None:  # otra vez justo antes: mientras se pedía permiso pudo cambiar la ventana al frente
+                if backend.foreground_is_ours() and normalized not in NAVIGATION:
+                    raise ScreenError("LabelBridge quedó al frente: no se pulsó nada. Cambia de ventana primero.")
+                backend.key(combo, repeat)
+
+            return what, [], press
         if not combo:
             raise ScreenError("Falta el texto para escribir.")
         if len(combo) > MAX_TEXT:
@@ -279,4 +285,10 @@ class ScreenControl:
         if backend.foreground_is_ours():
             raise ScreenError("LabelBridge está al frente: cambia de ventana primero. El asistente no escribe en "
                               "LabelBridge (para eso tiene sus herramientas).")
-        return tr("Escribir: «{0}»", combo), [], lambda: backend.type_text(combo)
+
+        def write() -> None:  # otra vez justo antes de escribir
+            if backend.foreground_is_ours():
+                raise ScreenError("LabelBridge quedó al frente: no se escribió nada. Cambia de ventana primero.")
+            backend.type_text(combo)
+
+        return tr("Escribir: «{0}»", combo), [], write

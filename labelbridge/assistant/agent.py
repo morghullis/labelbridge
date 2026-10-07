@@ -173,7 +173,8 @@ class Conversation:
     def uses_screen(self, endpoint: Endpoint | None = None) -> bool:
         """El control de la pantalla está encendido y el proveedor es Claude (el único con ese toolset)."""
         endpoint = endpoint or self._endpoint or self.endpoint
-        return self.screen is not None and endpoint.provider.protocol == "anthropic"
+        dropped = self._client is not None and getattr(self._client, "computer", True) is False
+        return self.screen is not None and endpoint.provider.protocol == "anthropic" and not dropped
 
     # --- turno -------------------------------------------------------------------------------
     def send(self, text: str, emit: Emit, cancel: threading.Event) -> None:

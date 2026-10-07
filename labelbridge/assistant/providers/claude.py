@@ -83,6 +83,7 @@ class ClaudeModel:
 
             tools = list(tools) + [TOOLSET]
         self.tools = tools
+        self.computer = computer  # False si el modelo no tiene el toolset (se quita al primer 400)
         self.use_fallbacks = True
         self.unsupported = _UNSUPPORTED.setdefault((endpoint.base_url, endpoint.model, endpoint.effort), set())
 
@@ -144,6 +145,7 @@ class ClaudeModel:
                     log.warning("Asistente: %s no admite el control de la pantalla; se sigue sin él (%s)",
                                 self.endpoint.model, exc)
                     self.tools = params["tools"] = [tool for tool in params["tools"] if tool not in toolset]
+                    self.computer = False
                     continue
                 if self.use_fallbacks and ("fallback" in text or "anthropic-beta" in text):
                     log.warning("Asistente: la cuenta no admite fallbacks del servidor; se sigue sin ellos (%s)", exc)

@@ -301,3 +301,27 @@ def test_windows_admin_reads_powercfg_and_queues(monkeypatch):
         {"printer": "ZD421", "id": 3, "document": "Guía", "status": "Printing", "pages": 1, "submitted": ""}))
     assert windows_admin.print_queue("ZD421")[0]["id"] == 3  # un solo trabajo: PowerShell no da una lista
     assert set(windows_admin.SETTINGS_PAGES) >= {"printers", "power", "windows_update"}
+
+
+def test_keyboard_is_checked_again_right_before_sending():
+    backend = FakeInput()
+
+    class Approve(ScreenUI):
+        def approve_screen(self, what, reason, frame, points):
+            backend.ours = True  # mientras se pedía permiso, LabelBridge quedó al frente
+            return "allow"
+
+    control, _ui, backend, _cancel = _screen(Approve(), backend)
+    control.run("screenshot", {})
+    text, _images, is_error = control.run("type", {"text": "hola"})
+    assert is_error and "no se escribió nada" in text and backend.done == []
+    backend.ours = False
+    text, _images, is_error = control.run("key", {"text": "Return"})
+    assert is_error and "no se pulsó nada" in text and backend.done == []
+
+
+def test_the_network_check_only_takes_ip_addresses(pc):
+    box, _ui, _calls = pc
+    output, is_error = box.run("check_printer_network", {"ip": "impresora"})  # un nombre: podría resolver otra red
+    assert is_error and "IP" in output
+

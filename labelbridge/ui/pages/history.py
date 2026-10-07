@@ -222,7 +222,7 @@ class HistoryPage(Page):
             elif job.get("source") == "shopify" and str(meta.get("order_id") or "").isdigit():
                 # La copia guardada ya no está: la misma guía se vuelve a traer de Shopify (nunca se compra otra).
                 order_id, name = str(meta["order_id"]), str(meta.get("order_name") or meta["order_id"])
-                run_async(lambda: self.ctx.services.shopify.reprint_label(order_id, name),
+                run_async(lambda order_id=order_id, name=name: self.ctx.services.shopify.reprint_label(order_id, name),
                           lambda _queued: self._after_change(),
                           lambda message: error(self, tr("Reimprimir"), message))
             else:

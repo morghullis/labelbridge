@@ -1452,15 +1452,24 @@ class ShopifyService(BackgroundService):
         queued = 0
         for _at, label_id in active:
             jobs = self._label_jobs(label_id)
-            if jobs:
-                queued += sum(1 for job in jobs if self.store.reprint(job["id"]))
-            else:  # comprada en Shopify y todavía sin imprimir aquí: se trae de ahí
-                _documents, new = self._enqueue_documents({"shippingLabels": [client.shipping_label(label_id)]}, meta)
-                queued += new
+            if not jobs:  # comprada en Shopify y todavía sin imprimir aquí: se trae de ahí
+                _documents, again = self._enqueue_documents({"shippingLabels": [client.shipping_label(label_id)]}, meta)
+            else:
+                again = sum(1 for job in jobs if self.store.reprint(job["id"]))
+                if not again:  # la copia de aquí ya no se puede leer: la misma guía se trae de Shopify, nunca otra
+                    again = self._refetch(client, label_id, meta)
+            queued += again
         if not queued:
             raise ShopifyError(tr("No se pudo poner la guía en la cola de impresión: imprímela desde el pedido en "
                                   "Shopify."))
         self.engine.wake()
+        return queued
+
+    def _refetch(self, client: ShopifyClient, label_id: str, meta: dict) -> int:
+        """Vuelve a poner en la cola los documentos de una guía que ya existe, tal como los da Shopify ahora (la copia
+        de aquí falta o no se puede leer). Es la misma guía: nunca se compra otra."""
+        _documents, queued = self._enqueue_documents({"shippingLabels": [client.shipping_label(label_id)]}, meta,
+                                                     reprint=True)
         return queued
 
     def _label_jobs(self, label_id: str) -> list[dict]:
@@ -1585,8 +1594,9 @@ class ShopifyService(BackgroundService):
                     raise
         return route
 
-    def _enqueue_documents(self, result: dict, info: dict) -> tuple[int, int]:
-        """Encola los documentos con URL. Devuelve (documentos con URL, trabajos nuevos)."""
+    def _enqueue_documents(self, result: dict, info: dict, reprint: bool = False) -> tuple[int, int]:
+        """Encola los documentos con URL. Devuelve (documentos con URL, trabajos nuevos). `reprint`: otra copia de una
+        guía que ya se imprimió (con otro id de trabajo, para que no se descarte como repetida)."""
         documents_with_url = 0
         queued = 0
         printer = self.cfg.data.shopify.shipping_label_printer
@@ -1603,10 +1613,12 @@ class ShopifyService(BackgroundService):
                 fmt = "zpl" if str(doc.get("format", "")).upper() == "ZPL" else "pdf"
                 size = {"label_size": self.cfg.data.shopify.label_size} if kind == "envío" else {}
                 label_id = str(label.get("id", "")).rsplit("/", 1)[-1]
+                title = tr("Etiqueta de envío {0}", order_name) if kind == "envío" else tr("Etiqueta de aduana {0}", order_name)
                 queued += self._enqueue(
                     JobRequest(
-                        external_id=f"shipping-{label_id}-{label_index}-{doc_index}",
-                        title=tr("Etiqueta de envío {0}", order_name) if kind == "envío" else tr("Etiqueta de aduana {0}", order_name),
+                        external_id=f"shipping-{label_id}-{label_index}-{doc_index}"
+                        + (f"-reimpresion-{int(time.time() * 1000)}" if reprint else ""),
+                        title=tr("{0} (reimpresión)", title) if reprint else title,
                         printer=printer,
                         format=fmt,
                         url=url,

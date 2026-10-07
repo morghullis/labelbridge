@@ -10,6 +10,7 @@ y recortado: son datos, no instrucciones.
 
 from __future__ import annotations
 
+import ipaddress
 from functools import partial
 
 from ..i18n import N_, tr
@@ -66,6 +67,10 @@ def windows_print_queue(box, a: dict) -> dict:
 
 def check_printer_network(box, a: dict) -> dict:
     host = (a.get("ip") or "").strip()
+    try:
+        ipaddress.ip_address(host)  # solo IPs (nunca un nombre que resuelva otra red)
+    except ValueError:
+        host = ""
     if not host or not is_local_network_host(host):
         raise ToolError("Indica la IP de la impresora en tu red local (p. ej. 192.168.1.50).")
     port = int(a.get("port") or 9100)
