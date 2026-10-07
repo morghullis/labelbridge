@@ -2,6 +2,17 @@
 
 Cada versión publicada muestra estas notas en la ventana de actualización de la app y en la página de descargas.
 
+## 1.16.0
+
+- **La etiqueta del pedido sale por otra impresora.** En Shopify → **Por dónde sale cada cosa** eliges la impresora de la guía, la de la etiqueta del pedido (la que sale primero, con el número de pedido, los productos y la dirección) y la de las guías de un metafield, cada una con **Imprimir prueba**. Si la etiqueta del pedido y la guía salen por la misma impresora te avisa (aunque tengan nombres distintos) y, si no tienes otra, te lleva a agregarla. En una impresora de oficina con hoja carta, la etiqueta del pedido sale como hoja de empaque. El asistente también lo ve y lo cambia.
+- **Diseño nuevo, sobrio y limpio:** superficies blancas sin cajas con borde, avisos con una línea de color, la pestaña activa marcada con una línea dorada y el estado de la impresión (abajo a la izquierda) más claro: un punto de color que late suave solo mientras imprime. Las casillas marcadas llevan su palomita y las animaciones son cortas y respetan «menos animaciones» de Windows.
+- **Ventana chica:** el menú pasa a una barra abajo (Inicio, Pedidos, Impresoras, Historial y **Más**) y ninguna pantalla se sale por los lados: filtros, botones, formularios y capturas de la guía se acomodan al ancho.
+- **Ningún error en silencio:** si algo falla, queda en el Registro con su detalle y te enteras, con un aviso junto al reloj y otro arriba de la ventana con **Ver registro** (también si no hay bandeja del sistema).
+  - La impresión y las conexiones con Shopify y n8n se reponen solas de un error inesperado; mientras tanto el estado dice **Problema al imprimir**.
+  - Una etiqueta que Windows rechazó ya no se marca como impresa.
+  - Si la app no puede abrir o su configuración se dañó, lo dice (y guarda una copia).
+  - También avisa cuando n8n manda un trabajo inválido, cuando un metafield no trae etiqueta, cuando no se pudo poner el tag del pedido o cuando los avisos por email no pueden salir.
+
 ## 1.15.0
 
 - **Reimprimir nunca cobra otra guía.** Si un pedido ya tiene guía, el botón dice **Reimprimir guía**: imprime la misma (la copia guardada en el equipo o, si ya no está, la que tiene Shopify) y no compra ni paga otra.

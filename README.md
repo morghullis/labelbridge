@@ -185,27 +185,30 @@ GitHub Actions prueba todo (en Windows y en Mac), genera las capturas de la guí
 
 Detalles en [n8n/README.md](n8n/README.md) y [docs/PROTOCOLO.md](docs/PROTOCOLO.md).
 
-> **Importante:** la *etiqueta de pedido* que genera LabelBridge no lleva franqueo. Para la guía de la paquetería usa la compra con Shopify Shipping, o el metafield con la etiqueta de tu paquetería.
+> **Importante:** la *etiqueta de pedido* que genera LabelBridge no lleva franqueo. Para la guía de la paquetería usa la compra con Shopify Shipping, o el metafield con la etiqueta de tu paquetería. Cada una puede salir por su impresora: Shopify → **Por dónde sale cada cosa** (`labelbridge/printing/routing.py`).
 
 ## Estructura
 
 ```
 labelbridge/
   app.py               arranque (bandeja, ventana, servicios)
+  errors.py            errores sin silencio: mensaje para la persona, registro y aviso
   i18n.py              idioma de la interfaz (tr) y formatos de fecha y número
   config.py            configuración (JSON) y tamaños de etiqueta
   secret_store.py      secretos en el almacén seguro del sistema
   jobstore.py          cola e historial (SQLite)
   models.py            formato de los trabajos
   discovery.py         búsqueda de impresoras en la red
-  printing/            motor: driver, RAW 9100, IPP, ZPL, PDF, código de barras
+  printing/            motor: driver, RAW 9100, IPP, ZPL, PDF, código de barras; routing.py = por qué impresora sale cada cosa
   labels/              etiqueta de pedido (Qt y ZPL nativo)
   connectors/          API local, n8n y Shopify
   assistant/           asistente: herramientas, permisos, consumo, conversación y filtro de secretos
     providers/         Claude, OpenAI, Gemini y API compatibles (formato de cada API, sin reglas propias)
   security/            cifrado, política de seguridad, límites, auditoría y registros sin secretos
   system/              inicio con el equipo (Windows o Mac), instancia única, instalar impresoras, qué cambia en Mac (platform.py)
-  ui/                  interfaz (PySide6); mascot.py = la máscara animada, assistant_dock.py = bubble y chat flotante
+  ui/                  interfaz (PySide6); theme.py = colores y estilos, navigation.py = menú lateral, barra inferior y
+                       estado, notice_bar.py = avisos en la ventana, mascot.py = la máscara animada,
+                       assistant_dock.py = bubble y chat flotante
 assets/locale/         traducciones (en.json)
 devtools/              pruebas reales del asistente (gastan tokens) y herramientas de traducción
 n8n/                   plantillas de flujos + guía
@@ -215,6 +218,13 @@ tests/                 pruebas automáticas
 ```
 
 Los datos de la app (configuración, cola, registros) se guardan en `%LOCALAPPDATA%\LabelBridge` en Windows y en `~/Library/Application Support/LabelBridge` en macOS.
+
+## Diseño y errores (para quien programa)
+
+- **Diseño**: todos los colores y tamaños salen de `Color` y `Font` en `labelbridge/ui/theme.py` (sobrio, al estilo del admin de Shopify): tarjetas blancas sin borde, grupos separados por espacio y líneas finas, avisos con una barra de color a la izquierda (`Warning`, `Hint`). Nada de colores escritos a mano en las pantallas.
+- **Ancho**: ninguna pantalla puede obligar a una barra para desplazarse a los lados en la ventana más angosta (760 px; `tests/test_redesign.py` lo comprueba en todas). Para filas de controles: `SplitRow` (dos grupos que se apilan), `FlowLayout` (pasan a la línea siguiente), `form_layout()` (la etiqueta sube sobre el campo) y `FlowRow` (franjas de números).
+- **Animaciones**: cortas (120–200 ms) y con `motion_enabled()` (respeta «menos animaciones» de Windows).
+- **Errores**: ninguno en silencio. Lo que falla en segundo plano pasa por `run_async(…, on_error)` o `errors.report()`; el texto para la persona sale de `errors.user_message()`; un `except` que sigue de largo deja al menos una línea en el registro; `window_closed()` solo ignora el `RuntimeError` de una ventana que ya se cerró. Los errores no atrapados y las advertencias de Qt van al registro y se avisan (`app.py`). `tests/test_no_silent_errors.py` cubre los casos.
 
 ## Seguridad
 

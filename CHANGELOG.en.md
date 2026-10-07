@@ -2,6 +2,17 @@
 
 English version of [CHANGELOG.md](CHANGELOG.md). Each published version shows these notes in the app's update window when the app is in English, and on the English download page.
 
+## 1.16.0
+
+- **The order label prints on another printer.** In Shopify → **Where each document prints** you choose the printer for the shipping label, the one for the order label (the one that prints first, with the order number, items and address) and the one for metafield labels, each with **Print test**. If the order label and the shipping label print on the same printer it warns you (even if they have different names) and, if you don't have another one, it takes you to add it. On an office printer with letter paper, the order label prints as a packing slip. The assistant sees and changes it too.
+- **New, clean and sober design:** white surfaces without bordered boxes, alerts with a colored line, the active tab marked with a gold line and a clearer printing status (bottom left): a colored dot that pulses softly only while printing. Checked boxes show their check mark, and animations are short and respect Windows' “reduce animations”.
+- **Small window:** the menu moves to a bar at the bottom (Home, Orders, Printers, History and **More**) and no screen spills off the sides: filters, buttons, forms and guide screenshots adapt to the width.
+- **No silent errors:** if something fails, it's kept in the Log with its details and you find out, with an alert by the clock and another at the top of the window with **View log** (also when there's no system tray).
+  - Printing and the Shopify and n8n connections recover by themselves from an unexpected error; meanwhile the status says **Printing problem**.
+  - A label that Windows rejected is no longer marked as printed.
+  - If the app can't open or its settings got damaged, it says so (and keeps a copy).
+  - It also lets you know when n8n sends an invalid job, when a metafield has no label, when the order tag couldn't be added or when email alerts can't go out.
+
 ## 1.15.0
 
 - **Reprinting never charges another label.** If an order already has a label, the button says **Reprint label**: it prints the same one (the copy saved on the computer or, if it's gone, the one Shopify has) and doesn't buy or pay for another.
