@@ -7,7 +7,7 @@ import re
 import sys
 from pathlib import Path
 
-from PyInstaller.utils.hooks import copy_metadata
+from PyInstaller.utils.hooks import collect_data_files, copy_metadata
 
 ROOT = Path(SPECPATH).parent
 MAC = sys.platform == "darwin"
@@ -49,9 +49,11 @@ a = Analysis(
         *copy_metadata("httpx2"),
         *copy_metadata("httpcore2"),
         *copy_metadata("anthropic"),
+        # Zonas horarias para el reporte semanal: Windows no trae la base IANA (zoneinfo la lee del paquete tzdata).
+        *(collect_data_files("tzdata") if WINDOWS else []),
     ],
     hiddenimports=[
-        *(["keyring.backends.Windows", "win32timezone"] if WINDOWS else []),
+        *(["keyring.backends.Windows", "win32timezone", "tzdata"] if WINDOWS else []),
         *(["keyring.backends.macOS"] if MAC else []),
         "PySide6.QtPdf",
         "PySide6.QtSvg",

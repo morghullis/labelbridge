@@ -87,7 +87,9 @@ def test_weeks_run_monday_to_sunday_in_the_store_timezone():
 def test_unknown_timezone_falls_back_to_the_current_offset():
     zone = store_timezone({"ianaTimezone": "Nowhere/Nada", "timezoneOffsetMinutes": -240})
     assert zone.utcoffset(None) == timedelta(hours=-4)
-    assert str(store_timezone({"ianaTimezone": "America/New_York"})) == "America/New_York"
+    new_york = store_timezone({"ianaTimezone": "America/New_York", "timezoneOffsetMinutes": -240})
+    assert datetime(2026, 10, 6, 12, tzinfo=new_york).utcoffset() == timedelta(hours=-4)
+    assert datetime(2026, 12, 6, 12, tzinfo=new_york).utcoffset() == timedelta(hours=-5)  # con el cambio de horario
 
 
 # --- los números ------------------------------------------------------------------------------------------------

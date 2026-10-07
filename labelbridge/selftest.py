@@ -318,6 +318,18 @@ def run(argv: list[str]) -> int:
             importlib.import_module("winsound")
         return f"{len(tones)} tonos"
 
+    def store_report() -> str:
+        """El reporte semanal: la zona horaria de la tienda (en Windows sale del paquete tzdata) y el cálculo."""
+        import time as _time
+        from zoneinfo import ZoneInfo
+
+        from .connectors.store_report import build_report, week_start
+
+        zone = ZoneInfo("America/New_York")  # falla si faltan los datos de zonas horarias
+        report = build_report([], _time.time(), zone)
+        assert report.start == week_start(_time.time(), zone, 1).date().isoformat()
+        return f"zona {zone} · semana del {report.start}"
+
     def guide_and_updates() -> str:
         from . import updater
         from .paths import resource_path
@@ -338,6 +350,7 @@ def run(argv: list[str]) -> int:
     check("asistente", assistant)
     check("máscara animada", mascot)
     check("sonidos de aviso", notification_sounds)
+    check("reporte semanal", store_report)
     lines.append("RESULTADO: " + ("OK" if ok else "FALLO"))
     report_path.write_text("\n".join(lines), encoding="utf-8")
     return 0 if ok else 1
