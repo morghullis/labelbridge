@@ -100,6 +100,7 @@ def run(argv: list[str]) -> int:
         from .ui.context import AppContext, QtBridge
         from .ui.main_window import NAV, MainWindow
         from .ui.theme import apply_theme
+        from PySide6.QtCore import QCoreApplication, QEvent
 
         apply_theme(app)
         assert i18n.set_language(language) == language, f"no se pudo activar el idioma {language}"
@@ -118,12 +119,18 @@ def run(argv: list[str]) -> int:
             assert [key for key in NAV if key not in window.pages] == ["assistant"], "faltan pantallas"
             orders = window.nav_buttons["orders"].text().strip()
             assert orders == {"es": "Pedidos", "en": "Orders"}[language], f"pestaña Pedidos: {orders!r}"
+            screens = len(window.pages)
             window.quitting = True
             window.close()
+            # La ventana se borra antes de cerrar la base: si no, sus temporizadores (Inicio, Guía) siguen leyendo
+            # una base cerrada mientras corren las demás comprobaciones.
+            window.deleteLater()
+            QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+            services.stop()
             store.close()
         finally:
             i18n.set_language("es")
-        return f"{len(window.pages)} pantallas · {len(NAV)} pestañas"
+        return f"{screens} pantallas · {len(NAV)} pestañas"
 
     def languages() -> str:
         """La traducción al inglés viene en el paquete, con sus imágenes de la guía."""
