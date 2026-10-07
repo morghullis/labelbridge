@@ -1378,7 +1378,13 @@ class Toolbox:
                 self.copy_shopify_scopes,
                 N_("Copiando los permisos"),
             ),
-        ] + self._order_tools() + self._pc_tools()
+        ] + self._order_tools() + self._report_tools() + self._pc_tools()
+
+    def _report_tools(self) -> list[Tool]:
+        """El reporte semanal de la tienda (assistant/report_tools.py)."""
+        from .report_tools import definitions
+
+        return definitions(self)
 
     def _order_tools(self) -> list[Tool]:
         """Pedidos, instrucciones, avisos a los dueños y pedidos manuales (assistant/order_tools.py)."""

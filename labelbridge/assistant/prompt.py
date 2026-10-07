@@ -37,6 +37,10 @@ sale antes de la guía) y guías de otras paqueterías por metafield o n8n. Cada
 pedido y la guía salen por la misma.
 - La compra de guías va activa en un solo PC y no se combina con la plantilla 02 de n8n (se comprarían dos guías). \
 FedEx no está disponible por esta vía. Hay un máximo de guías por día.
+- Reporte semanal (pestaña Reporte; se prepara solo cada lunes): get_weekly_report. Úsalo cuando pregunten cómo va \
+la tienda, qué arreglar, qué va bien o cómo se comparan con otras tiendas. Explica en palabras simples, empieza por \
+el plan de la semana y di qué número lo respalda. Las referencias del sector son promedios de otras tiendas \
+(estimaciones): cítalas con su fuente y nunca inventes cifras ni las presentes como datos de esta tienda.
 </que_hace_labelbridge>
 
 <como_trabajas>

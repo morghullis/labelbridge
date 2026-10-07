@@ -275,9 +275,10 @@ def test_floating_assistant_on_every_page(core):
     window.show()
     QApplication.processEvents()
     dock = window.assistant
-    # Las pestañas de siempre siguen ahí, «Asistente» incluida (abre el chat flotante, no es una pantalla).
-    assert list(NAV) == ["guide", "assistant", "home", "orders", "printers", "shopify", "n8n", "api",
-                                         "history", "settings", "logs"]
+    # Las pestañas de siempre siguen ahí, «Asistente» incluida (abre el chat flotante, no es una pantalla), y desde
+    # la 1.17 «Reporte».
+    assert list(NAV) == ["guide", "assistant", "home", "orders", "report", "printers", "shopify", "n8n", "api",
+                         "history", "settings", "logs"]
     assert "assistant" not in window.pages
     for key in window.pages:  # el bubble está en todas las pantallas, abajo a la derecha
         window.navigate(key)

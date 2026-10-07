@@ -29,6 +29,7 @@ TOOL_CLASSES: dict[str, str] = {
     "list_windows_printers": READ,
     "scan_network_printers": READ,
     "get_recent_jobs": READ,
+    "get_weekly_report": READ,
     "test_shopify_connection": READ,
     "test_n8n_connection": READ,
     "ask_user_for_secret": READ,  # abre su propia ventana segura

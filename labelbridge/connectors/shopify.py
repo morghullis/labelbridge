@@ -34,6 +34,16 @@ from ..security.policy import PolicyDenied
 from .base import BackgroundService
 from .shipping_services import AUTO, FEDEX, Route, by_key, is_domestic, offered_services, selection
 from .shopify_orders import MANUAL_TAG, ManualItem, ManualOrders, OrderDetail, ProductChoice, Recipient
+from .store_report import (
+    HISTORY_WEEKS,
+    REPORT_QUERY,
+    REPORT_QUERY_NO_CUSTOMERS,
+    TIMEZONE_QUERY,
+    WeeklyReport,
+    build_report,
+    store_timezone,
+    week_start,
+)
 from .tracking import TRACKING_QUERY, Tracking, parse_tracking
 from .orders_overview import (
     ACTION_STATES,
@@ -62,6 +72,9 @@ FETCH_TRIES = 10  # vueltas buscando una guía comprada en Shopify antes de darl
 FLOW_PRINT_CHECK_SECONDS = 120  # cada cuánto se mira si ya se imprimió en Shopify la guía FedEx de Flow sin PDF
 FLOW_PRINT_WATCH_SECONDS = 3 * 86400  # y durante cuánto (después queda «Guía sin PDF» para revisarla)
 DELIVERY_CHECK_SECONDS = 1800  # cada cuánto se revisan los envíos en camino (retrasos y problemas)
+REPORT_CHECK_SECONDS = 1800  # cada cuánto se mira si ya toca el reporte semanal
+REPORT_READY_HOUR = 8  # el lunes desde esta hora (de la tienda) se prepara el reporte de la semana que terminó
+REPORTS_KEPT = 26  # medio año de reportes guardados
 OPEN_FULFILLMENT = {"UNFULFILLED", "PARTIALLY_FULFILLED", "OPEN", "IN_PROGRESS", "PENDING_FULFILLMENT"}
 SHIPPABLE_METHODS = {"SHIPPING", "PICKUP_POINT", None}
 
@@ -533,6 +546,29 @@ class ShopifyClient:
             after = page.get("endCursor")
         return orders, True
 
+    def report_orders(self, created_from_iso: str, max_pages: int = 60) -> tuple[list[dict], bool]:
+        """Pedidos creados desde esa fecha con lo que necesita el reporte semanal (hasta 20 × max_pages). Sin acceso a
+        los clientes, la consulta va sin ellos. Devuelve también si quedaron pedidos sin leer."""
+        orders: list[dict] = []
+        after = None
+        for _ in range(max_pages):
+            data = self.graphql_first(
+                (REPORT_QUERY, REPORT_QUERY_NO_CUSTOMERS),
+                {"first": 20, "after": after, "query": f"created_at:>='{created_from_iso}'"},
+                optional=("customer",),
+            )
+            connection = data.get("orders") or {}
+            orders.extend(connection.get("nodes") or [])
+            page = connection.get("pageInfo") or {}
+            if not page.get("hasNextPage"):
+                return orders, False
+            after = page.get("endCursor")
+        return orders, True
+
+    def shop_timezone(self) -> dict:
+        """Zona horaria y moneda de la tienda (las semanas del reporte van en su hora)."""
+        return self.graphql(TIMEZONE_QUERY).get("shop") or {}
+
     def fulfillment_orders(self, order_gid: str) -> list[dict]:
         data = self.graphql(FULFILLMENT_ORDERS_QUERY, {"id": order_gid})
         return ((data.get("order") or {}).get("fulfillmentOrders") or {}).get("nodes") or []
@@ -617,6 +653,8 @@ class ShopifyService(BackgroundService):
         self._limit_warned_day = 0.0
         self._cycle_lock = threading.Lock()
         self._deliveries_at = time.time() - DELIVERY_CHECK_SECONDS + 120  # la primera, a los 2 minutos
+        self._report_checked_at = time.time() - REPORT_CHECK_SECONDS + 300  # la primera, a los 5 minutos
+        self._shop_zone: tuple[float, dict] | None = None  # (cuándo, zona y moneda de la tienda)
         self._resets = 0  # «Reprocesar» durante una vuelta: esa vuelta no pisa el cursor nuevo
         self._tag_problem = ""  # el último motivo por el que no se pudo poner el tag (ya avisado)
         self.overview_truncated = False
@@ -727,6 +765,12 @@ class ShopifyService(BackgroundService):
                         self.check_deliveries()
                     except (ShopifyError, net.NetworkError, net.HttpError) as exc:
                         log.warning("Shopify: no se pudieron revisar las entregas: %s", exc)
+                if time.time() - self._report_checked_at >= REPORT_CHECK_SECONDS:
+                    self._report_checked_at = time.time()
+                    try:
+                        self.weekly_report_if_due()
+                    except (ShopifyError, net.NetworkError, net.HttpError) as exc:  # se vuelve a probar en 30 min
+                        log.warning("Shopify: no se pudo preparar el reporte semanal: %s", exc)
                 self.set_status("ok", tr("Conectado a {0} · revisado a las {1}{2}", client.shop, time.strftime('%H:%M:%S'), summary))
             except (ShopifyError, net.NetworkError, net.HttpError) as exc:
                 failures += 1
@@ -929,6 +973,76 @@ class ShopifyService(BackgroundService):
             if belongs(row):  # solo pedidos que se envían, con a quién y adónde mandarlos
                 rows.append(row)
         return rows
+
+    # --- reporte semanal -------------------------------------------------------------------------------
+    def _zone(self, now: float) -> dict:
+        """Zona horaria y moneda de la tienda (se preguntan una vez al día)."""
+        if self._shop_zone is None or now - self._shop_zone[0] > 86400:
+            self._shop_zone = (now, self.client().shop_timezone())
+        return self._shop_zone[1]
+
+    def weekly_report(self, weeks_back: int = 1, now: float | None = None) -> WeeklyReport:
+        """El reporte de la semana de hace `weeks_back` semanas (1: la que terminó; 0: esta, hasta hoy), con los
+        pedidos de Shopify y el costo de las guías. Se guarda: la pestaña y el asistente lo leen sin volver a preguntar."""
+        now = now or time.time()
+        shop = self._zone(now)
+        zone = store_timezone(shop)
+        since = week_start(now, zone, weeks_back) - timedelta(weeks=HISTORY_WEEKS)
+        orders, truncated = self.client().report_orders(_ts_to_iso(since.timestamp()))
+        missing = []
+        if truncated:
+            missing.append(tr("Hubo más pedidos de los que se leen de una vez: los números son de los primeros 1.200."))
+        if orders and all(not order.get("customer") for order in orders):
+            missing.append(tr("Clientes que vuelven: la app no puede ver a los clientes (permiso read_customers y datos "
+                              "protegidos aprobados en el Dev Dashboard)."))
+        report = build_report(orders, now, zone, str(shop.get("currencyCode") or "USD"), weeks_back, missing)
+        self._save_report(report)
+        return report
+
+    def _save_report(self, report: WeeklyReport) -> None:
+        self.store.kv_set(self._key(f"report:{report.start}"), json.dumps(report.to_dict(), ensure_ascii=False))
+        saved = sorted(key for key, value in self.store.kv_items(self._key("report:")).items() if value)
+        for old in saved[:-REPORTS_KEPT]:  # los más viejos se vacían (kv no borra filas)
+            self.store.kv_set(old, "")
+
+    def saved_reports(self) -> list[WeeklyReport]:
+        """Los reportes guardados, el más nuevo primero (los ilegibles se saltan y quedan anotados)."""
+        reports = []
+        for key, value in self.store.kv_items(self._key("report:")).items():
+            if not value:
+                continue
+            try:
+                reports.append(WeeklyReport.from_dict(json.loads(value)))
+            except (ValueError, TypeError, KeyError) as exc:
+                log.warning("Reporte guardado ilegible (%s): %s", key, exc)
+        return sorted(reports, key=lambda report: report.start, reverse=True)
+
+    def saved_report(self, weeks_back: int = 1, now: float | None = None) -> WeeklyReport | None:
+        """El reporte ya guardado de esa semana (sin volver a pedir los pedidos), si lo hay."""
+        now = now or time.time()
+        start = week_start(now, store_timezone(self._zone(now)), weeks_back).date().isoformat()
+        return next((report for report in self.saved_reports() if report.start == start), None)
+
+    def weekly_report_if_due(self, now: float | None = None) -> WeeklyReport | None:
+        """Desde el lunes a las 8 (hora de la tienda), el reporte de la semana que terminó, una sola vez, con aviso."""
+        now = now or time.time()
+        zone = store_timezone(self._zone(now))
+        local = datetime.fromtimestamp(now, zone)
+        if local.weekday() == 0 and local.hour < REPORT_READY_HOUR:
+            return None
+        start = week_start(now, zone, 1).date().isoformat()
+        if self.store.kv_get(self._key(f"report:{start}")):
+            return None
+        report = self.weekly_report(1, now)
+        sales = report.metric("sales")
+        self.events.notify(
+            tr("Tu reporte semanal está listo"),
+            tr("Semana del {0} al {1}: {2} en ventas. Ábrelo en LabelBridge → Reporte.", report.start, report.end,
+               f"US${(sales.value or 0):,.2f}" if sales else "—"),
+            kind="report",
+        )
+        self.events.emit(ev.REPORT, {"start": report.start})
+        return report
 
     def check_deliveries(self, now: float | None = None) -> int:
         """Retrasos y problemas de entrega de los últimos 30 días: cada uno avisa una vez (con su sonido) y la

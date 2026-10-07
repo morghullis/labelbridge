@@ -116,6 +116,10 @@ QFrame#NoticeBar {{ background: {C.SURFACE}; border: none; border-left: 3px soli
 QFrame#NoticeBar[level="warn"] {{ border-left-color: #E8A72B; }}
 QFrame#NoticeBar[level="info"] {{ border-left-color: {C.INFO}; }}
 QLabel#NoticeTitle {{ color: {C.TEXT_STRONG}; font-weight: 600; }}
+/* Reporte: cada punto con la línea de su color (importante, para revisar, va bien). */
+QFrame#FindingRow {{ background: transparent; border: none; border-left: 3px solid {C.WARNING}; }}
+QFrame#FindingRow[severity="critical"] {{ border-left-color: {C.CRITICAL}; }}
+QFrame#FindingRow[severity="strength"] {{ border-left-color: {C.SUCCESS}; }}
 QLabel#NoticeText {{ color: {C.TEXT_SECONDARY}; }}
 
 /* Tarjetas: blancas sobre el gris, sin borde. */

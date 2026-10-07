@@ -14,6 +14,7 @@ import os
 import re
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -74,9 +75,24 @@ def main() -> None:
         stage.mkdir()
         subprocess.run(["ditto", str(app), str(stage / "LabelBridge.app")], check=True)
         (stage / "Applications").symlink_to("/Applications")
-        subprocess.run(["hdiutil", "create", "-volname", "LabelBridge", "-srcfolder", str(stage), "-ov",
-                        "-format", "UDZO", str(out)], check=True)
+        create_dmg(stage, out)
     print(f"Imagen de disco: {out} ({out.stat().st_size / 1024 / 1024:.1f} MB)")
+
+
+def create_dmg(stage: Path, out: Path, attempts: int = 5) -> None:
+    """hdiutil falla a veces con «Resource busy» en las Mac de GitHub (Spotlight o XProtect revisando la carpeta):
+    se espera un poco y se reintenta; cualquier otro error corta en seguida."""
+    command = ["hdiutil", "create", "-volname", "LabelBridge", "-srcfolder", str(stage), "-ov", "-format", "UDZO",
+               str(out)]
+    for attempt in range(1, attempts + 1):
+        result = subprocess.run(command, capture_output=True, text=True)
+        if result.returncode == 0:
+            return
+        message = (result.stderr or result.stdout).strip()
+        if "Resource busy" not in message or attempt == attempts:
+            raise SystemExit(f"hdiutil no pudo crear la imagen: {message}")
+        print(f"hdiutil ocupado (intento {attempt} de {attempts}): se reintenta en {attempt * 10} s")
+        time.sleep(attempt * 10)
 
 
 if __name__ == "__main__":

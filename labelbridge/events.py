@@ -19,6 +19,7 @@ CONFIG_EXTERNAL = "config_external"  # sección que cambió el asistente: las pa
 ORDERS = "orders"  # {"order", "state"}: cambió lo que LabelBridge sabe de un pedido (pestaña Pedidos)
 OPEN_URL = "open_url"  # {"url"}: abrir una página del admin de Shopify (p. ej. el pedido para «Imprimir etiqueta»)
 ENGINE = "engine"  # {"problem"}: el motor de impresión tiene un problema («» cuando se resolvió)
+REPORT = "report"  # {"start"}: hay un reporte semanal nuevo (la pestaña Reporte lo marca)
 
 
 class Events:

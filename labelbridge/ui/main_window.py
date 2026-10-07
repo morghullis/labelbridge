@@ -33,6 +33,7 @@ from .pages.logs import LogsPage
 from .pages.n8n import N8nPage
 from .pages.orders import OrdersPage
 from .pages.printers import PrintersPage
+from .pages.report import ReportPage
 from .pages.settings import SettingsPage
 from .pages.shopify import ShopifyPage
 from .widgets import error, label
@@ -46,6 +47,7 @@ NAV = {
         Destination("assistant", N_("Asistente"), "chat"),  # no es una pantalla: abre y cierra el chat flotante
         Destination("home", N_("Inicio"), "home"),
         Destination("orders", N_("Pedidos"), "package"),
+        Destination("report", N_("Reporte"), "bar-chart"),
         Destination("printers", N_("Impresoras"), "printer"),
         Destination("shopify", N_("Shopify"), "shop"),
         Destination("n8n", N_("n8n"), "flow"),
@@ -57,7 +59,7 @@ NAV = {
 }
 # El menú lateral, por secciones (las mismas pestañas, agrupadas).
 NAV_SECTIONS = (
-    (N_("Operación"), ("home", "orders", "printers", "history")),
+    (N_("Operación"), ("home", "orders", "report", "printers", "history")),
     (N_("Tienda y conexiones"), ("shopify", "n8n", "api")),
     (N_("Ayuda"), ("guide", "assistant", "logs")),
     ("", ("settings",)),
@@ -125,6 +127,7 @@ class MainWindow(QMainWindow):
             "guide": GuidePage(ctx, self.navigate),
             "home": DashboardPage(ctx, self.navigate),
             "orders": OrdersPage(ctx),
+            "report": ReportPage(ctx, self.navigate),
             "printers": PrintersPage(ctx),
             "shopify": ShopifyPage(ctx, self.navigate),
             "n8n": N8nPage(ctx),
@@ -296,6 +299,9 @@ class MainWindow(QMainWindow):
             if name != "assistant":  # su marca sigue al chat, no a la pantalla
                 btn.setChecked(name == key)
         self.bottom_nav.set_current(key)
+        if key == "report":  # ya lo vio: la marca de «Nuevo» se va
+            self.nav_buttons["report"].set_badge("")
+            self.bottom_nav.set_badge("report", "")
         changed = self.stack.currentWidget() is not page
         self.stack.setCurrentWidget(page)
         page.refresh()
@@ -314,6 +320,10 @@ class MainWindow(QMainWindow):
     def _on_event(self, kind: str, data) -> None:
         if kind in ("paused", "job", "engine"):
             self._update_status()
+        elif kind == "report":  # reporte semanal nuevo: la pestaña lo marca hasta que se abre
+            if self.stack.currentWidget() is not self.pages["report"]:
+                self.nav_buttons["report"].set_badge(tr("Nuevo"))
+                self.bottom_nav.set_badge("report", tr("Nuevo"))
         elif kind == "notify" and isinstance(data, dict) and data.get("level") == "error":
             self.notice.show_notice(str(data.get("title") or ""), str(data.get("message") or ""), "error")
         elif kind == "update" and data is not None:
