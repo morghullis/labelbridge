@@ -44,7 +44,7 @@ from ...config import ASSISTANT_EFFORTS, EMAIL_PROVIDERS, NOTIFY_EVENTS
 from ...events import CONFIG_EXTERNAL
 from ...i18n import LANGUAGES, N_, tr
 from ...paths import data_dir, logs_dir, output_dir
-from ...secret_store import EMAIL_PASSWORD
+from ...secret_store import EMAIL_PASSWORD, SecretStoreError
 from ...system import autostart, sounds
 from ...system.platform import pick
 from ...updater import UPDATES_PAGE
@@ -703,8 +703,13 @@ class SettingsPage(Page):
         self.email_per_hour.setValue(e.per_hour)
         self._email_provider_changed()
 
-    def _save_email(self) -> None:
+    def _save_email(self) -> bool:
         e = self.ctx.cfg.data.email
+        try:  # la contraseña primero: si el almacén falla, el correo no queda a medio guardar
+            self.ctx.secrets.update(EMAIL_PASSWORD, self.email_password.text())
+        except SecretStoreError as exc:
+            error(self, tr("Avisos por email"), str(exc))
+            return False
         e.enabled = self.email_on.isChecked()
         e.provider = self.email_provider.currentData() or "custom"
         e.host = self.email_host.text().strip()
@@ -715,11 +720,12 @@ class SettingsPage(Page):
         e.recipients = self.email_to.text().strip()
         e.assistant = self.email_assistant.isChecked()
         e.per_hour = self.email_per_hour.value()
-        self.ctx.secrets.set(EMAIL_PASSWORD, self.email_password.text())
         self.ctx.cfg.save("email")
+        return True
 
     def _email_test(self) -> None:
-        self._save_email()
+        if not self._save_email():
+            return
         self._save_notifications()  # las casillas «Email» de los avisos
         sender = self.ctx.services.email
         problem = sender.problem()

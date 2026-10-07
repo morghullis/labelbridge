@@ -47,7 +47,7 @@ class NoticeBar(QFrame):
 
     def show_notice(self, title: str, message: str, level: str = "error") -> None:
         """El aviso más nuevo; si ya había otro a la vista, se cuenta («y 2 avisos más»)."""
-        self.count = self.count + 1 if self.isVisible() else 1
+        self.count = self.count + 1 if not self.isHidden() else 1  # isVisible() es falso con la ventana escondida
         extra = tr(" (y {0} aviso(s) más)", self.count - 1) if self.count > 1 else ""
         self.title.setText(title + extra)
         self.message.setText(message)
@@ -58,7 +58,7 @@ class NoticeBar(QFrame):
         self._timer.stop()
         if level != "error":
             self._timer.start(INFO_SECONDS * 1000)
-        if not self.isVisible():
+        if self.isHidden():
             self.setVisible(True)
             fade_in(self)
 

@@ -24,7 +24,7 @@ from ...events import CONFIG_EXTERNAL
 from ...i18n import date_text, tr
 from ...paths import resource_path
 from ...printing import routing
-from ...secret_store import SHOPIFY_ACCESS_TOKEN, SHOPIFY_CLIENT_SECRET
+from ...secret_store import SHOPIFY_ACCESS_TOKEN, SHOPIFY_CLIENT_SECRET, SecretStoreError
 from ..context import AppContext
 from ..print_routes import PrintRoutesCard
 from ..widgets import (
@@ -284,7 +284,7 @@ class ShopifyPage(Page):
         self.refresh()
 
     def _on_config(self, section: str) -> None:
-        if section in ("printers", "all"):
+        if section in ("printers", "general", "all"):  # la predeterminada se guarda en «general»
             self.routes.reload_printers()
 
     def refresh(self) -> None:
@@ -324,6 +324,11 @@ class ShopifyPage(Page):
                    "de envío, con cargo a tu cuenta de Shopify.\n\n¿Activar la compra automática?"),
             ):
                 self.buy_label.setChecked(False)
+        try:  # las claves primero: si el almacén falla, la configuración no queda a medio guardar
+            self.ctx.secrets.update(SHOPIFY_CLIENT_SECRET, self.client_secret.text())
+            self.ctx.secrets.update(SHOPIFY_ACCESS_TOKEN, self.token.text())
+        except SecretStoreError as exc:
+            return str(exc)
         s.enabled = self.enabled.isChecked()
         s.activated_once = s.activated_once or s.enabled  # ya decidió la persona: no se vuelve a activar solo
         s.shop = shop
@@ -346,8 +351,6 @@ class ShopifyPage(Page):
         s.required_tag = self.required_tag.text().strip()
         s.tag_after_print = self.tag_after.text().strip()
         s.poll_seconds = self.poll.value()
-        self.ctx.secrets.set(SHOPIFY_CLIENT_SECRET, self.client_secret.text())
-        self.ctx.secrets.set(SHOPIFY_ACCESS_TOKEN, self.token.text())
         return None
 
     def _save(self) -> bool:

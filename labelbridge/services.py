@@ -98,23 +98,28 @@ class Services:
             "shopify": self.shopify,
             "general": self.network,
         }
-        self._ensure_local_api_key(secrets, events)
+        # Avisos de lo que falló al preparar los servicios: la app los muestra cuando la ventana ya escucha.
+        self.startup_notices: list[tuple[str, str]] = []
+        problem = self._ensure_local_api_key(secrets)
+        if problem:
+            self.startup_notices.append(problem)
         cfg.subscribe(self._on_config_saved)
 
     @staticmethod
-    def _ensure_local_api_key(secrets: SecretStore, events: ev.Events) -> None:
+    def _ensure_local_api_key(secrets: SecretStore) -> tuple[str, str] | None:
         """La clave de la API local se crea una sola vez. Si el almacén seguro no la deja leer (p. ej. se negó el
-        permiso del Llavero), no se crea otra: dejaría fuera, sin aviso, a las integraciones que ya usan la de antes."""
+        permiso del Llavero), no se crea otra: dejaría fuera, sin aviso, a las integraciones que ya usan la de antes.
+        Devuelve el aviso para la persona (título, texto) si no se pudo leer."""
         try:
             existing = secrets.get(LOCAL_API_KEY, strict=True)
         except SecretStoreError as exc:
             log.error("No se pudo leer la clave de la API local: %s", exc)
-            events.notify(tr("No se pudo leer la clave de la API local"), tr(
+            return tr("No se pudo leer la clave de la API local"), tr(
                 "{0}. Las integraciones que imprimen por la API local no podrán entrar hasta que se pueda leer: "
-                "reinicia LabelBridge y acepta el permiso del almacén de contraseñas.", exc), "error")
-            return
+                "reinicia LabelBridge y acepta el permiso del almacén de contraseñas.", exc)
         if not existing:
             secrets.set(LOCAL_API_KEY, generate_key())
+        return None
 
     def all(self) -> list[BackgroundService]:
         return [*self.by_section.values(), self.updates]

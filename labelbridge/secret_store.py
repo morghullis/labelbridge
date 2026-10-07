@@ -14,10 +14,13 @@ import logging
 import os
 import sys
 import threading
+import time
 from pathlib import Path
 from .i18n import tr
 
 log = logging.getLogger(__name__)
+
+READ_RETRY_SECONDS = 60  # una lectura que falló no se reintenta antes (cada reintento podría pedir permiso)
 
 SERVICE = "LabelBridge"
 
@@ -58,6 +61,7 @@ class SecretStore:
         self._fallback_path = fallback_path
         self._lock = threading.Lock()
         self._cache: dict[str, str] = {}
+        self._failed_at: dict[str, float] = {}  # lecturas que fallaron: no se reintentan en cada petición
         self._keyring = None
         self._warned = False
         backend = backend or os.environ.get("LABELBRIDGE_SECRETS", "auto")
@@ -84,19 +88,36 @@ class SecretStore:
                 return self._cache[name]  # un vacío en caché no basta en modo estricto: se vuelve a consultar
             value = ""
             failed = False
-            if self._keyring is not None:
+            recent = time.monotonic() - self._failed_at.get(name, -READ_RETRY_SECONDS) < READ_RETRY_SECONDS
+            if self._keyring is not None and (strict or not recent):
                 try:
                     value = self._keyring.get_password(SERVICE, name) or ""
+                    self._failed_at.pop(name, None)
                 except Exception as exc:
                     if strict:
                         raise SecretStoreError(tr("No se pudo leer {0} del almacén seguro", name)) from exc
-                    log.exception("No se pudo leer el secreto %s del almacén seguro", name)
+                    if name not in self._failed_at:  # la traza una vez; los reintentos, una línea
+                        log.exception("No se pudo leer el secreto %s del almacén seguro", name)
+                    else:
+                        log.warning("Sigue sin poder leerse el secreto %s del almacén seguro: %s", name, exc)
+                    self._failed_at[name] = time.monotonic()
                     failed = True
+            elif recent:
+                failed = True  # falló hace poco: se espera antes de volver a preguntar (y de volver a pedir permiso)
             if not value:
                 value = self._read_file().get(name, "")
-            if value or not failed:  # tras un error no se recuerda el vacío: la próxima lectura vuelve a probar
+            if value or not failed:  # tras un error no se recuerda el vacío: en un rato se vuelve a probar
                 self._cache[name] = value
             return value
+
+    def update(self, name: str, value: str) -> bool:
+        """Guarda solo si cambió: al guardar una pantalla no se toca el almacén por nada (ni se pide permiso de
+        nuevo). Devuelve si cambió."""
+        value = (value or "").strip()
+        if value == self.get(name):
+            return False
+        self.set(name, value)
+        return True
 
     def set(self, name: str, value: str) -> None:
         """Guarda el secreto (vacío: lo borra). Si el almacén seguro no lo deja borrar, lanza SecretStoreError: un
@@ -129,12 +150,20 @@ class SecretStore:
 
         try:
             self._keyring.delete_password(SERVICE, name)
-        except PasswordDeleteError:
-            return  # no estaba guardado: nada que borrar
+            return
+        except PasswordDeleteError as exc:  # «no estaba»… o, en la Mac, cualquier error (también acceso denegado)
+            problem: Exception = exc
         except Exception as exc:
-            log.exception("No se pudo borrar %s del almacén seguro", name)
-            self._cache.pop(name, None)  # la próxima lectura dice la verdad (sigue guardado)
-            raise SecretStoreError(tr("No se pudo borrar {0} del almacén seguro: sigue guardado", name)) from exc
+            problem = exc
+        try:
+            still_there = bool(self._keyring.get_password(SERVICE, name))
+        except Exception:  # noqa: BLE001  si ni se puede leer, no se puede asegurar que se borró
+            still_there = True
+        if not still_there:
+            return  # no estaba guardado: nada que borrar
+        log.error("No se pudo borrar %s del almacén seguro: %s", name, problem)
+        self._cache.pop(name, None)  # la próxima lectura dice la verdad (sigue guardado)
+        raise SecretStoreError(tr("No se pudo borrar {0} del almacén seguro: sigue guardado", name)) from problem
 
     # --- archivo de respaldo ---------------------------------------------------------------------
     def _read_file(self) -> dict[str, str]:

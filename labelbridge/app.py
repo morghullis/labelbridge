@@ -226,7 +226,7 @@ def _run(app, argv: list[str], hints: dict, instance) -> int:
             tr(pick(N_("{0}.\n\nLabelBridge no se abre para no perder ni exponer datos. Reinicia el equipo y vuelve a intentarlo; si continúa, revisa el Administrador de credenciales de Windows."),
                     N_("{0}.\n\nLabelBridge no se abre para no perder ni exponer datos. Reinicia la Mac y vuelve a intentarlo; si continúa, revisa el Llavero (Acceso a Llaveros).")), exc),
         )
-        return 1
+        return 0  # ya se avisó: en la Mac, launchd no la vuelve a abrir en un bucle de ventanas
     cfg = ConfigManager(config_path(), protector)
     language = i18n.set_language(i18n.choose(cfg.data.general.language, hints.get("language", "")))
     if language == "es":
@@ -260,8 +260,11 @@ def _run(app, argv: list[str], hints: dict, instance) -> int:
         # app se cierre para instalar). Arranca solo cuando la salida es segura: si se cancela (una compra en curso),
         # la app sigue.
         def force_exit() -> None:
-            log.warning("El cierre tardó más de 20 s: se termina el proceso")
-            logging.shutdown()
+            # Anotarlo en otro hilo: si un hilo trabado tiene tomado el registro, esto no puede trabarse también.
+            note = threading.Thread(target=lambda: log.warning("El cierre tardó más de 20 s: se termina el proceso"),
+                                    daemon=True)
+            note.start()
+            note.join(1.0)
             os._exit(0)
 
         watchdog = threading.Timer(20.0, force_exit)
@@ -302,12 +305,15 @@ def _run(app, argv: list[str], hints: dict, instance) -> int:
         # Al iniciar sesión en Windows la bandeja puede tardar unos segundos en existir. Si no aparece, la ventana
         # queda a la vista (los errores se ven arriba de la pantalla) y se sigue probando cada minuto.
         if QSystemTrayIcon.isSystemTrayAvailable():
+            if attempts_left < 0:
+                log.info("La bandeja del sistema ya está disponible")
             tray.show()
             return
-        if attempts_left == 0:
+        if attempts_left == 0:  # una sola vez: la ventana queda a la vista (los errores se ven arriba)
             log.warning("No hay bandeja del sistema: se muestra la ventana y se sigue probando cada minuto")
             window.show()
-        QTimer.singleShot(3000 if attempts_left > 0 else 60_000, lambda: ensure_tray(max(0, attempts_left - 1)))
+        next_try = attempts_left - 1 if attempts_left > 0 else -1  # -1: se sigue probando en silencio
+        QTimer.singleShot(3000 if attempts_left > 0 else 60_000, lambda: ensure_tray(next_try))
 
     engine.start()
     services.start()
@@ -364,6 +370,8 @@ def _run(app, argv: list[str], hints: dict, instance) -> int:
         window.show()
         QTimer.singleShot(900, lambda: WhatsNewDialog(window, just_installed).show())
     ensure_tray()
+    for title, text in services.startup_notices:  # lo que falló al preparar los servicios, ya con la ventana escuchando
+        QTimer.singleShot(1500, lambda title=title, text=text: events.notify(title, text, "error"))
 
     code = app.exec()
     log.info("Cerrando %s…", APP_NAME)

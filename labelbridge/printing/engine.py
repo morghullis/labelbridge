@@ -32,6 +32,7 @@ log = logging.getLogger(__name__)
 
 RETRY_DELAYS = (10, 30, 60, 120, 300, 600, 900)
 PREFETCH_RETRY_SECONDS = 60  # una descarga anticipada que falló no se vuelve a probar antes de esto
+PAUSED_WAIT_SECONDS = 5.0  # en pausa solo se descargan archivos; reanudar despierta al motor en el acto
 # Destinos tcp:// / ipp:// escritos en un trabajo: solo puertos de impresión (evita usar la app
 # para enviar bytes a otros servicios de la red). Las impresoras configuradas no tienen límite.
 ADHOC_PORTS = set(range(9100, 9110)) | {631, 515}
@@ -176,7 +177,7 @@ class PrintEngine:
                     removed = self.store.cleanup(self.cfg.data.general.retention_days)
                     if removed:
                         log.info("Historial: %d trabajos antiguos eliminados", removed)
-                wait = self._wait_seconds()
+                wait = PAUSED_WAIT_SECONDS if self.paused else self._wait_seconds()
                 self._set_problem("")
             except Exception as exc:  # noqa: BLE001  el motor no puede morir: se anota, se avisa y sigue
                 log.exception("Error inesperado en el motor de impresión")

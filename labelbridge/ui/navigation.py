@@ -393,6 +393,7 @@ class BottomNav(QFrame):
             action.triggered.connect(lambda _=False, k=destination.key: self.selected.emit(k))
         size = menu.sizeHint()
         menu.exec(self.more.mapToGlobal(self.more.rect().topRight()) - QPointF(size.width(), size.height()).toPoint())
+        menu.deleteLater()  # uno nuevo en cada clic: sin esto quedarían en memoria
 
     def set_current(self, key: str) -> None:
         self.current = key

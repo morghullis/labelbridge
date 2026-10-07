@@ -167,21 +167,28 @@ class _FakeKeyring:
     def __init__(self) -> None:
         self.fail_reads = False
         self.fail_deletes = False
+        self.mac_denied_deletes = False  # el Llavero de la Mac: todo error al borrar llega como PasswordDeleteError
         self.values: dict[str, str] = {}
+        self.reads = 0
+        self.writes = 0
 
     def get_password(self, _service, name):
+        self.reads += 1
         if self.fail_reads:
             raise OSError("El usuario negó el acceso al Llavero")
         return self.values.get(name)
 
     def set_password(self, _service, name, value):
+        self.writes += 1
         self.values[name] = value
 
     def delete_password(self, _service, name):
-        if self.fail_deletes:
-            raise OSError("Acceso denegado")
         from keyring.errors import PasswordDeleteError
 
+        if self.fail_deletes:
+            raise OSError("Acceso denegado")
+        if self.mac_denied_deletes:
+            raise PasswordDeleteError("Access Denied")
         if name not in self.values:
             raise PasswordDeleteError("no existe")
         del self.values[name]
@@ -196,13 +203,21 @@ def test_secret_reads_retry_after_a_keychain_error_and_deletes_never_fail_silent
     fake.values["clave"] = "valor"
     fake.fail_reads = True
     assert store.get("clave") == ""  # esta vez no se pudo leer…
+    reads = fake.reads
+    assert store.get("clave") == "" and fake.reads == reads  # …y no se vuelve a preguntar en cada petición
     fake.fail_reads = False
-    assert store.get("clave") == "valor"  # …y la siguiente vuelve a preguntar (no quedó «vacío» guardado)
+    store._failed_at["clave"] -= 61  # pasó un minuto
+    assert store.get("clave") == "valor"  # vuelve a preguntar (no quedó «vacío» guardado)
     store.set("no-estaba", "")  # borrar lo que no existe no es un error
     fake.fail_deletes = True
     with pytest.raises(SecretStoreError):
         store.set("clave", "")
     assert store.get("clave") == "valor"  # dice la verdad: sigue guardado
+    fake.fail_deletes, fake.mac_denied_deletes = False, True
+    with pytest.raises(SecretStoreError):  # en la Mac el error llega disfrazado de «no existe»: se comprueba
+        store.set("clave", "")
+    writes = fake.writes
+    assert store.update("clave", "valor") is False and fake.writes == writes  # sin cambios, no se toca el almacén
 
 
 def test_local_api_key_is_not_replaced_when_the_keychain_cannot_be_read(core, monkeypatch):
@@ -215,9 +230,9 @@ def test_local_api_key_is_not_replaced_when_the_keychain_cannot_be_read(core, mo
     monkeypatch.setattr(core.secrets, "get", denied)
     created = []
     monkeypatch.setattr(core.secrets, "set", lambda name, value: created.append(name))
-    Services._ensure_local_api_key(core.secrets, core.events)
+    notice = Services._ensure_local_api_key(core.secrets)
     assert LOCAL_API_KEY not in created  # no se inventa otra clave que dejaría fuera a las integraciones
-    assert any(kind == "notify" and data["level"] == "error" for kind, data in core.received)
+    assert notice and notice[0] == "No se pudo leer la clave de la API local"  # la app lo muestra con la ventana lista
 
 
 # --- conectores ------------------------------------------------------------------------------------------
@@ -342,3 +357,64 @@ def test_update_record_that_cannot_be_read_is_logged(caplog):
     caplog.set_level(logging.WARNING)
     assert pending_whats_new(lambda _key: json.dumps({"no": "sirve"})[:5]) is None
     assert any("ilegible" in record.getMessage() for record in caplog.records)
+
+
+def test_a_failing_keychain_never_leaves_the_shopify_page_half_saved(core, monkeypatch):
+    from labelbridge.secret_store import SecretStoreError
+    from labelbridge.ui.pages.shopify import ShopifyPage
+
+    page = ShopifyPage(_ui_context(core))
+    page.shop.setText("otra-tienda.myshopify.com")
+
+    def broken(name, value):
+        raise SecretStoreError("No se pudo borrar shopify_access_token del almacén seguro: sigue guardado")
+
+    monkeypatch.setattr(core.secrets, "update", broken)
+    assert "sigue guardado" in page._collect()
+    assert core.cfg.data.shopify.shop == ""  # nada cambió a medias
+
+
+def test_routes_card_follows_a_new_default_printer(core, qapp):
+    from labelbridge.config import PrinterProfile
+    from labelbridge.printing import routing
+    from labelbridge.ui.pages.shopify import ShopifyPage
+
+    office = PrinterProfile(alias="oficina", kind="system", system_name="HP_LaserJet")
+    core.cfg.data.printers.append(office)
+    page = ShopifyPage(_ui_context(core))
+    core.cfg.data.general.default_printer_id = office.id
+    core.cfg.save("general")  # «Predeterminada» en Impresoras guarda «general»
+    _wait_qt(lambda: "oficina" in page.routes.combos[routing.SHIPPING].itemText(0), 3)
+    assert page.routes.combos[routing.SHIPPING].itemText(0) == "Predeterminada (oficina)"
+
+
+def test_notice_count_keeps_going_while_the_window_is_hidden(qapp):
+    from PySide6.QtWidgets import QWidget
+
+    from labelbridge.ui.notice_bar import NoticeBar
+
+    hidden_window = QWidget()  # la ventana escondida en la bandeja
+    bar = NoticeBar()
+    bar.setParent(hidden_window)
+    for index in range(3):
+        bar.show_notice(f"Error {index}", "")
+    assert bar.title.text() == "Error 2 (y 2 aviso(s) más)"
+
+
+def test_an_error_while_stopping_is_not_reported_as_a_crash(core, notices):
+    from labelbridge.connectors import base
+
+    class Stopping(base.BackgroundService):
+        name, label = "prueba", "Servicio de prueba"
+
+        def enabled(self) -> bool:
+            return True
+
+        def run(self, stop, wake) -> None:
+            stop.wait(5)
+            raise ConnectionError("socket cerrado al detener")
+
+    service = Stopping(core.events)
+    service.start()
+    service.stop(2)
+    assert notices == [] and service.state == "off"

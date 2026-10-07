@@ -175,8 +175,11 @@ def print_with_driver(
             detail = "; ".join(spooler.failures[:2])
             log.error("El sistema no aceptó el trabajo en %s (fin=%s, estado=%s) %s", profile.system_name, ended,
                       state, detail)
-            raise PrintError(tr("El sistema no pudo enviar el trabajo a '{0}'. Revisa que esté encendida, con papel y "
-                                "sin trabajos atascados.", profile.system_name))
+            # Pudo haber salido una parte: no se reintenta solo (saldría dos veces); la persona revisa y reintenta.
+            raise PermanentPrintError(tr(
+                "El sistema no confirmó el trabajo en '{0}'. Revisa si salió la etiqueta; si no, pulsa Reintentar en "
+                "Historial (y revisa que la impresora esté encendida, con papel y sin trabajos atascados).",
+                profile.system_name))
 
 
 class _SpoolerWarnings(logging.Handler):

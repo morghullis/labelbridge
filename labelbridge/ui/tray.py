@@ -96,7 +96,7 @@ class Tray(QSystemTrayIcon):
                 log.warning("No se pudo abrir el navegador en %s", url)
                 self.ctx.events.notify(tr("No se pudo abrir el navegador"),
                                        tr("Abre el pedido a mano en Shopify → Pedidos: {0}", url), "error")
-        elif kind == "connector" and isinstance(data, dict) and data.get("state") == "error":
+        elif kind == "connector" and isinstance(data, dict) and data.get("state") == "error" and not data.get("notified"):
             names = {"shopify": tr("Shopify"), "mqtt": tr("n8n (tiempo real)"), "local_api": tr("API local")}
             name = names.get(data.get("name"), data.get("name"))
             key = f"conn|{data.get('name')}"

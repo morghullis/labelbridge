@@ -410,11 +410,11 @@ class MainWindow(QMainWindow):
             state, title = "warn", tr("En pausa")
         elif not self.ctx.cfg.data.printers:
             state, title = "error", tr("Sin impresora")
-        elif queued:
+        elif queued and self.ctx.store.working_now():
             state, title = "ok", tr("Imprimiendo")
-        else:
+        else:  # nada saliendo ahora (lo que espera un reintento sigue contado en el detalle)
             state, title = "ok", tr("Listo para imprimir")
-        live = state == "ok" and queued > 0
+        live = title == tr("Imprimiendo")
         for indicator in (self.status, self.bottom_nav.status):
             indicator.set_status(state, title, detail, live=live)
 

@@ -86,11 +86,12 @@ class BackgroundService:
         wake.clear()
         return not stop.is_set()
 
-    def set_status(self, state: str, message: str) -> None:
+    def set_status(self, state: str, message: str, notified: bool = False) -> None:
+        """`notified`: ya se avisó a la persona por otro lado (la bandeja no repite el aviso)."""
         if (state, message) == (self.state, self.message):
             return
         self.state, self.message = state, message
-        self.events.emit(ev.CONNECTOR, {"name": self.name, "state": state, "message": message})
+        self.events.emit(ev.CONNECTOR, {"name": self.name, "state": state, "message": message, "notified": notified})
 
     def _run_safe(self, stop: threading.Event, wake: threading.Event) -> None:
         """Un error inesperado no apaga el servicio para siempre: queda anotado, se avisa y se reinicia solo, cada vez
@@ -101,12 +102,16 @@ class BackgroundService:
                 self.run(stop, wake)
                 return  # terminó porque se pidió parar (o porque se apagó)
             except Exception as exc:  # noqa: BLE001  cualquier falla del servicio se anota, se avisa y se reintenta
+                if stop.is_set():  # se estaba apagando: no es una caída (ni hay que avisar)
+                    log.info("El servicio %s terminó con un error al detenerse: %s", self.name, exc)
+                    return
                 failures += 1
                 delay = min(RESTART_MAX_SECONDS, RESTART_FIRST_SECONDS * 2 ** min(failures - 1, 5))
                 log.exception("El servicio %s se detuvo por un error (vez %d); se reinicia en %d s",
                               self.name, failures, delay)
                 reason = errors.user_message(exc)
-                self.set_status("error", tr("Se detuvo por un error: {0}. Se reinicia solo en {1} s.", reason, delay))
+                self.set_status("error", tr("Se detuvo por un error: {0}. Se reinicia solo en {1} s.", reason, delay),
+                                notified=True)
                 errors.notify(tr("{0} se detuvo por un error", tr(self.label)),
                               tr("{0}. LabelBridge lo reinicia solo; si se repite, revisa la pestaña Registro.", reason))
             if not self.sleep(stop, wake, delay):

@@ -11,7 +11,7 @@ from ...connectors.mqtt import topics
 from ...events import CONFIG_EXTERNAL
 from ...i18n import tr
 from ...paths import resource_path
-from ...secret_store import MQTT_PASSWORD
+from ...secret_store import MQTT_PASSWORD, SecretStoreError
 from ..context import AppContext
 from ..widgets import Card, Page, Pill, SecretField, SwitchRow, button, error, form_layout, label, run_async
 
@@ -159,6 +159,11 @@ class N8nPage(Page):
         if self.enabled.isChecked() and not host:
             error(self, "n8n", tr("Escribe el servidor (broker) MQTT."))
             return False
+        try:  # la contraseña primero: si el almacén falla, la configuración no queda a medio guardar
+            self.ctx.secrets.update(MQTT_PASSWORD, self.password.text())
+        except SecretStoreError as exc:
+            error(self, "n8n", str(exc))
+            return False
         s.enabled = self.enabled.isChecked()
         s.host = host
         s.port = self.port.value()
@@ -166,7 +171,6 @@ class N8nPage(Page):
         s.username = self.username.text().strip()
         s.channel = slugify(self.channel.text() or s.channel)
         self.channel.setText(s.channel)
-        self.ctx.secrets.set(MQTT_PASSWORD, self.password.text())
         self.ctx.cfg.save("mqtt")
         return True
 
