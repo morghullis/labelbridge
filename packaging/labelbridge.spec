@@ -57,6 +57,8 @@ a = Analysis(
         # Avisos nativos de Windows (system/toasts.py importa estos módulos dentro de una función).
         *(["winrt.system", "winrt.windows.foundation", "winrt.windows.data.xml.dom", "winrt.windows.ui.notifications"]
           if WINDOWS else []),
+        # Funcionar siempre (system/always_on.py): el Programador de tareas de Windows por COM.
+        *(["pythoncom", "pywintypes", "win32com.client"] if WINDOWS else []),
         *(["keyring.backends.macOS"] if MAC else []),
         "PySide6.QtPdf",
         "PySide6.QtSvg",

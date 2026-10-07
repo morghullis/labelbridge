@@ -114,6 +114,11 @@ Filename: "{app}\{#AppExe}"; Parameters: "--show"; Description: "{cm:LaunchProgr
 Filename: "{app}\{#AppExe}"; Parameters: "--updated"; Flags: nowait runasoriginaluser; Check: WizardSilent
 
 [UninstallRun]
+; «Funcionar siempre» (Ajustes → General): las tareas de Windows se quitan y, si LabelBridge trabajaba en segundo plano
+; (sin sesión iniciada), se cierra para poder borrar sus archivos.
+Filename: "{sys}\schtasks.exe"; Parameters: "/Delete /TN ""LabelBridge - Sin sesión"" /F"; Flags: runhidden; RunOnceId: "RemoveBackgroundTask"
+Filename: "{sys}\schtasks.exe"; Parameters: "/Delete /TN ""LabelBridge - Despertar"" /F"; Flags: runhidden; RunOnceId: "RemoveWakeTask"
+Filename: "{sys}\taskkill.exe"; Parameters: "/IM LabelBridge.exe /F"; Flags: runhidden; RunOnceId: "CloseBackground"
 ; El inicio automático lo gestiona la app (Ajustes); al desinstalar se elimina.
 Filename: "{sys}\reg.exe"; Parameters: "delete ""HKCU\Software\Microsoft\Windows\CurrentVersion\Run"" /v LabelBridge /f"; Flags: runhidden; RunOnceId: "RemoveAutostart"
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""LabelBridge API"""; Flags: runhidden; RunOnceId: "RemoveFirewallRule"; Check: IsAdminInstallMode

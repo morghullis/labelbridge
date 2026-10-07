@@ -45,3 +45,21 @@ def test_native_windows_notifications_are_ready(tmp_path):
     notifier._ToastNotification(document)
     with winreg.OpenKey(winreg.HKEY_CURRENT_USER, toasts.REGISTRY_KEY) as key:
         assert winreg.QueryValueEx(key, "DisplayName")[0] == "LabelBridge"
+
+
+def test_windows_accepts_the_always_on_tasks():
+    """Las dos tareas de «Funcionar siempre» como las arma la app (con la sesión de la prueba en vez de contraseña):
+    Windows las valida al registrarlas."""
+    from labelbridge.system import always_on
+
+    user = always_on.current_user()
+    name = "LabelBridge - Prueba CI"
+    for xml in (always_on.background_task_xml(user, logon="InteractiveToken"), always_on.wake_task_xml(user)):
+        always_on._register(name, xml, user, None, always_on.LOGON_INTERACTIVE)
+        try:
+            assert always_on.task_exists(name)
+        finally:
+            always_on.remove_task(name)
+        assert not always_on.task_exists(name)
+    status = always_on.status()
+    assert status.sleep_minutes_ac is not None and isinstance(status.background, bool)

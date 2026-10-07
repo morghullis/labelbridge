@@ -45,10 +45,11 @@ from ...events import CONFIG_EXTERNAL
 from ...i18n import LANGUAGES, N_, tr
 from ...paths import data_dir, logs_dir, output_dir
 from ...secret_store import EMAIL_PASSWORD, SecretStoreError
-from ...system import autostart, sounds
+from ...system import always_on, autostart, sounds
 from ...system.platform import pick
 from ...updater import UPDATES_PAGE
 from ..alerts import play_async
+from ..always_on_card import AlwaysOnCard
 from .about import AboutPanel
 from ..context import AppContext
 from ..widgets import Card, Page, SecretField, button, confirm, error, form_layout, info, label, run_async
@@ -198,6 +199,9 @@ class SettingsPage(Page):
         form.addRow(tr("Idioma / Language"), self.language)
         general.add(layout=form)
         tabs["general"].addWidget(general)
+        if always_on.supported():  # Windows: imprimir aunque la suspendan o nadie haya iniciado sesión
+            self.always_on = AlwaysOnCard()
+            tabs["general"].addWidget(self.always_on)
         tabs["alerts"].addWidget(self._notifications_card())
         tabs["email"].addWidget(self._email_card())
 

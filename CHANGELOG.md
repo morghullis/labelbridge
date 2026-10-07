@@ -2,6 +2,14 @@
 
 Cada versión publicada muestra estas notas en la ventana de actualización de la app y en la página de descargas.
 
+## 1.19.0
+
+- **Funcionar siempre** (Ajustes → General, en Windows): para que LabelBridge imprima aunque nadie esté usando la PC. Cada pieza se activa con un botón y se confirma antes:
+  - **No suspenderse enchufada:** con corriente, la PC no se suspende ni hiberna y cerrar la tapa no la apaga (la pantalla sí se apaga).
+  - **Despertarse si la suspenden:** si alguien la suspende a mano, se despierta sola cada 10 minutos y sigue imprimiendo.
+  - **Imprimir sin sesión iniciada:** al encender la PC, o con la sesión cerrada, LabelBridge trabaja en segundo plano con tu cuenta (Windows te pide una vez tu contraseña, en su propia ventana de seguridad; la guarda Windows, no LabelBridge). Cuando inicias sesión, la ventana toma el relevo sin imprimir nada dos veces.
+- Con la pantalla bloqueada ya imprimía; con la PC apagada nada puede imprimir.
+
 ## 1.18.0
 
 - **Diseño nuevo, oscuro con verde neón.** Fondo oscuro elegante y el verde neón para lo importante: el botón principal, la pestaña activa (con una barra que brilla), el estado de la impresión, los interruptores y los gráficos. Animaciones suaves: el botón principal se enciende al pasar el mouse, cada pantalla entra con un leve deslizamiento y las cifras suben hasta su valor (se apagan con «menos animaciones» de Windows).

@@ -2,6 +2,14 @@
 
 English version of [CHANGELOG.md](CHANGELOG.md). Each published version shows these notes in the app's update window when the app is in English, and on the English download page.
 
+## 1.19.0
+
+- **Always on** (Settings → General, on Windows): so LabelBridge prints even when nobody is using the PC. Each piece is turned on with a button and confirmed first:
+  - **Don't sleep when plugged in:** when plugged in, the PC won't sleep or hibernate and closing the lid won't turn it off (the screen still turns off).
+  - **Wake up if put to sleep:** if someone puts it to sleep, it wakes up by itself every 10 minutes and keeps printing.
+  - **Print without anyone signed in:** when the PC starts, or when signed out, LabelBridge works in the background with your account (Windows asks once for your password, in its own security window; Windows keeps it, not LabelBridge). When you sign in, the window takes over without printing anything twice.
+- With the screen locked it already printed; with the PC turned off nothing can print.
+
 ## 1.18.0
 
 - **New design, dark with neon green.** An elegant dark background and neon green for what matters: the main button, the active tab (with a glowing bar), the print status, switches and charts. Smooth animations: the main button lights up on hover, each screen slides in gently and numbers count up to their value (turned off with Windows' "reduce animations").

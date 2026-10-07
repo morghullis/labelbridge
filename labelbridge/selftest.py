@@ -352,6 +352,16 @@ def run(argv: list[str]) -> int:
         ToastNotificationManager.create_toast_notifier_with_id(AUMID)
         return f"avisos nativos listos ({AUMID})"
 
+    def always_on_check() -> str:
+        """«Funcionar siempre»: el Programador de tareas y la energía de Windows responden (no se cambia nada)."""
+        if sys.platform != "win32":
+            return "solo en Windows"
+        from .system import always_on
+
+        status = always_on.status()
+        return (f"energía legible (suspensión enchufada: {status.sleep_minutes_ac} min) · tareas: "
+                f"sin sesión={'sí' if status.background else 'no'}, despertar={'sí' if status.wake else 'no'}")
+
     def guide_and_updates() -> str:
         from . import updater
         from .paths import resource_path
@@ -374,6 +384,7 @@ def run(argv: list[str]) -> int:
     check("sonidos de aviso", notification_sounds)
     check("reporte semanal", store_report)
     check("avisos de Windows", windows_notifications)
+    check("funcionar siempre", always_on_check)
     lines.append("RESULTADO: " + ("OK" if ok else "FALLO"))
     report_path.write_text("\n".join(lines), encoding="utf-8")
     return 0 if ok else 1

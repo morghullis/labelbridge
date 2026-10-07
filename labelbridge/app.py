@@ -115,11 +115,20 @@ def _watch_dock(app, window) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv if argv is None else argv)
+    if "--wake" in argv:  # la tarea «LabelBridge - Despertar» solo despierta la PC: no hay nada más que hacer
+        return 0
     _ensure_qt_plugin_path()
     if "--self-test" in argv:
         from .selftest import run as self_test
 
         return self_test(argv)
+    if "--background" in argv:  # sin sesión iniciada (tarea «LabelBridge - Sin sesión»): sin ventana
+        from . import background
+        from .logging_setup import setup_logging
+
+        setup_logging()
+        _install_exception_hooks()
+        return background.run(argv)
 
     from PySide6.QtCore import QEvent
     from PySide6.QtGui import QFont
