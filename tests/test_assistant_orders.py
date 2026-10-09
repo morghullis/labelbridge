@@ -13,6 +13,9 @@ from labelbridge.assistant.permissions import ToolPermissions
 from labelbridge.assistant.prompt import owner_rules, system_prompt
 from labelbridge.assistant.secrets_guard import SecretsGuard
 from labelbridge.assistant.tools import Toolbox
+from labelbridge.config import ShippingPackage
+from labelbridge.connectors import packaging as pk
+from labelbridge.connectors.shopify import ShopifyError
 from labelbridge.connectors.shopify_orders import OrderDetail, OrderItem
 from labelbridge.secret_store import SHOPIFY_CLIENT_SECRET
 
@@ -37,6 +40,13 @@ def box(core, monkeypatch):
                                                            "name": "#1051"})
     monkeypatch.setattr(shopify, "buy_label_now", lambda legacy, **kw: calls.append(("buy", legacy, kw)) or {
         "state": "purchased", "carrier": "USPS", "tracking": "9400"})
+    def planned_packing(legacy, package=pk.RULES, service="auto"):
+        try:
+            return pk.fit(core.cfg.data.shopify, "" if package == pk.RULES else package, service)
+        except pk.PackagingError as exc:  # como ShopifyService._chosen_packing
+            raise ShopifyError(str(exc)) from None
+
+    monkeypatch.setattr(shopify, "planned_packing", planned_packing)
     return toolbox
 
 
@@ -91,11 +101,15 @@ def test_manual_orders_and_labels_always_ask_first(box):
     result, error = run(box, "buy_shipping_label", order="#1051")
     assert not error and result["bought"] is False and not any(c[0] == "buy" for c in box.calls)
     box.fake_ui.confirm_answer = True
-    result, error = run(box, "buy_shipping_label", order="#1051", package="saved_box", total_weight_oz=6)
+    box.ctx.cfg.data.shopify.packages = [ShippingPackage("bolsa", "Bolsa de nailon", "SOFT_PACK", 10, 13, 0.5)]
+    result, error = run(box, "buy_shipping_label", order="#1051", package="bolsa", total_weight_oz=6)
     assert not error and result["state"] == "purchased" and result["tracking"] == "9400"
+    assert result["package"] == "Bolsa de nailon"
     _kind, legacy, options = box.calls[-1]
     assert legacy == "555" and options["total_weight"] == {"value": 6.0, "unit": "OUNCES"}
-    assert options["package"]["type"] and options["notify"] is False
+    assert options["package"] == "bolsa" and options["notify"] is False
+    bad, error = run(box, "buy_shipping_label", order="#1051", package="saved_box")
+    assert error and "Empaque desconocido" in bad  # un empaque que no existe ni llega a pedir confirmación
     assert box.fake_ui.confirmations.count("Comprar guía") == 2
 
 
@@ -152,5 +166,13 @@ def test_the_assistant_picks_a_service_and_still_asks_first(box, monkeypatch):
     result, error = run(box, "buy_shipping_label", order="#1050", service="usps:Priority")
     assert not error and result["service"] == "USPS Priority Mail" and box.calls[-1][2]["service"] == "usps:Priority"
     assert "USPS Priority Mail" in texts[-1]  # la ventana de confirmación dice con qué servicio
+    # Un empaque oficial de USPS: la confirmación dice que va con Priority Mail, aunque se pida «auto».
+    result, error = run(box, "buy_shipping_label", order="#1050", package="usps:flat_rate_envelope")
+    assert not error and result["service"] == "USPS Priority Mail" and result["package"] == "USPS · Sobre Flat Rate"
+    assert "Sobre Flat Rate" in texts[-1] and "USPS Priority Mail" in texts[-1]
+    assert box.calls[-1][2]["package"] == "usps:flat_rate_envelope"
+    bad, error = run(box, "buy_shipping_label", order="#1050", package="usps:flat_rate_envelope",
+                     service="usps:GroundAdvantage")
+    assert error and "Ground Advantage" in bad and len(texts) == 2  # no van juntos: ni se pregunta
     bad, error = run(box, "buy_shipping_label", order="#1050", service="fedex:ground")
-    assert error and len(texts) == 1  # un servicio que no existe ni llega a pedir confirmación
+    assert error and len(texts) == 2  # un servicio que no existe ni llega a pedir confirmación

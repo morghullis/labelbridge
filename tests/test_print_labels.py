@@ -408,7 +408,7 @@ def test_several_orders_are_printed_with_one_confirmation():
     options = lb.BatchOptions(service="usps:Priority", notify=True)
     summary = lb.run_batch(fake, items, options, progress=lambda index, item: seen.append((index, item.state)))
     assert fake.reprinted == ["11"] and [legacy for legacy, _o in fake.bought] == ["12", "13", "15"]
-    assert fake.bought[0][1] == {"package": None, "total_weight": None, "notify": True, "service": "usps:Priority"}
+    assert fake.bought[0][1] == {"package": "rules", "total_weight": None, "notify": True, "service": "usps:Priority"}
     assert (summary.bought, summary.reprinted, summary.failed, summary.skipped) == (1, 1, 2, 1)
     assert summary.cost == 5.25 and items[1].detail == "USPS 940012"
     assert "USPS Priority Mail" in items[2].detail and "No se cobró nada" in items[2].detail

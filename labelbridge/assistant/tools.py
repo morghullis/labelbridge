@@ -23,6 +23,8 @@ from typing import Any, Callable, Protocol
 
 from .. import __version__
 from ..config import LABEL_SIZES, MEDIA_PRESETS, PrinterProfile, slugify
+from ..connectors import packaging
+from ..connectors.shipping_services import service_name
 from ..connectors.shopify import DEV_DASHBOARD_URL, SCOPES_BASIC, SCOPES_LABELS, ShopifyError, admin_url, normalize_shop
 from ..discovery import discover
 from ..models import SOURCE_LABELS, status_text
@@ -330,13 +332,19 @@ class Toolbox:
             "shipping_label_size": s.label_size,
             # Por qué paquetería sale cada pedido (pestaña Pedidos → Reglas de paquetería). FedEx se compra en Shopify (la
             # compra Shopify Flow sola o una persona con un clic) y se imprime sola.
+            # Cada regla dice también el empaque y el servicio de la guía (los empaques oficiales de USPS van con
+            # Priority Mail); sin servicio, lo elige Shopify.
             "carrier_rules": [
                 {"method_contains": r.method, "pieces_over_usd": r.over, "carrier": r.carrier,
-                 "bought": "automatically" if r.auto else "by hand"}
+                 "bought": "automatically" if r.auto else "by hand",
+                 "packaging": packaging.name(s, r.package), "service": service_name(r.service)}
                 for r in s.shipping_rules
             ],
             "fedex_bought_by": "shopify_flow" if s.fedex_by_flow else "a_person_in_shopify",
             "default_carrier": s.default_carrier,
+            "default_packaging": packaging.name(s, s.default_package),
+            "default_service": service_name(s.default_service),
+            "own_packaging": [packaging.describe(s, p.id) for p in s.packages],
             "labels_bought_today": self.ctx.store.count_seen(prefix, self.ctx.store.start_of_today()) if prefix else 0,
             "max_labels_per_day": s.max_labels_per_day,
             "print_order_label": s.print_order_label,

@@ -1,5 +1,6 @@
-"""«Imprimir guía» de un pedido sin guía: se elige el servicio (o «Automático»), la caja y el peso, y con un clic
-LabelBridge la compra con Shopify Shipping, la imprime y Shopify deja el pedido preparado con su seguimiento.
+"""«Imprimir guía» de un pedido sin guía: se elige el servicio (o «Automático»), el empaque y el peso, y con un clic
+LabelBridge la compra con Shopify Shipping, la imprime y Shopify deja el pedido preparado con su seguimiento. Sale
+elegido lo que dicen las reglas de paquetería para ese pedido; con un empaque oficial de USPS, solo Priority Mail.
 
 FedEx no se puede comprar por la API de Shopify: al elegirla, el pedido se abre en Shopify (1 clic para comprarla) y
 LabelBridge la imprime sola cuando la ve. Si Shopify no ofrece el servicio elegido para ese envío, no cobra nada y se
@@ -8,7 +9,7 @@ elige otro aquí mismo.
 
 from __future__ import annotations
 
-from PySide6.QtCore import QObject, QTimer, QUrl, Signal
+from PySide6.QtCore import QObject, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -17,23 +18,26 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QFormLayout,
     QHBoxLayout,
+    QLineEdit,
     QProgressBar,
     QVBoxLayout,
     QWidget,
 )
 
-from ..config import PACKAGE_TYPES, PackageSettings
+from ..config import PACKAGE_TYPES, ShippingPackage
+from ..connectors import packaging as pk
 from ..connectors import shipping_services as ss
 from ..connectors.orders_overview import OrderRow
-from ..connectors.shopify import admin_url, package_input
+from ..connectors.shopify import admin_url
 from ..i18n import tr
 from . import icons
 from .context import AppContext
 from .theme import Color
-from .widgets import button, label, run_async, window_closed
+from .widgets import button, label, run_async, run_dialog, window_closed
 
-DIM_UNITS = {"INCHES": "in", "CENTIMETERS": "cm"}
-WEIGHT_UNITS = {"OUNCES": "oz", "POUNDS": "lb", "GRAMS": "g", "KILOGRAMS": "kg"}
+DIM_UNITS = pk.DIM_UNITS
+WEIGHT_UNITS = pk.WEIGHT_UNITS
+CUSTOM = "custom"  # «Otro empaque solo para esta guía…»
 
 
 def _spin(value: float, maximum: float = 999.0, decimals: int = 2) -> QDoubleSpinBox:
@@ -53,38 +57,61 @@ def _units(options: dict[str, str], current: str) -> QComboBox:
     return combo
 
 
-def _number(value: float) -> str:
-    return f"{value:g}"
+def fill_packages(combo: QComboBox, settings, current: str = pk.SHOPIFY, *, rules: bool = False,
+                  sizes: bool = True) -> None:
+    """La lista de empaques: (con `rules`, «Según tus reglas»,) el de Shopify, los propios y los oficiales de USPS,
+    separados por grupo (con sus medidas si `sizes`), con `current` elegido (o el primero, si ya no existe)."""
+    text = pk.describe if sizes else pk.name
+    combo.blockSignals(True)
+    combo.clear()
+    if rules:
+        combo.addItem(tr("Según tus reglas (cada pedido el suyo)"), pk.RULES)
+    combo.addItem(pk.name(settings, pk.SHOPIFY), pk.SHOPIFY)
+    own = list(getattr(settings, "packages", None) or [])
+    if own:
+        combo.insertSeparator(combo.count())
+        for package in own:
+            combo.addItem(text(settings, package.id), package.id)
+            combo.setItemData(combo.count() - 1, pk.describe(settings, package.id), Qt.ItemDataRole.ToolTipRole)
+    combo.insertSeparator(combo.count())
+    for package in pk.USPS_FLAT_RATE:
+        combo.addItem(text(settings, package.key), package.key)
+        combo.setItemData(combo.count() - 1, pk.describe(settings, package.key), Qt.ItemDataRole.ToolTipRole)
+    combo.setCurrentIndex(max(0, combo.findData(current)))
+    combo.blockSignals(False)
 
 
-def box_text(p: PackageSettings) -> str:
-    """«6 × 4 × 2 in · 3 oz»: la caja guardada, en pocas palabras."""
-    dims = " × ".join(_number(v) for v in (p.length, p.width, p.height))
-    return f"{dims} {DIM_UNITS.get(p.dim_unit, '')} · {_number(p.weight)} {WEIGHT_UNITS.get(p.weight_unit, '')}".strip()
+def open_packages(parent: QWidget, ctx: AppContext, uses: list[tuple[str, str, str]] | None = None) -> bool:
+    """«Empaques…»: True si se guardaron cambios. `uses`: las reglas en pantalla (si se abre desde ellas)."""
+    from .packages_dialog import PackagesDialog
 
-
-def has_saved_box(p: PackageSettings) -> bool:
-    return p.saved or p.use_custom
+    dialog = PackagesDialog(parent, ctx, uses)
+    if run_dialog(dialog) != QDialog.DialogCode.Accepted:
+        return False
+    ctx.cfg.data.shopify.packages = dialog.packages()
+    ctx.cfg.save("shopify_package")  # solo los empaques: no hace falta reiniciar la conexión con Shopify
+    return True
 
 
 class PackageForm(QObject):
-    """La caja y el peso de una guía, en dos listas: el paquete de Shopify, «Mi caja» (la guardada) u otra caja; y el
-    peso que calcula Shopify o uno escrito."""
+    """El empaque y el peso de una guía, en dos listas: el paquete de Shopify, uno de «Empaques» (propios u oficiales
+    de USPS) u otro solo para esta guía; y el peso que calcula Shopify o uno escrito."""
 
     changed = Signal()
 
-    def __init__(self, parent: QWidget, ctx: AppContext) -> None:
+    def __init__(self, parent: QWidget, ctx: AppContext, current: str = pk.SHOPIFY) -> None:
         super().__init__(parent)
         self.ctx = ctx
-        p = ctx.cfg.data.shopify.package
+        self.parent_widget = parent
+        s = ctx.cfg.data.shopify
         self.choice = QComboBox()
-        self.choice.addItem(tr("Paquete predeterminado de Shopify"), "shopify")
-        if has_saved_box(p):
-            self.choice.addItem(tr("Mi caja · {0}", box_text(p)), "saved")
-        self.choice.addItem(tr("Otra caja…"), "custom")
-        self.choice.setCurrentIndex(max(0, self.choice.findData("saved" if p.use_custom else "shopify")))
+        self.choice.setMinimumWidth(320)
+        self._fill(current)
+        self.manage = button(tr("Empaques…"), "package", "ghost", tr("Tus empaques: sobres, bolsas y cajas"))
+        self.manage.clicked.connect(self._manage)
 
-        # «Otra caja…»: tipo, medidas de fuera y peso de la caja vacía.
+        # «Otro empaque…»: tipo, medidas de fuera y peso vacío (de partida, los del primer empaque propio).
+        p = next(iter(s.packages), None) or ShippingPackage(type="BOX", length=6, width=4, height=2, weight=3)
         self.package_type = QComboBox()
         for code, text in PACKAGE_TYPES.items():
             self.package_type.addItem(tr(text), code)
@@ -93,8 +120,12 @@ class PackageForm(QObject):
         self.dim_unit = _units(DIM_UNITS, p.dim_unit)
         self.box_weight = _spin(p.weight)
         self.box_weight_unit = _units(WEIGHT_UNITS, p.weight_unit)
-        self.remember = QCheckBox(tr("Recordar esta caja como «Mi caja»"))
-        self.remember.setChecked(True)
+        self.remember = QCheckBox(tr("Guardarlo en Empaques como"))
+        self.remember.setChecked(False)
+        self.remember_name = QLineEdit()
+        self.remember_name.setPlaceholderText(tr("p. ej. Bolsa de nailon"))
+        self.remember_name.setEnabled(False)
+        self.remember.toggled.connect(self.remember_name.setEnabled)
         self.custom_box = QWidget()
         custom = QVBoxLayout(self.custom_box)
         custom.setContentsMargins(0, 2, 0, 0)
@@ -111,15 +142,23 @@ class PackageForm(QObject):
         custom.addLayout(dims)
         empty = QHBoxLayout()
         empty.setSpacing(6)
-        empty.addWidget(label(tr("Caja vacía")))
+        empty.addWidget(label(tr("Vacío pesa")))
         empty.addWidget(self.box_weight)
         empty.addWidget(self.box_weight_unit)
-        empty.addWidget(self.remember)
         empty.addStretch(1)
         custom.addLayout(empty)
+        keep = QHBoxLayout()
+        keep.setSpacing(6)
+        keep.addWidget(self.remember)
+        keep.addWidget(self.remember_name, 1)
+        custom.addLayout(keep)
         self.package_box = QVBoxLayout()
         self.package_box.setSpacing(6)
-        self.package_box.addWidget(self.choice)
+        pick = QHBoxLayout()
+        pick.setSpacing(6)
+        pick.addWidget(self.choice, 1)
+        pick.addWidget(self.manage)
+        self.package_box.addLayout(pick)
         self.package_box.addWidget(self.custom_box)
 
         # Peso total: lo calcula Shopify (productos + caja) o se escribe.
@@ -138,59 +177,85 @@ class PackageForm(QObject):
         self.update()
 
     def add_rows(self, form: QFormLayout) -> None:
-        form.addRow(tr("Paquete"), self.package_box)
+        form.addRow(tr("Empaque"), self.package_box)
         form.addRow(tr("Peso"), self.weight_box)
 
+    def _fill(self, current: str) -> None:
+        fill_packages(self.choice, self.ctx.cfg.data.shopify, current)
+        self.choice.insertSeparator(self.choice.count())
+        self.choice.addItem(tr("Otro empaque solo para esta guía…"), CUSTOM)
+        if current == CUSTOM:
+            self.choice.setCurrentIndex(self.choice.count() - 1)
+
+    def _manage(self) -> None:
+        current = self.key()
+        if open_packages(self.parent_widget, self.ctx):
+            self.choice.blockSignals(True)
+            self._fill(current)
+            self.choice.blockSignals(False)
+            self.update()
+
+    def key(self) -> str:
+        """El empaque elegido: pk.SHOPIFY, la clave de uno de «Empaques» o CUSTOM."""
+        value = self.choice.currentData()
+        return pk.SHOPIFY if value is None else str(value)
+
+    def allowed(self) -> tuple[str, ...] | None:
+        """Con qué servicios vale el empaque elegido (None: con cualquiera)."""
+        key = self.key()
+        return None if key == CUSTOM else pk.allowed_services(self.ctx.cfg.data.shopify, key)
+
     def update(self) -> None:
-        self.custom_box.setVisible(self.choice.currentData() == "custom")
+        self.custom_box.setVisible(self.key() == CUSTOM)
         manual = self.weight_choice.currentData() == "manual"
         self.total_weight.setVisible(manual)
         self.total_weight_unit.setVisible(manual)
         self.changed.emit()
 
-    def options(self) -> tuple[dict | None, dict | None]:
-        """(paquete, peso total) como los pide Shopify; None = el de Shopify / que lo calcule Shopify."""
-        package = None
-        if self.choice.currentData() == "saved":
-            package = package_input(self.ctx.cfg.data.shopify.package)
-        elif self.choice.currentData() == "custom":
-            package = {
-                "type": self.package_type.currentData(),
-                "dimensions": {"length": self.box_length.value(), "width": self.box_width.value(),
-                               "height": self.box_height.value(), "unit": self.dim_unit.currentData()},
-                "weight": {"value": self.box_weight.value(), "unit": self.box_weight_unit.currentData()},
-            }
+    def _custom(self) -> ShippingPackage:
+        return ShippingPackage(
+            pk.new_id(), self.remember_name.text().strip(), self.package_type.currentData(), self.box_length.value(),
+            self.box_width.value(), self.box_height.value(), self.dim_unit.currentData(), self.box_weight.value(),
+            self.box_weight_unit.currentData())
+
+    def options(self) -> tuple[str | dict, dict | None]:
+        """(empaque, peso total) para buy_label_now: la clave del empaque o, con «Otro empaque…», el empaque como lo
+        pide Shopify; el peso, None = que lo calcule Shopify."""
+        key = self.key()
+        package: str | dict = pk.custom_input(self._custom()) if key == CUSTOM else key
         weight = None
         if self.weight_choice.currentData() == "manual":
             weight = {"value": self.total_weight.value(), "unit": self.total_weight_unit.currentData()}
         return package, weight
 
     def problem(self) -> str:
-        custom = self.choice.currentData() == "custom"
+        custom = self.key() == CUSTOM
         if custom and min(self.box_length.value(), self.box_width.value(), self.box_height.value()) <= 0:
-            return tr("Escribe las medidas de la caja.")
+            return tr("Escribe las medidas del empaque.")
+        if custom and self.remember.isChecked() and not self.remember_name.text().strip():
+            return tr("Escribe un nombre para guardar el empaque.")
         if self.weight_choice.currentData() == "manual" and self.total_weight.value() <= 0:
             return tr("Escribe el peso total del paquete.")
         return ""
 
     def remember_box(self) -> None:
-        """La caja elegida queda para la próxima guía (y «Otra caja…», como «Mi caja» si se pidió recordarla)."""
-        p = self.ctx.cfg.data.shopify.package
-        choice = self.choice.currentData()
-        if choice == "custom" and self.remember.isChecked():
-            p.type = self.package_type.currentData()
-            p.length, p.width, p.height = self.box_length.value(), self.box_width.value(), self.box_height.value()
-            p.dim_unit = self.dim_unit.currentData()
-            p.weight, p.weight_unit = self.box_weight.value(), self.box_weight_unit.currentData()
-            p.saved = p.use_custom = True
-        elif choice == "saved":
-            p.use_custom = True
-        elif choice == "shopify":
-            p.use_custom = False
-        self.ctx.cfg.save("shopify_package")  # solo la caja: no hace falta reiniciar la conexión con Shopify
+        """«Guardarlo en Empaques»: el empaque escrito para esta guía queda en la lista para las próximas, y queda
+        elegido (así reintentar la compra no lo guarda dos veces)."""
+        if self.key() != CUSTOM or not self.remember.isChecked():
+            return
+        package = self._custom()
+        self.ctx.cfg.data.shopify.packages.append(package)
+        self.ctx.cfg.save("shopify_package")  # solo los empaques: no hace falta reiniciar la conexión con Shopify
+        self.remember.setChecked(False)
+        self.remember_name.clear()
+        self.choice.blockSignals(True)
+        self._fill(package.id)
+        self.choice.blockSignals(False)
+        self.update()
 
     def set_enabled(self, enabled: bool) -> None:
-        for widget in (self.choice, self.custom_box, self.weight_choice, self.total_weight, self.total_weight_unit):
+        for widget in (self.choice, self.manage, self.custom_box, self.weight_choice, self.total_weight,
+                       self.total_weight_unit):
             widget.setEnabled(enabled)
 
 
@@ -210,26 +275,46 @@ class ServicePicker(QObject):
         self.problem = ""  # por qué no se pudo preguntar a Shopify qué ofrece (se usa la lista completa)
         self.with_fedex = fedex
         self.keep_fedex = False  # tus reglas mandan este pedido por FedEx: sigue en la lista aunque Shopify no la liste
+        self.allowed: tuple[str, ...] | None = None  # empaque oficial de USPS: solo estos servicios
+        self.package_name = ""
         self.combo.currentIndexChanged.connect(lambda _i: self._changed())
         self.fill(ss.Route())
 
     def key(self) -> str:
         return str(self.combo.currentData() or ss.AUTO)
 
+    def set_allowed(self, allowed: tuple[str, ...] | None, package_name: str = "") -> None:
+        """Con un empaque oficial de USPS solo se puede elegir entre sus servicios (Priority Mail…); sin él, todos."""
+        if allowed == self.allowed:
+            if package_name != self.package_name:  # otro empaque con los mismos servicios: el texto lo nombra
+                self.package_name = package_name
+                self._changed()
+            return
+        self.allowed, self.package_name = allowed, package_name
+        current = self.key()
+        self.fill(self.route, prefer=current if not allowed or current in allowed else allowed[0])
+
     def fill(self, route: ss.Route | None, prefer: str = "") -> None:
         """Rehace la lista para esa ruta y deja elegido `prefer` (o lo que estaba, si sigue en la lista)."""
         current = prefer or self.key()
+        if self.allowed and current not in self.allowed:
+            current = self.allowed[0]
         self.route = route
         self.combo.blockSignals(True)
         self.combo.clear()
-        self.combo.addItem(tr("Automático · el que elija Shopify"), ss.AUTO)
+        if not self.allowed:
+            self.combo.addItem(tr("Automático · el que elija Shopify"), ss.AUTO)
         carrier = ""
         for service in ss.choices(route):
+            if self.allowed and service.key not in self.allowed:
+                continue
             if service.carrier != carrier:
-                self.combo.insertSeparator(self.combo.count())
+                if self.combo.count():
+                    self.combo.insertSeparator(self.combo.count())
                 carrier = service.carrier
             self.combo.addItem(service.label, service.key)
-        if self.with_fedex and (route is None or route.fedex or self.keep_fedex or current == ss.FEDEX):
+        if self.with_fedex and not self.allowed and (route is None or route.fedex or self.keep_fedex
+                                                     or current == ss.FEDEX):
             self.combo.insertSeparator(self.combo.count())
             self.combo.addItem(tr("FedEx · se compra en Shopify"), ss.FEDEX)
         chosen = ss.by_key(current)
@@ -265,6 +350,10 @@ class ServicePicker(QObject):
         if key == ss.FEDEX:
             text = tr("Shopify no deja que ninguna app compre FedEx: se compra en el pedido en Shopify (1 clic) y "
                       "LabelBridge la imprime sola en cuanto la ve.")
+        elif self.allowed and service is not None and self.available():
+            text = tr("{0} es un empaque oficial de USPS: solo vale con {1}. Si Shopify no lo ofrece para este envío, "
+                      "avisa y no cobra nada.", self.package_name,
+                      tr(" o ").join(ss.service_name(k) for k in self.allowed))
         elif service is not None and not self.available():
             text = tr("Shopify no ofrece {0} para este envío: elige otro servicio o «Automático».", service.name)
         elif service is not None:
@@ -331,7 +420,12 @@ class PurchaseDialog(QDialog):
         details = QFormLayout(self.details_box)
         details.setContentsMargins(0, 0, 0, 0)
         details.setSpacing(10)
-        self.package = PackageForm(self, ctx)
+        try:  # lo que dicen tus reglas para este pedido (por el envío que pagó y el valor de las piezas)
+            ruled = pk.for_order(s, row.method, row.subtotal, _domestic(row))
+            rules_problem = ""
+        except pk.PackagingError as exc:  # se dice arriba; se empieza por el paquete de Shopify
+            ruled, rules_problem = pk.Packing(), str(exc)
+        self.package = PackageForm(self, ctx, ruled.package)
         self.package.add_rows(details)
         self.notify = QCheckBox(tr("Avisar al cliente por correo con el número de seguimiento"))
         self.notify.setChecked(s.notify_customer)
@@ -375,9 +469,15 @@ class PurchaseDialog(QDialog):
         buttons.addWidget(self.buy_btn)
         layout.addLayout(buttons)
 
+        if rules_problem:
+            layout.insertWidget(2, label(tr("Tus reglas: {0}", rules_problem), "Warning", wrap=True))
         self.bought_service = ss.AUTO
         self.services.keep_fedex = fedex_rule
-        self.services.fill(ss.Route(domestic=_domestic(row)), prefer=ss.FEDEX if fedex_rule else (prefer or ""))
+        self.services.fill(ss.Route(domestic=_domestic(row)),
+                           prefer=ss.FEDEX if fedex_rule else (prefer or ruled.service or ss.AUTO))
+        self._package_changed()
+        self.package.changed.connect(self._package_changed)
+        self.services.changed.connect(self._service_changed)
         self._update()
         self._load_route()
 
@@ -428,6 +528,18 @@ class PurchaseDialog(QDialog):
                 return
 
         run_async(lambda: self.ctx.services.shopify.shipping_route(self.row.legacy), loaded, failed)
+
+    def _package_changed(self) -> None:
+        """Un empaque oficial de USPS deja elegir solo sus servicios (Priority Mail…)."""
+        if self.services.key() == ss.FEDEX:
+            return  # FedEx se compra en Shopify: el empaque se elige allá
+        self.services.set_allowed(self.package.allowed(),
+                                  pk.name(self.ctx.cfg.data.shopify, self.package.key()))
+
+    def _service_changed(self) -> None:
+        """Al dejar FedEx (que no limita nada), el empaque elegido vuelve a limitar los servicios."""
+        if self.services.key() != ss.FEDEX and self.services.allowed != self.package.allowed():
+            self._package_changed()
 
     def _update(self) -> None:
         fedex = self.services.key() == ss.FEDEX

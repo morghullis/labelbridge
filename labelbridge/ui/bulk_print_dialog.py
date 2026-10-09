@@ -25,12 +25,12 @@ from PySide6.QtWidgets import (
 )
 
 from ..connectors import label_batch as lb
+from ..connectors import packaging as pk
 from ..connectors import shipping_services as ss
 from ..connectors.orders_overview import OrderRow
-from ..connectors.shopify import package_input
 from ..i18n import tr
 from .context import AppContext
-from .purchase_dialog import ServicePicker, box_text, has_saved_box
+from .purchase_dialog import ServicePicker, fill_packages
 from .theme import Color
 from .widgets import button, label, run_async
 
@@ -124,11 +124,15 @@ class BulkPrintDialog(QDialog):
         service_box.addWidget(self.services.hint)
         form.addRow(tr("Servicio"), service_box)
         self.package = QComboBox()
-        self.package.addItem(tr("Paquete predeterminado de Shopify"), "shopify")
-        if has_saved_box(s.package):
-            self.package.addItem(tr("Mi caja · {0}", box_text(s.package)), "saved")
-            self.package.setCurrentIndex(1 if s.package.use_custom else 0)
-        form.addRow(tr("Paquete"), self.package)
+        fill_packages(self.package, s, pk.RULES, rules=True)
+        self.package_hint = label("", "Small", wrap=True)
+        self.package.currentIndexChanged.connect(lambda _i: self._package_changed())
+        package_box = QVBoxLayout()
+        package_box.setSpacing(4)
+        package_box.addWidget(self.package)
+        package_box.addWidget(self.package_hint)
+        form.addRow(tr("Empaque"), package_box)
+        self._package_changed()
         self.notify = QCheckBox(tr("Avisar a cada cliente por correo con su número de seguimiento"))
         self.notify.setChecked(s.notify_customer)
         form.addRow(self.notify)
@@ -188,9 +192,23 @@ class BulkPrintDialog(QDialog):
         else:
             self.reject()
 
+    def _package_changed(self) -> None:
+        """Con un empaque oficial de USPS solo se elige entre sus servicios; «Según tus reglas», cada pedido el suyo."""
+        s = self.ctx.cfg.data.shopify
+        key = str(self.package.currentData() or "")
+        if key == pk.RULES:
+            self.services.set_allowed(None)
+            self.package_hint.setText(tr("Cada pedido sale con el empaque y el servicio de tus reglas de paquetería "
+                                         "(si eliges un servicio arriba, ese manda)."))
+        else:
+            self.services.set_allowed(pk.allowed_services(s, key), pk.name(s, key))
+            self.package_hint.setText("")
+        self.package_hint.setVisible(bool(self.package_hint.text()))
+
     def options(self) -> lb.BatchOptions:
-        package = package_input(self.ctx.cfg.data.shopify.package) if self.package.currentData() == "saved" else None
-        return lb.BatchOptions(service=self.services.key(), package=package, notify=self.notify.isChecked())
+        package = self.package.currentData()
+        return lb.BatchOptions(service=self.services.key(), package=pk.RULES if package is None else str(package),
+                               notify=self.notify.isChecked())
 
     # --- la tanda ------------------------------------------------------------------------------
     def _start(self) -> None:

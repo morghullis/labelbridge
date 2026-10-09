@@ -13,11 +13,12 @@ from PySide6.QtGui import QDesktopServices, QGuiApplication
 from PySide6.QtWidgets import QDialog, QFrame, QGridLayout, QHBoxLayout, QProgressBar, QVBoxLayout, QWidget
 
 from ..config import FEDEX_SIGNATURES
+from ..connectors import packaging as pk
+from ..connectors import shipping_services as ss
 from ..connectors.orders_overview import OrderRow
 from ..connectors.shopify import admin_url
 from ..i18n import tr
 from .context import AppContext
-from .purchase_dialog import box_text, has_saved_box
 from .widgets import button, copy_to_clipboard, label, run_async, step_title, window_closed
 
 CHECK_EVERY_MS = 10_000  # cada cuánto se mira si Shopify ya tiene la guía (solo con la ventana abierta)
@@ -28,11 +29,26 @@ def checklist(ctx: AppContext, row: OrderRow, carrier: str) -> list[tuple[str, s
     """Lo que hay que elegir en Shopify, en el orden de su pantalla: (qué, cuál, aclaración, texto para copiar)."""
     s = ctx.cfg.data.shopify
     fedex = carrier == "FedEx"
-    if has_saved_box(s.package) and s.package.use_custom:
-        items = [(tr("Paquete y peso"), tr("Mi caja"), box_text(s.package), "")]
+    try:  # el empaque (y, si no es FedEx, el servicio) de tus reglas para este pedido
+        packing = pk.for_order(s, row.method, row.subtotal, ss.is_domestic("US", row.country))
+        problem = ""
+    except pk.PackagingError as exc:
+        packing, problem = pk.Packing(), str(exc)
+    if problem:
+        items = [(tr("Paquete y peso"), tr("Revisa tus reglas"), problem, "")]
+    elif packing.package:
+        items = [(tr("Paquete y peso"), pk.name(s, packing.package), pk.describe(s, packing.package)
+                  .removeprefix(pk.name(s, packing.package) + " · "), "")]
     else:
         items = [(tr("Paquete y peso"), tr("La que sale elegida"), tr("el paquete de Shopify"), "")]
-    items.append((tr("Servicio de envío"), s.fedex_service if fedex else tr("El de {0} que prefieras", carrier), "", ""))
+    if fedex:
+        service = (s.fedex_service, tr("con sobre, Pak o caja de FedEx, solo FedEx Express (2Day, Overnight, "
+                                       "Express Saver)"))
+    elif ss.by_key(packing.service) is not None:
+        service = (ss.service_name(packing.service), packing.note)
+    else:
+        service = (tr("El de {0} que prefieras", carrier), "")
+    items.append((tr("Servicio de envío"), service[0], service[1], ""))
     if fedex and s.fedex_signature in FEDEX_SIGNATURES and s.fedex_signature != "none":
         items.append((tr("Firma"), tr(FEDEX_SIGNATURES[s.fedex_signature]), "", ""))
     if fedex and s.fedex_insure and row.subtotal > 0:

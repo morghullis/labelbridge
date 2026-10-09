@@ -13,7 +13,8 @@ from functools import partial
 
 from ..connectors import shipping_services as ss
 from ..connectors.email import EmailError
-from ..connectors.shopify import ShopifyError, package_input
+from ..connectors import packaging as pk
+from ..connectors.shopify import ShopifyError
 from ..connectors.shopify_orders import MAX_INSTRUCTIONS, MAX_ITEMS, ManualItem, Recipient, manual_problem
 from ..i18n import N_, date_text, tr
 from .tools import Tool, ToolError, _b, _i, _obj, _s, untrusted
@@ -124,11 +125,14 @@ def shipping_services(box, a: dict) -> dict:
         route = _service(box).shipping_route(legacy)
     except ShopifyError as exc:
         raise ToolError(str(exc)) from None
+    settings = box.ctx.cfg.data.shopify
     return {
         "order": a["order"],
         "domestic": route.domestic,
         "checked_with_shopify": route.offered is not None,  # sin read_shipping: todos los del tipo de envío
         "services": [{"service": s.key, "name": s.name, "usual_delivery": tr(s.days)} for s in ss.choices(route)],
+        "packages": [{"package": key or "shopify_default", "name": pk.describe(settings, key),
+                      "only_with": list(pk.allowed_services(settings, key) or [])} for key in pk.choices(settings)],
         "default": "auto: Shopify elige (el servicio que pagó el cliente o la paquetería preferida de la tienda)",
         "fedex": "No se puede comprar por la API: la compra Shopify Flow sola (si así está en Reglas de paquetería) "
                  "o el usuario en el pedido en Shopify, y LabelBridge la imprime." if route.fedex else None,
@@ -228,13 +232,20 @@ def buy_shipping_label(box, a: dict) -> dict:
         d = service.order_detail(legacy)
     except ShopifyError as exc:
         raise ToolError(str(exc)) from None
-    package = package_input(s.package) if a.get("package") == "saved_box" else None
+    package = str(a.get("package") or pk.RULES)
+    if package == "shopify_default":
+        package = pk.SHOPIFY
+    elif package != pk.RULES and not pk.exists(s, package):
+        raise ToolError("Empaque desconocido: usa rules, shopify_default o la clave de uno de shipping_services.")
     weight = {"value": float(a["total_weight_oz"]), "unit": "OUNCES"} if a.get("total_weight_oz") else None
     key = str(a.get("service") or ss.AUTO)
     if key != ss.AUTO and ss.by_key(key) is None:
         raise ToolError("Servicio desconocido: usa uno de shipping_services o «auto».")
-    chosen = (tr("con la paquetería que elija Shopify") if key == ss.AUTO
-              else tr("con {0}", ss.service_name(key)))
+    try:  # lo que se va a comprar de verdad (las reglas y los empaques oficiales de USPS deciden el servicio)
+        planned = service.planned_packing(legacy, package, key)
+    except ShopifyError as exc:
+        raise ToolError(str(exc)) from None
+    chosen = tr("en {0}, con {1}", pk.name(s, planned.package), pk.describe_service(planned))
     printer = s.shipping_label_printer or tr("la impresora predeterminada")
     where = untrusted(", ".join(d.address[1:3] if len(d.address) > 2 else d.address), 120)
     text = tr("El asistente quiere comprar la guía de envío del pedido {0} ({1}, {2}) {3} (FedEx no se puede por la "
@@ -243,19 +254,22 @@ def buy_shipping_label(box, a: dict) -> dict:
     if not box.ui.confirm(tr("Comprar guía"), text, tr("Comprar guía")):
         return {"bought": False, "reason": "El usuario no aprobó la compra en la ventana de confirmación."}
     try:
-        result = service.buy_label_now(legacy, package=package, total_weight=weight,
-                                       notify=bool(a.get("notify_customer", False)), service=key)
+        # Exactamente lo que se confirmó (si las reglas cambian mientras tanto, no se compra otra cosa).
+        result = service.buy_label_now(legacy, package=planned.package, total_weight=weight,
+                                       notify=bool(a.get("notify_customer", False)), service=planned.service)
     except ShopifyError as exc:
         raise ToolError(str(exc)) from None
     state = result.get("state")
     return {
         "order": d.name,
         "state": state,
-        "service": ss.service_name(key),
+        "service": ss.service_name(result.get("service") or planned.service),
+        "package": pk.name(s, result.get("package", planned.package)),
         "carrier": result.get("carrier") or "",
         "tracking": result.get("tracking") or "",
         "cost": result.get("cost"),
-        "reason": ss.rejection(result.get("reason") or "", key) if state == "failed" else "",
+        "reason": ss.rejection(result.get("reason") or "", result.get("service") or planned.service)
+        if state == "failed" else "",
         "printing": state == "purchased",
     }
 
@@ -349,11 +363,13 @@ def definitions(box) -> list[Tool]:
             "buy_shipping_label",
             "Compra con Shopify Shipping la guía de un pedido que espera su guía (también uno manual) y la imprime. "
             "La app pide confirmación (Shopify la cobra). service: auto (Shopify elige) o uno de shipping_services; si "
-            "Shopify no lo ofrece para ese envío, no compra ni cobra nada. package=saved_box usa la caja guardada en "
-            "LabelBridge; sin total_weight_oz, Shopify calcula el peso.",
+            "Shopify no lo ofrece para ese envío, no compra ni cobra nada. package: rules (por defecto: el empaque y el "
+            "servicio de las reglas de paquetería de ese pedido), shopify_default o la clave de un empaque de "
+            "shipping_services (los oficiales de USPS van solo con Priority Mail); sin total_weight_oz, Shopify calcula "
+            "el peso.",
             _obj({"order": order,
                   "service": _s("Paquetería y servicio.", [ss.AUTO] + [s.key for s in ss.SERVICES]),
-                  "package": _s("Paquete.", ["shopify_default", "saved_box"]),
+                  "package": _s("Empaque: rules, shopify_default o la clave de un empaque."),
                   "total_weight_oz": {"type": "number", "description": "Peso total en onzas (opcional)."},
                   "notify_customer": _b("Avisar al cliente con el seguimiento (por defecto no).")}, ("order",)),
             partial(buy_shipping_label, box),

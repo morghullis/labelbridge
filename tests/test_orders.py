@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 import pytest
 from test_connectors import FakeShopify
 
-from labelbridge.config import ShippingRule, ShopifySettings
+from labelbridge.config import ShippingPackage, ShippingRule, ShopifySettings
 from labelbridge.connectors.orders_overview import (
     carrier_name,
     classify,
@@ -461,20 +461,40 @@ def test_shipping_rules_are_edited_and_saved(core, monkeypatch):
     from labelbridge.ui.pages import orders as orders_page
 
     page = orders_page.OrdersPage(_ui_context(core))
-    dialog = orders_page.ShippingRulesDialog(page, core.cfg.data.shopify.shipping_rules, "USPS")
-    over, method, carrier, mode, _remove = dialog.rows[0]
+    ctx = page.ctx
+    s = core.cfg.data.shopify
+    s.packages = [ShippingPackage("bolsa", "Bolsa de nailon", "SOFT_PACK", 10, 13, 0.5)]
+    dialog = orders_page.ShippingRulesDialog(page, s.shipping_rules, "USPS", ctx=ctx)
+    over, method, carrier, package, service, mode, _remove = dialog.rows[0]
     assert (over.value(), carrier.currentData(), mode.currentData(), mode.isEnabled()) == (1000.0, "FedEx", False, False)
+    assert not service.isEnabled()  # FedEx: el servicio se elige abajo (se compra en Shopify)
     dialog._add_row(ShippingRule("", "FedEx", False, 0.0))
-    _o, extra_method, extra_carrier, extra_mode, _r = dialog.rows[1]
+    _o, extra_method, extra_carrier, _p, _s, extra_mode, _r = dialog.rows[1]
     extra_method.setText("Overnight")
     extra_carrier.setCurrentIndex(extra_carrier.findData("UPS"))
     extra_mode.setCurrentIndex(0)
     assert extra_mode.isEnabled()  # solo FedEx queda fijo «en Shopify»
+    # «Express» por USPS en el sobre Flat Rate: el servicio solo deja Priority Mail (o Express no: Flat Rate de Priority).
+    dialog._add_row(ShippingRule("Express", "USPS", True, 0.0))
+    _o, _m, _c, flat_package, flat_service, _mo, _r = dialog.rows[2]
+    flat_package.setCurrentIndex(flat_package.findData("usps:flat_rate_envelope"))
+    assert [flat_service.itemData(i) for i in range(flat_service.count())] == ["usps:Priority"]
+    # Todo lo demás: la bolsa de nailon con Ground Advantage.
+    dialog.default_package.setCurrentIndex(dialog.default_package.findData("bolsa"))
+    dialog.default_service.setCurrentIndex(dialog.default_service.findData("usps:GroundAdvantage"))
+    # Un empaque oficial de USPS con otra paquetería no se puede guardar.
+    _p.setCurrentIndex(_p.findData("usps:flat_rate_envelope"))
+    assert "USPS" in dialog.problem()
+    _p.setCurrentIndex(0)
+    assert dialog.problem() == ""
     monkeypatch.setattr(orders_page.ShippingRulesDialog, "exec", lambda self: QDialog.DialogCode.Accepted)
     monkeypatch.setattr(orders_page, "ShippingRulesDialog", lambda *a, **k: dialog)
     page.edit_rules()
-    saved = core.cfg.data.shopify.shipping_rules
-    assert [(r.method, r.carrier, r.auto, r.over) for r in saved] == [("", "FedEx", False, 1000.0), ("Overnight", "UPS", True, 0.0)]
+    saved = s.shipping_rules
+    assert [(r.method, r.carrier, r.auto, r.over, r.package, r.service) for r in saved] == [
+        ("", "FedEx", False, 1000.0, "", ""), ("Overnight", "UPS", True, 0.0, "", ""),
+        ("Express", "USPS", True, 0.0, "usps:flat_rate_envelope", "usps:Priority")]
+    assert (s.default_package, s.default_service) == ("bolsa", "usps:GroundAdvantage")
 
 
 def test_overview_works_without_fulfillment_order_permission(core, monkeypatch):

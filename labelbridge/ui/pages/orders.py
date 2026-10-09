@@ -41,6 +41,8 @@ from PySide6.QtWidgets import (
 
 from ... import errors
 from ...config import CARRIERS, FEDEX_SERVICES, FEDEX_SIGNATURES, ShippingRule
+from ...connectors import packaging as pk
+from ...connectors import shipping_services as ss
 from ...connectors.label_batch import BUY, IN_SHOPIFY, REPRINT, SKIP, plan_for
 from ...connectors.shipping_services import AUTO
 from ...connectors.orders_overview import (
@@ -58,6 +60,7 @@ from ...connectors.shopify import admin_url
 from ...i18n import N_, date_text, tr
 from .. import icons
 from ..context import AppContext
+from ..purchase_dialog import fill_packages, open_packages
 from ..theme import Color
 from ..widgets import (
     Card,
@@ -268,38 +271,75 @@ class DelayItem(QFrame):
         self.customContextMenuRequested.connect(lambda pos: page.order_menu([row]).exec(self.mapToGlobal(pos)))
 
 
+# Paquetería de una regla → su carrierCode en Shopify (para la lista de servicios).
+CARRIER_CODES = {"USPS": "usps", "UPS": "ups_shipping", "DHL": "dhl_express"}
+
+
+def fill_services(combo: QComboBox, carrier: str, allowed: tuple[str, ...] | None, current: str) -> None:
+    """Los servicios de esa paquetería para una regla («Automático» y los suyos; con un empaque oficial de USPS, solo
+    los que vale). FedEx: el servicio se elige abajo (se compra en Shopify)."""
+    combo.blockSignals(True)
+    combo.clear()
+    code = CARRIER_CODES.get(carrier, "")
+    if carrier == "FedEx":
+        combo.addItem(tr("El de FedEx de abajo"), "")
+    else:
+        if not allowed:
+            combo.addItem(tr("Automático"), "")
+        for service in ss.SERVICES:
+            if service.carrier == code and (not allowed or service.key in allowed):
+                combo.addItem(service.name, service.key)
+    combo.setCurrentIndex(max(0, combo.findData(current or "")))
+    combo.setEnabled(carrier != "FedEx")
+    combo.blockSignals(False)
+
+
 class ShippingRulesDialog(QDialog):
-    """Por qué paquetería sale cada pedido: se aplica la primera regla que se cumple; si no, la predeterminada."""
+    """Por qué paquetería sale cada pedido, con qué empaque y qué servicio: se aplica la primera regla que se cumple;
+    si no, «Todo lo demás». Con un empaque oficial de USPS solo se puede elegir Priority Mail (o Express)."""
 
     def __init__(self, parent: QWidget, rules: list[ShippingRule], default_carrier: str,
                  fedex: tuple[str, str, bool] = ("FedEx 2Day®", "signature", True), *, by_flow: bool = False,
-                 shop: str = "") -> None:
+                 shop: str = "", ctx: AppContext | None = None) -> None:
         super().__init__(parent)
         self.shop = shop
+        self.ctx = ctx
+        s = ctx.cfg.data.shopify if ctx is not None else None
+        self.settings = s
         self.setWindowTitle(tr("Reglas de paquetería"))
-        self.setMinimumWidth(720)
+        self.setMinimumWidth(1080)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(22, 20, 22, 18)
         outer.setSpacing(12)
-        outer.addWidget(label(tr("Por qué paquetería sale cada pedido"), "CardTitle"))
+        outer.addWidget(label(tr("Por qué paquetería sale cada pedido y en qué empaque"), "CardTitle"))
         outer.addWidget(label(
-            tr("Se aplica la primera regla que se cumple. Shopify no deja que LabelBridge compre guías de FedEx: las "
-               "compra Shopify Flow automáticamente o tú en Shopify con un clic, y LabelBridge las imprime."),
+            tr("Se aplica la primera regla que se cumple, según el envío que pagó el cliente y el valor de las piezas. "
+               "La guía se compra para el empaque elegido: con un empaque oficial de USPS, solo Priority Mail. Shopify "
+               "no deja que LabelBridge compre guías de FedEx: las compra Shopify Flow automáticamente o tú en Shopify "
+               "con un clic, y LabelBridge las imprime."),
             "Muted", wrap=True,
         ))
         self.grid = QGridLayout()
         self.grid.setHorizontalSpacing(8)
         self.grid.setVerticalSpacing(8)
-        headers = (tr("Piezas de más de"), tr("Método de envío contiene"), tr("Paquetería"), tr("La guía se compra"), "")
+        headers = (tr("Piezas de más de"), tr("Método de envío contiene"), tr("Paquetería"), tr("Empaque"),
+                   tr("Servicio"), tr("La guía se compra"), "")
         for col, text in enumerate(headers):
             self.grid.addWidget(label(text, "Small"), 0, col)
         outer.addLayout(self.grid)
-        self.rows: list[tuple[QDoubleSpinBox, QLineEdit, QComboBox, QComboBox, QPushButton]] = []
+        self.rows: list[tuple[QDoubleSpinBox, QLineEdit, QComboBox, QComboBox, QComboBox, QComboBox, QPushButton]] = []
         for rule in rules:
             self._add_row(rule)
+        extra = QHBoxLayout()
         add = button(tr("Agregar regla"), "plus", "ghost")
-        add.clicked.connect(lambda: self._add_row(ShippingRule("", "FedEx", False, 0.0)))
-        outer.addWidget(add, 0, Qt.AlignmentFlag.AlignLeft)
+        add.clicked.connect(lambda: self._add_row(ShippingRule("", "USPS", True, 0.0, "", pk.PRIORITY)))
+        extra.addWidget(add)
+        self.packages_btn = button(tr("Empaques…"), "package", "ghost", tr("Tus empaques: sobres, bolsas y cajas"))
+        self.packages_btn.clicked.connect(self._manage_packages)
+        self.packages_btn.setVisible(ctx is not None)
+        extra.addWidget(self.packages_btn)
+        extra.addStretch(1)
+        outer.addLayout(extra)
         rest = QHBoxLayout()
         rest.addWidget(label(tr("Todo lo demás sale por")))
         self.default = QComboBox()
@@ -308,6 +348,15 @@ class ShippingRulesDialog(QDialog):
                 self.default.addItem(carrier, carrier)
         self.default.setCurrentIndex(max(0, self.default.findData(default_carrier)))
         rest.addWidget(self.default)
+        self.default_package = QComboBox()
+        self.default_service = QComboBox()
+        if s is not None:
+            rest.addWidget(label(tr("en")))
+            fill_packages(self.default_package, s, s.default_package, sizes=False)
+            rest.addWidget(self.default_package)
+            rest.addWidget(label(tr("con")))
+            rest.addWidget(self.default_service)
+            self._wire(self.default, self.default_package, self.default_service, s.default_service)
         rest.addWidget(label(tr("y LabelBridge compra la guía sola.")))
         rest.addStretch(1)
         outer.addLayout(rest)
@@ -359,9 +408,55 @@ class ShippingRulesDialog(QDialog):
         super().showEvent(event)
         QTimer.singleShot(0, lambda: fit_height(self))
 
+    def _wire(self, carrier: QComboBox, package: QComboBox, service: QComboBox, current: str) -> None:
+        """La lista de servicios sigue a la paquetería y al empaque elegidos."""
+
+        def refresh(prefer: str = "") -> None:
+            allowed = (pk.allowed_services(self.settings, str(package.currentData() or ""))
+                       if self.settings is not None else None)
+            fill_services(service, carrier.currentData() or "", allowed, prefer or str(service.currentData() or ""))
+
+        # Al pasar a USPS: Priority Mail (vale en cualquier empaque); a otra paquetería, «Automático».
+        carrier.currentIndexChanged.connect(lambda _i: refresh(pk.PRIORITY if carrier.currentData() == "USPS" else ""))
+        package.currentIndexChanged.connect(lambda _i: refresh())
+        refresh(current)
+
+    def _manage_packages(self) -> None:
+        entries = [(entry[2], entry[3], entry[4]) for entry in self.rows] + [
+            (self.default, self.default_package, self.default_service)]
+        uses = [(str(c.currentData() or ""), str(p.currentData() or ""), str(s.currentData() or ""))
+                for c, p, s in entries]
+        if self.ctx is None:
+            return
+        from ..packages_dialog import saved_uses
+
+        # Las reglas en pantalla y las guardadas: si se cancela esta ventana, las guardadas siguen valiendo.
+        if not open_packages(self, self.ctx, uses + saved_uses(self.ctx.cfg.data.shopify)):
+            return
+        combos = [entry[3] for entry in self.rows] + [self.default_package]
+        for combo in combos:  # la lista cambió: se rehace sin perder lo elegido
+            fill_packages(combo, self.settings, str(combo.currentData() or ""), sizes=False)
+            combo.currentIndexChanged.emit(combo.currentIndex())
+
+    def problem(self) -> str:
+        """Una regla con un empaque oficial de USPS y otra paquetería: no se puede comprar así."""
+        if self.settings is None:
+            return ""
+        entries = [(entry[2], entry[3]) for entry in self.rows] + [(self.default, self.default_package)]
+        for carrier, package in entries:
+            key = str(package.currentData() or "")
+            if pk.official(self.settings, key) and carrier.currentData() != "USPS":
+                return tr("{0} es un empaque oficial de USPS: esa regla tiene que salir por USPS.",
+                          pk.name(self.settings, key))
+        return ""
+
     def accept(self) -> None:
         from ..flow_setup_dialog import fedex_rule
 
+        problem = self.problem()
+        if problem:
+            error(self, tr("Reglas de paquetería"), problem)
+            return
         if self.fedex_flow.currentData() and fedex_rule(self.rules()) is None:
             error(self, tr("Reglas de paquetería"), tr(
                 "Para que Shopify Flow compre la FedEx hace falta una regla de FedEx con un valor (p. ej. piezas de más "
@@ -401,8 +496,19 @@ class ShippingRulesDialog(QDialog):
         mode.addItem(tr("Sola (automática)"), True)
         mode.addItem(tr("En Shopify (1 clic)"), False)
         mode.setCurrentIndex(0 if rule.auto else 1)
+        package = QComboBox()
+        service = QComboBox()
+        if self.settings is not None:
+            package.setMinimumWidth(250)
+            fill_packages(package, self.settings, rule.package, sizes=False)
+            self._wire(carrier, package, service, rule.service)
+        else:  # sin ajustes (no pasa en la app): se conservan tal cual
+            package.addItem(rule.package, rule.package)
+            service.addItem(rule.service, rule.service)
+            package.setVisible(False)
+            service.setVisible(False)
         remove = button("", "trash", "ghost", tr("Quitar esta regla"))
-        entry = (over, method, carrier, mode, remove)
+        entry = (over, method, carrier, package, service, mode, remove)
 
         def carrier_changed() -> None:
             fedex = carrier.currentData() == "FedEx"
@@ -427,8 +533,10 @@ class ShippingRulesDialog(QDialog):
 
     def rules(self) -> list[ShippingRule]:
         out = []
-        for over, method, carrier, mode, _remove in self.rows:
-            rule = ShippingRule(method.text().strip(), carrier.currentData(), bool(mode.currentData()), round(over.value(), 2))
+        for over, method, carrier, package, service, mode, _remove in self.rows:
+            rule = ShippingRule(method.text().strip(), carrier.currentData(), bool(mode.currentData()),
+                                round(over.value(), 2), str(package.currentData() or ""),
+                                str(service.currentData() or ""))
             if rule.method or rule.over > 0:
                 out.append(rule)
         return out
@@ -467,6 +575,7 @@ class OrdersPage(Page):
         self.tools_btn = button("", "more", None, tr("Reglas de paquetería y exportar"))
         tools = QMenu(self)
         tools.addAction(icons.icon("sliders"), tr("Reglas de paquetería…"), self.edit_rules)
+        tools.addAction(icons.icon("package"), tr("Empaques…"), lambda: open_packages(self, self.ctx))
         tools.addAction(icons.icon("download"), tr("Exportar a Excel (CSV)…"), self.export_csv)
         self.tools_btn.setMenu(tools)
         self.header_actions.addWidget(self.tools_btn)
@@ -1018,12 +1127,14 @@ class OrdersPage(Page):
         s = self.ctx.cfg.data.shopify
         dialog = ShippingRulesDialog(self, s.shipping_rules, s.default_carrier,
                                      (s.fedex_service, s.fedex_signature, s.fedex_insure),
-                                     by_flow=s.fedex_by_flow, shop=s.shop)
+                                     by_flow=s.fedex_by_flow, shop=s.shop, ctx=self.ctx)
         if run_dialog(dialog) != QDialog.DialogCode.Accepted:
             return
         was_flow = s.fedex_by_flow
         s.shipping_rules = dialog.rules()
         s.default_carrier = dialog.default.currentData() or "USPS"
+        s.default_package = str(dialog.default_package.currentData() or "")
+        s.default_service = str(dialog.default_service.currentData() or "")
         s.fedex_service = dialog.fedex_service.currentData() or s.fedex_service
         s.fedex_signature = dialog.fedex_signature.currentData() or s.fedex_signature
         s.fedex_insure = dialog.fedex_insure.isChecked()

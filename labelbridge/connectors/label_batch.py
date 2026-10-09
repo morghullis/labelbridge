@@ -76,7 +76,7 @@ class BatchItem:
 @dataclass
 class BatchOptions:
     service: str = AUTO
-    package: dict | None = None  # None: el paquete predeterminado de Shopify
+    package: str = "rules"  # packaging.RULES: el empaque de las reglas de cada pedido; o la clave de un empaque
     notify: bool = False
 
 
@@ -181,7 +181,7 @@ def _buy(shopify, item: BatchItem, options: BatchOptions, summary: BatchSummary)
         item.cost = float(result.get("cost") or 0)
         summary.bought += 1
     elif state == "failed":
-        item.state, item.detail = "failed", rejection(result.get("reason") or "", options.service)
+        item.state, item.detail = "failed", rejection(result.get("reason") or "", result.get("service") or options.service)
         summary.failed += 1
     elif state == "uncertain":
         item.state = "failed"

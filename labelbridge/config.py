@@ -170,10 +170,29 @@ class ShippingRule:
     carrier: str = "USPS"  # CARRIERS u otra
     auto: bool = True  # False: la guía se compra a mano (FedEx no se puede por API) y el pedido pide acción
     over: float = 0.0  # valor de las piezas (sin envío ni impuestos) a partir del cual se aplica
+    package: str = ""  # empaque (connectors/packaging.py): "" el predeterminado de Shopify
+    service: str = ""  # servicio (shipping_services): "" el que elija Shopify
 
 
 # Tipos de paquete que acepta Shopify Shipping para una caja propia.
 PACKAGE_TYPES = {"BOX": N_("Caja"), "SOFT_PACK": N_("Sobre acolchado o bolsa"), "ENVELOPE": N_("Sobre")}
+
+
+@dataclass
+class ShippingPackage:
+    """Un empaque propio («Empaques»): sobre blanco, bolsa de nailon, una caja… con sus medidas de fuera y su peso
+    vacío. `usps_priority`: es un empaque oficial de USPS Priority Mail sin tarifa plana (va solo con Priority)."""
+
+    id: str = ""
+    name: str = ""
+    type: str = "ENVELOPE"  # PACKAGE_TYPES
+    length: float = 10.0
+    width: float = 13.0
+    height: float = 0.5
+    dim_unit: str = "INCHES"  # INCHES | CENTIMETERS
+    weight: float = 1.0
+    weight_unit: str = "OUNCES"  # OUNCES | POUNDS | GRAMS | KILOGRAMS
+    usps_priority: bool = False
 
 # FedEx se compra en Shopify (ninguna app puede comprarla por la API): sus servicios como los muestra Shopify y la
 # firma, para la ventana «Guía FedEx», que dice qué elegir.
@@ -185,7 +204,8 @@ FEDEX_SIGNATURES = {"signature": N_("Firma requerida"), "adult": N_("Firma de ad
 
 @dataclass
 class PackageSettings:
-    """Caja propia para las guías (medidas de fuera y peso de la caja vacía). Sin ella, el paquete de Shopify."""
+    """La «Mi caja» de antes de la 1.20 (ahora es un empaque más de `packages`). Se conserva tal cual para que volver a
+    una versión anterior la siga encontrando."""
 
     use_custom: bool = False  # al comprar desde LabelBridge, esta caja en vez del paquete predeterminado de Shopify
     saved: bool = False  # la persona guardó esta caja («Recordar esta caja»): sale como «Mi caja» al imprimir guías
@@ -223,6 +243,11 @@ class ShopifySettings:
     # Las piezas de más de US$1000 salen por FedEx, que se compra a mano.
     shipping_rules: list[ShippingRule] = field(default_factory=lambda: [ShippingRule("", "FedEx", False, 1000.0)])
     default_carrier: str = "USPS"
+    # Empaque y servicio de los pedidos que no cumplen ninguna regla ("": los que elija Shopify). Priority Mail: su guía
+    # vale en cualquier empaque (sobre, bolsa, caja propia o de USPS Priority), no solo en el paquete de Shopify.
+    default_package: str = ""
+    default_service: str = "usps:Priority"
+    packages: list[ShippingPackage] = field(default_factory=list)  # «Empaques»: los propios
     # Cómo se compra FedEx en Shopify (la ventana «Guía FedEx» lo dice paso a paso): servicio, firma y seguro.
     fedex_service: str = "FedEx 2Day®"
     fedex_signature: str = "signature"  # FEDEX_SIGNATURES
@@ -401,6 +426,9 @@ def _from_dict(cls: type, raw: Any) -> Any:
         elif f.name == "shipping_rules":
             items = value if isinstance(value, list) else []
             setattr(obj, f.name, [_from_dict(ShippingRule, item) for item in items])
+        elif f.name == "packages":
+            items = value if isinstance(value, list) else []
+            setattr(obj, f.name, [_from_dict(ShippingPackage, item) for item in items])
         else:
             setattr(obj, f.name, _coerce(value, current))
     return obj
@@ -430,6 +458,38 @@ def _merge_unknown(data: dict, extra: dict) -> None:
             data[key] = value
         elif isinstance(value, dict) and isinstance(data[key], dict):
             _merge_unknown(data[key], value)
+
+
+LEGACY_BOX_ID = "mi-caja"
+
+
+def _migrate_box(s: ShopifySettings) -> None:
+    """Antes de la 1.20 había una sola caja propia («Mi caja»): pasa a ser el primer empaque. Si se usaba en las compras
+    automáticas, es el empaque de todas (los pedidos sin regla y las reglas automáticas); si se usaba solo al comprar a
+    mano, el de las reglas que se compran en Shopify (la ventana «Guía FedEx» lo dice). Sin nombre: se muestra «Mi
+    caja» en el idioma de la app."""
+    p = s.package
+    if not (p.saved or p.use_custom):
+        return
+    s.packages = [ShippingPackage(LEGACY_BOX_ID, "", p.type or "BOX", p.length, p.width, p.height,
+                                  p.dim_unit or "INCHES", p.weight, p.weight_unit or "OUNCES")]
+    if not p.use_custom:
+        return
+    for rule in s.shipping_rules:
+        if not rule.package and (p.auto or not rule.auto):
+            rule.package = LEGACY_BOX_ID
+    if p.auto:
+        s.default_package = LEGACY_BOX_ID
+
+
+def _migrate_priority(s: ShopifySettings, raw: dict) -> None:
+    """Desde la 1.20 las guías de USPS salen con Priority Mail, que vale en cualquier empaque (antes Shopify elegía,
+    casi siempre Ground Advantage, que USPS no acepta en su empaque oficial): las reglas automáticas de USPS sin servicio
+    elegido y «Todo lo demás» (si sale por USPS; con otra paquetería, lo sigue eligiendo Shopify)."""
+    s.default_service = "usps:Priority" if str(raw.get("default_carrier") or "USPS") == "USPS" else ""
+    for rule in s.shipping_rules:
+        if rule.auto and rule.carrier == "USPS" and not rule.service:
+            rule.service = "usps:Priority"
 
 
 class ConfigManager:
@@ -486,6 +546,10 @@ class ConfigManager:
                    "pudo guardar una copia de la anterior). Revisa Impresoras, Shopify y Ajustes.")
             )
             return Settings()
+        shopify = raw.get("shopify") if isinstance(raw, dict) else None
+        if isinstance(shopify, dict) and "packages" not in shopify:  # configuración de antes de la 1.20
+            _migrate_box(data.shopify)
+            _migrate_priority(data.shopify, shopify)
         general = raw.get("general") if isinstance(raw, dict) else None
         if isinstance(general, dict) and "language" not in general:
             # Configuración de antes de la 1.7, cuando la app solo estaba en español: sigue en español aunque Windows

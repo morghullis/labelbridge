@@ -2,6 +2,15 @@
 
 English version of [CHANGELOG.md](CHANGELOG.md). Each published version shows these notes in the app's update window when the app is in English, and on the English download page.
 
+## 1.20.0
+
+- **Labels that work for any packaging, with nothing to set up.** Before, Shopify chose the service, almost always Ground Advantage, which USPS doesn't accept in its official packaging. Now USPS labels are bought with **Priority Mail**, which works on the white envelope, the poly mailer, your boxes and USPS Priority boxes or envelopes. Priority Mail costs more than Ground Advantage; if you want another service for some orders, change it in **Carrier rules**. Orders going abroad still use the service Shopify chooses.
+- **Packaging: the label matches the packaging the order ships in.** Before, LabelBridge bought every label for Shopify's default package (the white envelope). Now you have your **Packaging** list (Orders → ⋯ → Packaging…): add your own, like the white envelope, the poly mailer or your boxes, with their outside size and empty weight. The official USPS flat rate packaging is already in the list: Flat Rate Envelope, Padded, Legal, and Small, Medium and Large Boxes.
+- **Each order gets its packaging, based on the shipping it paid for.** **Carrier rules** have two new columns, **Packaging** and **Service**. For example: "Express" ships in the Flat Rate Envelope (flat rate) and everything else in the poly mailer. This applies to automatic purchases, to **Print label** (the rule's choice comes preselected and you can change it) and to batch printing.
+- **Official USPS packaging always goes with Priority Mail.** USPS only accepts its official packaging (Flat Rate and the Priority boxes or envelopes) with a Priority Mail or Priority Mail Express label. With that packaging, LabelBridge only lets you pick those services and never buys Ground Advantage. A Priority box or envelope without flat rate is added as your own packaging, marked **Official USPS Priority**.
+- **FedEx:** the **FedEx label** window shows the packaging from your rule and reminds you that FedEx envelopes, Paks and boxes only work with FedEx Express (2Day, Overnight, Express Saver), never with FedEx Ground.
+- If Shopify doesn't accept a packaging for a shipment, it buys and charges nothing and LabelBridge explains what to choose. Your old "My box" becomes the first packaging in the list.
+
 ## 1.19.0
 
 - **Always on** (Settings → General, on Windows): so LabelBridge prints even when nobody is using the PC. Each piece is turned on with a button and confirmed first:

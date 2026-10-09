@@ -2,6 +2,15 @@
 
 Cada versión publicada muestra estas notas en la ventana de actualización de la app y en la página de descargas.
 
+## 1.20.0
+
+- **Guías que sirven para cualquier empaque, sin configurar nada.** Antes Shopify elegía el servicio, casi siempre Ground Advantage, y USPS no lo acepta en su empaque oficial. Ahora las guías de USPS se compran con **Priority Mail**, que vale en el sobre blanco, la bolsa de nailon, tus cajas y las cajas o sobres Priority de USPS. Priority Mail cuesta más que Ground Advantage; si prefieres otro servicio para algunos pedidos, cámbialo en **Reglas de paquetería**. Los pedidos a otro país siguen con el servicio que elija Shopify.
+- **Empaques: la guía sirve para el paquete con que sale el pedido.** Antes LabelBridge compraba todas las guías para el paquete predeterminado de Shopify (el sobre blanco). Ahora tienes tu lista de **Empaques** (Pedidos → ⋯ → Empaques…): agrega los tuyos, como el sobre blanco, la bolsa de nailon o tus cajas, con sus medidas de fuera y lo que pesan vacíos. Los oficiales de USPS con tarifa plana ya vienen en la lista: Sobre Flat Rate, Sobre acolchado, Sobre legal y Cajas chica, mediana y grande.
+- **Cada pedido con su empaque, según el envío que pagó.** Las **Reglas de paquetería** tienen dos columnas nuevas, **Empaque** y **Servicio**. Por ejemplo: «Express» sale en el Sobre Flat Rate (tarifa plana) y todo lo demás en la bolsa de nailon. Sirve para las compras automáticas, para **Imprimir guía** (sale elegido lo de la regla y puedes cambiarlo) y para la impresión en tanda.
+- **Empaques oficiales de USPS, siempre con Priority Mail.** USPS solo acepta su empaque oficial (Flat Rate y las cajas o sobres de Priority) con guía de Priority Mail o Priority Mail Express. Con esos empaques, LabelBridge solo deja elegir esos servicios y nunca compra Ground Advantage. Una caja o sobre de Priority sin tarifa plana se agrega como empaque propio, marcado **Oficial de USPS Priority**.
+- **FedEx:** la ventana **Guía FedEx** muestra el empaque que dice tu regla y recuerda que el sobre, el Pak y las cajas de FedEx solo valen con FedEx Express (2Day, Overnight, Express Saver), nunca con FedEx Ground.
+- Si Shopify no acepta un empaque para un envío, no compra ni cobra nada y LabelBridge explica qué elegir. Tu «Mi caja» de antes pasa a ser el primer empaque de la lista.
+
 ## 1.19.0
 
 - **Funcionar siempre** (Ajustes → General, en Windows): para que LabelBridge imprima aunque nadie esté usando la PC. Cada pieza se activa con un botón y se confirma antes:

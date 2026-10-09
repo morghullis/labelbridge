@@ -31,6 +31,7 @@ from ..models import JobRequest
 from ..printing.engine import PrintEngine
 from ..secret_store import SHOPIFY_ACCESS_TOKEN, SHOPIFY_CLIENT_SECRET, SecretStore
 from ..security.policy import PolicyDenied
+from . import packaging as pk
 from .base import BackgroundService
 from .shipping_services import AUTO, FEDEX, Route, by_key, is_domestic, offered_services, selection
 from .shopify_orders import MANUAL_TAG, ManualItem, ManualOrders, OrderDetail, ProductChoice, Recipient
@@ -282,7 +283,11 @@ class ShopifyError(Exception):
 
 
 class PurchaseRejected(ShopifyError):
-    """Shopify respondió que NO compró la etiqueta (userErrors): se puede reintentar."""
+    """Shopify respondió que NO compró la etiqueta (userErrors): se puede reintentar. `codes`: sus códigos de error."""
+
+    def __init__(self, message: str, codes: list[str] | None = None) -> None:
+        super().__init__(message, code=(codes or [""])[0])
+        self.codes = list(codes or [])
 
 
 def normalize_shop(shop: str) -> str:
@@ -304,14 +309,12 @@ def admin_url(shop: str, path: str = "") -> str:
     return f"https://admin.shopify.com/store/{handle}" + (f"/{path}" if path else "")
 
 
-def package_input(p) -> dict[str, Any]:
-    """La caja propia de Ajustes (PackageSettings) como paquete de Shopify Shipping."""
-    return {
-        "type": p.type or "BOX",
-        "dimensions": {"length": float(p.length), "width": float(p.width), "height": float(p.height),
-                       "unit": p.dim_unit or "INCHES"},
-        "weight": {"value": float(p.weight), "unit": p.weight_unit or "OUNCES"},
-    }
+package_input = pk.custom_input  # un empaque propio como paquete de Shopify Shipping (customPackage)
+
+
+def _domestic(order: dict) -> bool:
+    """¿El pedido va dentro de EE. UU. (o a sus territorios)? Sin dirección, como si sí."""
+    return is_domestic("US", str((order.get("shippingAddress") or {}).get("countryCodeV2") or ""))
 
 
 def _iso_to_ts(value: str) -> float:
@@ -601,18 +604,21 @@ class ShopifyClient:
 
     def purchase_label(
         self, fulfillment_order_id: str, notify_customer: bool, *, package: dict | None = None,
-        total_weight: dict | None = None, preferred: dict | None = None,
+        total_weight: dict | None = None, preferred: dict | None = None, carrier_package: dict | None = None,
     ) -> str:
-        """Compra la guía con Shopify Shipping. Sin `package`/`total_weight`, Shopify usa su paquete predeterminado y
-        calcula el peso con los productos. Sin `preferred` (paquetería y servicio), Shopify elige: el servicio que pagó
-        el cliente o la paquetería preferida de la tienda."""
+        """Compra la guía con Shopify Shipping. `package`: un empaque propio (customPackage); `carrier_package`: uno
+        oficial de la paquetería (carrierPackage); sin ninguno, Shopify usa su paquete predeterminado. Sin
+        `total_weight`, Shopify calcula el peso con los productos. Sin `preferred` (paquetería y servicio), Shopify
+        elige: el servicio que pagó el cliente o la paquetería preferida de la tienda."""
         ship_at = (datetime.now(timezone.utc) + timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%SZ")
         purchase: dict[str, Any] = {
             "fulfillmentOrderId": fulfillment_order_id,
             "shippingDatetime": ship_at,
             "notifyCustomer": bool(notify_customer),
         }
-        if package:
+        if carrier_package:
+            purchase["packageInfo"] = {"carrierPackage": carrier_package}
+        elif package:
             purchase["packageInfo"] = {"customPackage": package}
         if total_weight:
             purchase["totalWeight"] = total_weight
@@ -621,8 +627,13 @@ class ShopifyClient:
         data = self.graphql(PURCHASE_MUTATION, {"input": purchase}, mutation=True)
         result = data.get("shippingLabelPurchase") or {}
         errors = result.get("userErrors") or []
+        if errors and (result.get("shippingLabelPurchaseResult") or {}).get("id"):
+            # Rechazo y compra iniciada a la vez: no se sabe si la cobró, así que nunca se reintenta sola.
+            raise ShopifyError(tr("Shopify respondió con errores pero empezó la compra: {0}", "; ".join(
+                f"{e.get('code') or ''} {e.get('message')}".strip() for e in errors)), uncertain=True)
         if errors:
-            raise PurchaseRejected("; ".join(f"{e.get('code') or ''} {e.get('message')}".strip() for e in errors))
+            raise PurchaseRejected("; ".join(f"{e.get('code') or ''} {e.get('message')}".strip() for e in errors),
+                                   [str(e.get("code") or "") for e in errors])
         purchase = result.get("shippingLabelPurchaseResult") or {}
         if not purchase.get("id"):
             raise ShopifyError(tr("Shopify no devolvió el resultado de la compra"), uncertain=True)
@@ -1160,20 +1171,16 @@ class ShopifyService(BackgroundService):
         self, client: ShopifyClient, s: ShopifySettings, order: dict, meta: dict, stop: threading.Event, *,
         options: dict | None = None, fulfillment_orders: list[dict] | None = None, wait: float = 20,
     ) -> int:
-        """Compra la guía de cada orden de preparación abierta. Con `options` la pidió una persona desde Pedidos
-        (paquete, peso y aviso al cliente elegidos ahí; sin el límite diario de las compras automáticas)."""
+        """Compra la guía de cada orden de preparación abierta, con el empaque y el servicio de las reglas. Con
+        `options` la pidió una persona desde Pedidos (empaque y servicio —packing—, peso y aviso al cliente elegidos
+        ahí; sin el límite diario de las compras automáticas)."""
         queued = 0
         problem = shipping_problem(order)
         if problem:  # nunca una guía sin sentido (sin envío o sin dirección): quien llama ya lo explica
             log.warning("Shopify: %s no lleva guía: %s", meta.get("order_name"), problem)
             return 0
         manual = options is not None
-        if manual:
-            package, weight, notify = options.get("package"), options.get("total_weight"), options.get("notify")
-            preferred = selection(options.get("service") or AUTO)
-        else:
-            package = package_input(s.package) if s.package.use_custom and s.package.auto else None
-            weight, notify, preferred = None, s.notify_customer, None
+        plan: tuple | None = None  # con qué se compra: se decide con la primera orden que de verdad se compra
         if fulfillment_orders is None:
             fulfillment_orders = client.fulfillment_orders(order["id"])
         for fo in fulfillment_orders:
@@ -1204,12 +1211,19 @@ class ShopifyService(BackgroundService):
                         "error", kind="action",
                     )
                 return queued
+            if plan is None:
+                try:
+                    plan = self._plan(s, order, options)
+                except pk.PackagingError as exc:  # las reglas piden algo que no se puede: no se compra y se avisa
+                    self._packing_problem(meta, str(exc))
+                    return queued
+            custom, official, preferred, weight, notify = plan
             self.store.kv_set(attempts_key, str(attempts + 1))
             # La compra se registra ANTES de pedirla: si algo falla a mitad, nunca se compra dos veces.
             self.store.mark_seen(key)
             try:
-                result_id = client.purchase_label(fo_id, bool(notify), package=package, total_weight=weight,
-                                                  preferred=preferred)
+                result_id = self._purchase(client, fo_id, bool(notify), custom=custom, official=official,
+                                           total_weight=weight, preferred=preferred)
             except PurchaseRejected as exc:
                 # Shopify contestó que no compró: se puede volver a intentar (p. ej. tras corregir el paquete).
                 self.store.unmark_seen(key)
@@ -1240,6 +1254,71 @@ class ShopifyService(BackgroundService):
             log.info("Shopify: compra de etiqueta iniciada para %s", meta["order_name"])
             queued += self._check_pending_purchases(client, wait_seconds=wait, stop=stop, until=result_id)
         return queued
+
+    @staticmethod
+    def _plan(s: ShopifySettings, order: dict, options: dict | None) -> tuple:
+        """(empaque propio, empaque oficial, servicio, peso, aviso) de la compra: lo elegido en la app (`options`) o,
+        en las automáticas, lo que dicen las reglas para ese pedido. PackagingError si no van juntos."""
+        if options is not None:
+            packing = options.get("packing") or pk.Packing()
+            custom = options.get("custom")  # «Otro empaque…»: un empaque solo para esta guía
+            weight, notify = options.get("total_weight"), options.get("notify")
+        else:
+            packing = pk.for_order(s, (order.get("shippingLine") or {}).get("title") or "", subtotal_of(order),
+                                   _domestic(order))
+            custom, weight, notify = None, None, s.notify_customer
+        return (custom or pk.custom_for(s, packing.package), pk.carrier_package(packing.package),
+                selection(packing.service), weight, notify)
+
+    def _purchase(
+        self, client: ShopifyClient, fo_id: str, notify: bool, *, custom: dict | None,
+        official: pk.CarrierPackage | None, total_weight: dict | None, preferred: dict | None,
+    ) -> str:
+        """Pide la compra con el empaque elegido. Con un empaque oficial (Flat Rate de USPS), Shopify no publica su
+        código: se usa el que ya funcionó o se prueban los conocidos en orden. Cada rechazo de Shopify es sin comprar
+        ni cobrar nada; si fue por otra cosa (no por el código), no se prueba el siguiente."""
+        if official is None:
+            return client.purchase_label(fo_id, notify, package=custom, total_weight=total_weight, preferred=preferred)
+        memo = self._key(f"carrier_package:{official.key}")
+        known = self.store.kv_get(memo) or ""
+        last: PurchaseRejected | None = None
+        for code in pk.codes_to_try(official, known):
+            try:
+                result_id = client.purchase_label(fo_id, notify, carrier_package=pk.carrier_input(official, code),
+                                                  total_weight=total_weight, preferred=preferred)
+            except PurchaseRejected as exc:
+                if not pk.package_problem(exc.codes):
+                    raise
+                log.warning("Shopify no aceptó el empaque %s con el código %r: %s", official.key, code, exc)
+                last = exc
+                continue
+            if code != known:
+                self.store.kv_set(memo, code)
+                log.info("Shopify aceptó el empaque %s con el código %r: queda anotado", official.key, code)
+            return result_id
+        if known:  # el que funcionaba ya no: la próxima vez se vuelven a probar todos
+            self.store.kv_set(memo, "")
+        raise PurchaseRejected(
+            tr("Shopify no aceptó el empaque {0} con este servicio para este envío ({1}). No se compró nada: elige otro "
+               "empaque o servicio", tr(official.label), friendly_reason(str(last)) if last else tr("sin detalle")),
+            last.codes if last else [],
+        )
+
+    def _packing_problem(self, meta: dict, reason: str) -> None:
+        """Las reglas piden un empaque y un servicio que no van juntos (o un empaque borrado): una vez por pedido."""
+        legacy = meta["order_id"]
+        key = self._key(f"order:{legacy}:packing")
+        if self.store.seen(key):
+            return
+        self.store.mark_seen(key)
+        self._note(legacy, "failed", name=meta["order_name"], reason=reason)
+        log.error("Shopify: %s no se compró por el empaque: %s", meta["order_name"], reason)
+        self.events.notify(
+            tr("No se pudo comprar la etiqueta"),
+            tr("{0}: {1} Corrige tus reglas de paquetería y pulsa «Imprimir guía» en la pestaña Pedidos.",
+               meta["order_name"], reason),
+            "error", kind="action",
+        )
 
     def _announce_since(self) -> float:
         """Desde cuándo se avisa de pedidos nuevos: desde que esta versión empezó a avisar (al actualizar, los
@@ -1292,23 +1371,26 @@ class ShopifyService(BackgroundService):
                 and time.time() - _iso_to_ts(order.get("createdAt", "")) < FLOW_WAIT_SECONDS)
 
     def buy_label_now(
-        self, legacy: str, *, package: dict | None = None, total_weight: dict | None = None, notify: bool | None = None,
-        service: str = AUTO, wait: float = 45,
+        self, legacy: str, *, package: str | dict | None = pk.RULES, total_weight: dict | None = None,
+        notify: bool | None = None, service: str = AUTO, wait: float = 45,
     ) -> dict:
         """«Imprimir guía» desde Pedidos, confirmada por la persona: compra con Shopify Shipping (aunque se haya
         llegado al límite diario o a los intentos automáticos) con el servicio elegido (AUTO: el que elija Shopify),
         espera el resultado y la imprime. Shopify deja el pedido preparado con su número de seguimiento.
 
+        `package`: pk.RULES, el empaque (y, con AUTO, el servicio) que dicen las reglas para ese pedido; la clave de un
+        empaque (packaging.choices; None: el de Shopify); o un dict, un empaque solo para esta guía («Otra caja…»). Un
+        empaque oficial de USPS va con Priority Mail.
+
         Devuelve el registro del pedido: state purchased (carrier, tracking y, si Shopify ya lo anotó, cost), failed
-        (reason) o purchasing. Nunca mientras Shopify Flow compra la FedEx de ese pedido."""
+        (reason) o purchasing, más el empaque y el servicio con que se pidió (package, service, note). Nunca mientras
+        Shopify Flow compra la FedEx de ese pedido."""
         if service == FEDEX:
             raise ShopifyError(tr("Shopify no deja que ninguna app compre FedEx: cómprala en el pedido en Shopify."))
         if service not in ("", AUTO) and by_key(service) is None:
             raise ShopifyError(tr("Servicio de envío desconocido: {0}", service))
         s = self.cfg.data.shopify
         client = self.client()
-        options = {"package": package, "total_weight": total_weight, "service": service,
-                   "notify": s.notify_customer if notify is None else bool(notify)}
         # Todo dentro del candado del ciclo: la compra automática no puede comprar este pedido al mismo tiempo.
         with self._cycle_lock:
             busy = any(str(info.get("order_id")) == str(legacy) for info in self._pending().values())
@@ -1339,12 +1421,16 @@ class ShopifyService(BackgroundService):
                 raise ShopifyError(tr("Ese pedido ya tiene una compra hecha o sin confirmar: revísalo en Shopify antes de comprar otra."))
             for fo in fresh:  # la persona decide: se olvidan los intentos automáticos que fallaron
                 self.store.kv_set(self._fo_key(fo) + ":intentos", "0")
+            packing, custom = self._chosen_packing(s, order, package, service)
+            options = {"packing": packing, "custom": custom, "total_weight": total_weight,
+                       "notify": s.notify_customer if notify is None else bool(notify)}
             meta = {"order_gid": order.get("id"), "order_name": order.get("name") or legacy, "order_id": str(legacy)}
             queued = self._buy_labels(client, s, order, meta, threading.Event(), options=options,
                                       fulfillment_orders=fresh, wait=wait)
         if queued:
             self.engine.wake()
-        entry = {**self.ledger(legacy), "queued": queued}
+        entry = {**self.ledger(legacy), "queued": queued, "package": packing.package, "service": packing.service,
+                 "note": packing.note}
         if entry.get("state") == "purchased" and entry.get("label"):
             try:  # lo que costó, según el historial del pedido (si Shopify ya lo anotó)
                 cost = client.order_labels(str(order["id"])).get(str(entry["label"]), {}).get("cost")
@@ -1353,6 +1439,33 @@ class ShopifyService(BackgroundService):
             if cost:
                 entry["cost"] = cost
         return entry
+
+    def planned_packing(self, legacy: str, package: str | dict | None = pk.RULES, service: str = AUTO) -> pk.Packing:
+        """El empaque y el servicio con que se compraría la guía de ese pedido (para decirlo antes de confirmar)."""
+        s = self.cfg.data.shopify
+        order = self.client().order(legacy, s.metafield_namespace, s.metafield_key)
+        if order is None:
+            raise ShopifyError(tr("Shopify no encontró ese pedido."))
+        return self._chosen_packing(s, order, package, service)[0]
+
+    @staticmethod
+    def _chosen_packing(s: ShopifySettings, order: dict, package: str | dict | None,
+                        service: str) -> tuple[pk.Packing, dict | None]:
+        """(empaque y servicio, empaque solo para esta guía) de una compra pedida desde la app."""
+        try:
+            if isinstance(package, dict):  # «Otro empaque…»
+                return pk.Packing(pk.SHOPIFY, service or AUTO), package
+            if package == pk.RULES:
+                method = (order.get("shippingLine") or {}).get("title") or ""
+                rule = rule_for(s.shipping_rules, method, subtotal_of(order))
+                if rule is not None and not rule.auto:  # FedEx (o lo marcado «En Shopify»): nunca otra paquetería
+                    raise ShopifyError(tr("Según tus reglas, {0} sale por {1} y su guía se compra en Shopify.",
+                                          order.get("name") or "", rule.carrier))
+                ruled = pk.for_order(s, method, subtotal_of(order), _domestic(order))
+                return (ruled if service in ("", AUTO) else pk.fit(s, ruled.package, service)), None
+            return pk.fit(s, package or pk.SHOPIFY, service), None
+        except pk.PackagingError as exc:
+            raise ShopifyError(str(exc)) from None
 
     # --- detalle, instrucciones y pedidos manuales (ver shopify_orders) -------------------------
     @staticmethod

@@ -10,6 +10,7 @@ from PySide6.QtWidgets import QApplication
 from test_orders import _ui_context, make_order, row_of
 from test_print_labels import LabelsInShopify
 
+from labelbridge.config import ShippingPackage
 from labelbridge.connectors.shopify import ShopifyError, ShopifyService
 
 
@@ -39,7 +40,8 @@ def test_the_guide_says_exactly_what_to_choose_in_shopify(core):
 
     ctx = _ui_context(core)
     s = core.cfg.data.shopify
-    s.package.saved, s.package.use_custom = True, True
+    s.packages = [ShippingPackage("mi-caja", "", "BOX", 6, 4, 2, "INCHES", 3, "OUNCES")]
+    s.shipping_rules[0].package = "mi-caja"  # la regla de FedEx (piezas de más de US$1000) sale en «Mi caja»
     row = row_of(make_order(81, subtotal=1450))
     items = {what: (value, note, copy) for what, value, note, copy in checklist(ctx, row, "FedEx")}
     assert items["Servicio de envío"][0] == "FedEx 2Day®" and items["Firma"][0] == "Firma requerida"
