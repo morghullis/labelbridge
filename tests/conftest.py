@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gc
 import os
 import socket
 import sys
@@ -28,6 +29,25 @@ def qapp():
 
     app = QApplication.instance() or QApplication([sys.argv[0]])
     yield app
+
+
+@pytest.fixture(autouse=True)
+def _no_windows_left_over():
+    """Al terminar cada prueba se borran sus ventanas, con la app de Qt todavía viva. Si quedan para cuando Python se
+    cierra (p. ej. atadas por funciones conectadas a sus botones), Qt se cae al salir: pasó en CI de Windows y Mac con
+    todas las pruebas en verde."""
+    yield
+    from PySide6.QtCore import QCoreApplication, QEvent
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    if app is None:
+        return
+    for widget in app.topLevelWidgets():
+        widget.close()
+        widget.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    gc.collect()
 
 
 @pytest.fixture()
