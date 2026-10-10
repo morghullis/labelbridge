@@ -1,4 +1,5 @@
-PySide6>=6.7,<7
+# 6.12 (10/2026) trae módulos para macOS 26 en adelante: la app de Mac pide macOS 15. Subir solo tras comprobarlo.
+PySide6>=6.7,<6.12
 keyring>=25
 zeroconf>=0.130
 segno>=1.6

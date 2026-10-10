@@ -138,11 +138,16 @@ jobs:
           gh release upload $env:TAG $installer --clobber
           if ($LASTEXITCODE -ne 0) { throw "No se pudo publicar el Release $env:TAG" }
 
+      # Solo en las compilaciones de prueba (las de un tag ya dejan el instalador en su Release, de donde lo toma la
+      # publicación): si la cuota de archivos de GitHub Actions está llena, la prueba no falla por eso.
       - uses: actions/upload-artifact@v4
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        continue-on-error: true
         with:
           name: LabelBridge-Setup
           path: dist/installer/*.exe
           if-no-files-found: error
+          retention-days: 3
 
   build-mac:
     name: Mac (Apple Silicon)
@@ -235,10 +240,13 @@ jobs:
           gh release upload "$TAG" dist/installer/*.dmg --clobber
 
       - uses: actions/upload-artifact@v4
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        continue-on-error: true
         with:
           name: LabelBridge-Mac
           path: dist/installer/*.dmg
           if-no-files-found: error
+          retention-days: 3
 
   publish-updates:
     name: Publicar en la página de descargas
@@ -252,16 +260,20 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: actions/download-artifact@v4
-        with:
-          name: LabelBridge-Setup
-          path: dist/installer
-
-      - uses: actions/download-artifact@v4
-        if: needs.build-mac.result == 'success'
-        with:
-          name: LabelBridge-Mac
-          path: dist/installer
+      # Los instaladores, del Release del tag (los subieron las dos compilaciones); no dependen de la cuota de archivos
+      # de GitHub Actions, que se llenó el 10/10/2026 y frenó la publicación.
+      - name: Traer los instaladores del Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          MAC_OK: ${{ needs.build-mac.result == 'success' }}
+        run: |
+          mkdir -p dist/installer
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern '*.exe' --dir dist/installer
+          if [ "$MAC_OK" = "true" ]; then
+            gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern '*.dmg' --dir dist/installer
+          fi
+          ls -l dist/installer
 
       - name: Publicar versión (las apps instaladas la detectan solas) y las anteriores desde la 1.5
         env:
