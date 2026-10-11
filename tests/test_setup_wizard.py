@@ -199,3 +199,30 @@ def test_the_page_test_refuses_label_printers_and_asks_for_plotters(fresh, monke
     wizard._test_printer("page")
     assert asked and "gran formato" in asked[-1]  # y como se dijo que no, no se imprimió nada
     assert not any(p.system_name == "Canon PRO-4000" for p in fresh.cfg.data.printers)
+
+
+def test_closing_it_during_the_store_test_still_turns_the_store_on(fresh, monkeypatch):
+    wizard = _wizard(fresh, monkeypatch)
+    wizard.shop_edit.setText("mi-tienda")
+    wizard.client_id_edit.setText("abc")
+    wizard.secret_edit.setText("shpss_x")
+    pending: list = []
+    monkeypatch.setattr(sw, "run_async", lambda work, done, failed, what="": pending.append(done))
+    wizard._connect()
+    wizard.connect_btn.deleteLater()  # la ventana se cerró mientras se probaba
+    from PySide6.QtCore import QCoreApplication, QEvent
+
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    pending[0]({"name": "MI TIENDA", "missing": []})
+    assert fresh.cfg.data.shopify.enabled
+
+
+def test_a_large_format_printer_for_pages_needs_a_yes(fresh, monkeypatch):
+    asked: list[str] = []
+    monkeypatch.setattr(sw, "confirm", lambda _p, _t, text: asked.append(text) or False)
+    wizard = _wizard(fresh, monkeypatch)
+    wizard.next()
+    assert "(gran formato)" in wizard.page_combo.itemText(wizard.page_combo.findData("sys:Canon PRO-4000"))
+    wizard.page_combo.setCurrentIndex(wizard.page_combo.findData("sys:Canon PRO-4000"))
+    wizard.next()
+    assert wizard.current == "printers" and asked and "gran formato" in asked[-1]

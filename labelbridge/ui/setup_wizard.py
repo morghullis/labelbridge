@@ -317,7 +317,7 @@ class SetupWizard(QDialog):
             combo.clear()
             combo.addItem(empty, NONE)
             for choice in self.choices:
-                tag = tr("etiquetas") if choice.label_like else tr("hojas")
+                tag = tr("etiquetas") if choice.label_like else (tr("gran formato") if choice.big else tr("hojas"))
                 combo.addItem(f"{choice.title} ({tag})", choice.key)
             combo.setCurrentIndex(max(0, combo.findData(chosen)))
             combo.blockSignals(False)
@@ -422,9 +422,16 @@ class SetupWizard(QDialog):
         return ""
 
     def _apply_printers(self) -> str:
-        problem = self._page_choice_problem(self._choice(str(self.page_combo.currentData() or "")))
+        page_choice = self._choice(str(self.page_combo.currentData() or ""))
+        problem = self._page_choice_problem(page_choice)
         if problem:
             return problem
+        current = self.ctx.cfg.data.shopify.order_page_printer
+        if (page_choice is not None and page_choice.big and page_choice.key != f"lb:{current}"
+                and not confirm(self, tr("Página del pedido"), tr(
+                    "«{0}» parece una impresora de gran formato o virtual. ¿Imprimir ahí la página de cada pedido?",
+                    page_choice.title))):
+            return tr("Elige una impresora de hojas para la página del pedido, o «Ninguna».")
         labels = self._selected_profile("label")
         page = self._selected_profile("page")
         if page is not None and routing.label_like(page):
@@ -559,13 +566,7 @@ class SetupWizard(QDialog):
         self._mark("store")
 
     def _connected(self, data: dict) -> None:
-        try:
-            self.connect_btn.setEnabled(True)
-            self.connect_btn.setText(tr("Conectar y probar"))
-        except RuntimeError as exc:
-            if window_closed(exc):
-                return
-            raise
+        # Primero la configuración (aunque la ventana ya se haya cerrado durante la prueba), después la pantalla.
         s = self.ctx.cfg.data.shopify
         if not s.enabled and not s.activated_once:  # la primera conexión que funciona activa la tienda
             s.enabled = s.activated_once = True
@@ -574,6 +575,13 @@ class SetupWizard(QDialog):
             self.ctx.cfg.data.labels.store_name = str(data["name"])
             self._save("general")
         self.connected = str(data.get("name") or s.shop)
+        try:
+            self.connect_btn.setEnabled(True)
+            self.connect_btn.setText(tr("Conectar y probar"))
+        except RuntimeError as exc:
+            if window_closed(exc):
+                return
+            raise
         text = (tr("✓ Conectado a «{0}». LabelBridge ya revisa sus pedidos nuevos.", self.connected) if s.enabled
                 else tr("✓ Conectado a «{0}», pero la tienda está apagada en LabelBridge: actívala en Shopify → "
                         "Conexión.", self.connected))
