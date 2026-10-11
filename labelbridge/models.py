@@ -35,6 +35,7 @@ FORMAT_ALIASES = {
     "order": "order",
     "order_label": "order",
     "label": "order",
+    "order_page": "order_page",  # la página del pedido (como «Imprimir página de pedido» de Shopify)
 }
 
 STATUS_LABELS = {
@@ -155,12 +156,12 @@ def parse_job(obj: Any, *, require_id: bool = True) -> JobRequest:
         if not isinstance(order, dict):
             raise JobError(tr("'order' debe ser un objeto (pedido de Shopify)"))
         req.order = order
-        req.format = "order"
+        req.format = "order_page" if fmt == "order_page" else "order"
 
     if req.content is not None and len(req.content) > MAX_CONTENT_BYTES:
         raise JobError(tr("El contenido supera el máximo de 25 MB"))
-    if req.format == "order" and req.order is None:
-        raise JobError(tr("format 'order' requiere el campo 'order'"))
+    if req.format in ("order", "order_page") and req.order is None:
+        raise JobError(tr("format '{0}' requiere el campo 'order'", req.format))
 
     meta = obj.get("meta")
     req.meta = meta if isinstance(meta, dict) else {}

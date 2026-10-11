@@ -234,6 +234,29 @@ class MainWindow(QMainWindow):
         version.setContentsMargins(10, 4, 0, 0)
         col.addWidget(version)
 
+    def open_setup(self) -> None:
+        """El asistente de inicio (la primera vez, o desde la Guía)."""
+        from .setup_wizard import SetupWizard
+
+        self.show_and_raise()
+        wizard = SetupWizard(self, self.ctx, open_assistant=self.ask_assistant, navigate=self.navigate)
+        wizard.finished.connect(lambda _r: self.pages["guide"].refresh())
+        wizard.open()
+
+    def ask_assistant(self, text: str) -> None:
+        """Abre el asistente con un pedido ya escrito: si tiene su IA conectada lo envía; si no, primero «Conecta tu
+        IA» y el texto queda escrito para enviarlo después."""
+        if self.assistant is None:
+            self.open_assistant()
+            return
+        page = self.assistant.page
+        connected = page.conversation.has_key()
+        self.open_assistant(connect=not connected)
+        if connected:
+            page.send_text(text)
+        else:
+            page.input.setPlainText(text)
+
     def open_assistant(self, connect: bool = False, provider: str | None = None) -> None:
         """Muestra la ventana y abre el chat del asistente (con «Conecta tu IA» si se pide)."""
         if self.assistant is None:  # sin asistente en esta compilación: se dice en vez de no hacer nada
@@ -290,6 +313,9 @@ class MainWindow(QMainWindow):
         key, _, tab = key.partition("/")
         if key == "assistant":  # el asistente no es una pantalla: se abre el chat flotante
             self.open_assistant()
+            return
+        if key == "setup":  # el asistente de inicio: una ventana, no una pantalla
+            self.open_setup()
             return
         page = self.pages.get(key)
         if page is None:

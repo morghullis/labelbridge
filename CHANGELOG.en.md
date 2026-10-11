@@ -2,6 +2,14 @@
 
 English version of [CHANGELOG.md](CHANGELOG.md). Each published version shows these notes in the app's update window when the app is in English, and on the English download page.
 
+## 1.21.0
+
+- **Quick setup for people who just installed LabelBridge.** The first time, it asks what you want it to do (buy and print Shopify labels, just print the orders, or print what n8n or your website sends) and shows only the steps you need: the printers (it finds the installed ones and suggests which is for labels and which for sheets, with “Print test”), the store (“Connect and test”), what to do with each order and keeping it working by itself. At the end, **“Continue with the assistant”** lets the AI set up the rest with you, bit by bit. Open it again from the **Guide**.
+- **Order page, like Shopify's "Print order page".** Every new paid order prints a letter-size sheet with the order and its status, the customer, how it's delivered (shipping or **in-store pickup** and where), the products with their **photo** and price, the totals, what was paid and the notes, plus an order barcode.
+- **Also for orders without a shipping label**, like in-store pickups: no label is bought (none is needed), but their page still prints.
+- **It prints on the printer you choose** in Shopify → **Where each document prints** (if you already had one for the order label, it uses that one). Never on the shipping-label printer, and never blindly on the default one: if one still needs to be chosen, LabelBridge tells you.
+- Another copy whenever you want: right-click an order → **Print order page**. Turn it off in Shopify → **Order page**.
+
 ## 1.20.0
 
 - **Labels that work for any packaging, with nothing to set up.** Before, Shopify chose the service, almost always Ground Advantage, which USPS doesn't accept in its official packaging. Now USPS labels are bought with **Priority Mail**, which works on the white envelope, the poly mailer, your boxes and USPS Priority boxes or envelopes. Priority Mail costs more than Ground Advantage; if you want another service for some orders, change it in **Carrier rules**. Orders going abroad still use the service Shopify chooses.

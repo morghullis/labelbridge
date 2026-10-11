@@ -163,6 +163,15 @@ class ShopifyPage(Page):
         )
         what.add(self.print_order)
 
+        self.print_page = SwitchRow(
+            tr("Página del pedido"),
+            tr("Como «Imprimir página de pedido» de Shopify, en hoja carta: productos con precio, totales, el pago y si "
+               "es envío o retiro en tienda. Sale con cada pedido nuevo pagado, también los que no llevan guía, por la "
+               "impresora que elijas abajo (nunca por la de las guías)."),
+            s.print_order_page,
+        )
+        what.add(self.print_page)
+
         self.metafield = SwitchRow(
             tr("Etiqueta desde un metafield del pedido (URL de PDF/ZPL)"),
             tr("Para guías de otra paquetería que n8n (plantilla 03), tu web o un ERP guardan en el pedido."),
@@ -188,6 +197,7 @@ class ShopifyPage(Page):
         # --- por dónde sale cada cosa --------------------------------------------------------------
         self.routes = PrintRoutesCard(ctx, navigate)
         self.print_order.switch.toggled.connect(self.routes.set_order_label_active)
+        self.print_page.switch.toggled.connect(self.routes.set_page_active)
         self.add(self.routes)
 
         # --- filtros -----------------------------------------------------------------------
@@ -272,6 +282,7 @@ class ShopifyPage(Page):
         self.max_per_day.setValue(s.max_labels_per_day)
         self.label_size.setCurrentIndex(max(0, self.label_size.findData(s.label_size)))
         self.print_order.setChecked(s.print_order_label)
+        self.print_page.setChecked(s.print_order_page)
         self.metafield.setChecked(s.metafield_label)
         self.mf_namespace.setText(s.metafield_namespace)
         self.mf_key.setText(s.metafield_key)
@@ -337,6 +348,8 @@ class ShopifyPage(Page):
         s.api_version = self.api_version.currentText().strip() or "2026-10"
         s.print_order_label = self.print_order.isChecked()
         s.order_label_printer = self.routes.alias(routing.ORDER)
+        s.print_order_page = self.print_page.isChecked()
+        s.order_page_printer = self.routes.alias(routing.PAGE)
         s.buy_shipping_label = self.buy_label.isChecked()
         s.shipping_label_printer = self.routes.alias(routing.SHIPPING)
         s.notify_customer = self.notify_customer.isChecked()

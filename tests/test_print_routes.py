@@ -40,7 +40,7 @@ def test_each_document_says_which_printer_it_goes_to(core):
     assert routing.printer_for("oficina", core.cfg).system_name == "HP_LaserJet_Pro_M404"
     assert routing.printer_for("no-existe", core.cfg) is None
     keys = [route.key for route in routing.routes(core.cfg)]
-    assert keys == [routing.SHIPPING, routing.ORDER, routing.METAFIELD]
+    assert keys == [routing.SHIPPING, routing.ORDER, routing.PAGE, routing.METAFIELD]
     assert routing.routes(core.cfg)[0].active  # las guías salen aunque no se compren solas (FedEx, reimpresiones)
 
 

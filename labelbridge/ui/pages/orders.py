@@ -971,6 +971,7 @@ class OrdersPage(Page):
                 printing.setToolTip(why)
                 menu.setToolTipsVisible(True)
         menu.addAction(icons.icon("eye"), tr("Ver pedido"), lambda: self.run_action(row, "details"))
+        menu.addAction(icons.icon("file"), tr("Imprimir página del pedido"), lambda: self.run_action(row, "page"))
         menu.addAction(icons.icon("link"), tr("Abrir en Shopify"), lambda: self.run_action(row, "open"))
         if row.tracking:
             menu.addAction(icons.icon("truck"), tr("Rastrear el envío"), lambda: self.run_action(row, "track"))
@@ -1025,6 +1026,20 @@ class OrdersPage(Page):
             self._reprint(row)
         elif action == "retry":
             self._retry(row)
+        elif action == "page":
+            self._print_page(row)
+
+    def _print_page(self, row: OrderRow) -> None:
+        """La página del pedido (como «Imprimir página de pedido» de Shopify), por su impresora."""
+        shopify = self.ctx.services.shopify
+
+        def failed(message: str) -> None:
+            error(self, tr("Imprimir página del pedido"), message)
+
+        run_async(lambda: shopify.print_order_page(row.legacy, row.name),
+                  lambda _queued: info(self, tr("Imprimir página del pedido"),
+                                       tr("La página de {0} se está imprimiendo.", row.name)), failed,
+                  what=tr("Imprimir página del pedido"))
 
     def _print(self, row: OrderRow) -> None:
         """«Imprimir guía» de un pedido: reimprime la que tiene, abre la compra o explica por qué no lleva guía."""

@@ -22,6 +22,7 @@ from ..security.policy import is_local_network_host
 from ..i18n import tr
 from ..jobstore import JobStore
 from ..labels.order import normalize_order
+from ..labels.order_page import LETTER_MM, draw_order_page, page_detail, sample_page_order
 from ..labels.qt_label import draw_order_label
 from ..labels.zpl_label import order_to_zpl
 from . import PermanentPrintError, PrintError, outputs
@@ -41,7 +42,7 @@ DEFAULT_LABEL_MM = (101.6, 152.4)
 
 @dataclass
 class Document:
-    format: str  # pdf | image | zpl | raw | order
+    format: str  # pdf | image | zpl | raw | order | order_page
     data: bytes = b""
     order: dict[str, Any] | None = None
     size_mm: tuple[float, float] | None = None  # tamaño real pedido (la guía a 4×6 in en cualquier papel)
@@ -311,8 +312,8 @@ class PrintEngine:
             data = self.store.read_payload(job)
         except PayloadUnavailable as exc:
             raise PermanentPrintError(str(exc)) from None
-        if job["format"] == "order":
-            return Document("order", order=json.loads(data.decode("utf-8")))
+        if job["format"] in ("order", "order_page"):
+            return Document(job["format"], order=json.loads(data.decode("utf-8")))
         fmt = job["format"]
         if fmt == "auto":
             fmt = detect_format(data)
@@ -330,7 +331,20 @@ class PrintEngine:
             media = profile.media_mm() or DEFAULT_LABEL_MM
             show_items = self.cfg.data.labels.show_items
             return [VectorSource(media, lambda p, r, dpi: draw_order_label(p, r, dpi, label, show_items))]
+        if document.format == "order_page":  # la página del pedido: carta si la impresora no dice otro papel
+            detail = page_detail(document.order or {})
+            store, basic = self._store_name(), bool((document.order or {}).get("_basic"))
+            return [VectorSource(profile.media_mm() or LETTER_MM,
+                                 lambda p, r, dpi: draw_order_page(p, r, dpi, detail, store, basic=basic))]
         raise PermanentPrintError(tr("Formato no soportado para esta impresora: {0}", document.format))
+
+    def _store_name(self) -> str:
+        """El nombre de la tienda para la página del pedido: el de Ajustes → Etiqueta o, si no, el de la tienda."""
+        name = self.cfg.data.labels.store_name.strip()
+        if name:
+            return name
+        shop = (self._shop_domain_fn() or "").replace("https://", "").split(".")[0]
+        return shop.upper()
 
     def order_zpl(self, order: dict[str, Any], profile: PrinterProfile, copies: int) -> bytes:
         label = normalize_order(order, self.cfg.data.labels, self._shop_domain_fn())
@@ -436,3 +450,8 @@ class PrintEngine:
         detail = self.deliver(document, profile, 1, tr("Prueba LabelBridge"))
         self.store.kv_set("guide:test_printed", "1")
         return detail
+
+    def print_test_page(self, profile: PrinterProfile) -> str:
+        """La página del pedido de ejemplo, directo por esa impresora (sin pasar por la cola)."""
+        return self.deliver(Document("order_page", order=sample_page_order()), profile, 1,
+                            tr("Prueba de página del pedido"))

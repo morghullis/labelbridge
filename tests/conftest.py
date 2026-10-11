@@ -74,6 +74,7 @@ def core(qapp, home):
     cfg.data.general.auto_update_check = False
     cfg.data.general.terms_accepted = 99  # ya aceptados (las pruebas de la aceptación los ponen en 0)
     cfg.data.assistant.ai_notice_accepted = 99
+    cfg.data.shopify.print_order_page = False  # la página del pedido solo en sus pruebas (test_order_page.py)
     cfg.save()
     store = JobStore(paths.db_path(), paths.spool_dir())
     events = Events()

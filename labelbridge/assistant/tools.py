@@ -349,6 +349,9 @@ class Toolbox:
             "max_labels_per_day": s.max_labels_per_day,
             "print_order_label": s.print_order_label,
             "order_label_printer": s.order_label_printer or "(predeterminada)",
+            # La página del pedido (como «Imprimir página de pedido» de Shopify), con todos los pedidos nuevos pagados.
+            "print_order_page": s.print_order_page,
+            "order_page_printer": routing.page_printer(self.ctx.cfg) or "(sin elegir: no se imprime)",
         }
         clash = self._order_label_clash()
         if clash:

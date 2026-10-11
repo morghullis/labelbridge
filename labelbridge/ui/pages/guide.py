@@ -537,6 +537,10 @@ class GuidePage(Page):
         self.ctx = ctx
         self.navigate = navigate
         self._current_key: str | None = None
+        quick = button(tr("Asistente de inicio"), "sparkle", "primary",
+                       tr("Lo esencial en pocos pasos: tu objetivo, las impresoras, la tienda y qué hacer con cada pedido"))
+        quick.clicked.connect(lambda: navigate("setup"))
+        self.header_actions.addWidget(quick)
 
         summary = Card()
         row = QHBoxLayout()

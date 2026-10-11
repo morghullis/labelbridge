@@ -17,6 +17,7 @@ import logging
 import re
 import threading
 import time
+import uuid
 from collections import deque
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
@@ -28,13 +29,22 @@ from ..config import ConfigManager, ShopifySettings
 from ..i18n import N_, language, tr
 from ..jobstore import JobStore
 from ..models import JobRequest
+from ..printing import routing
 from ..printing.engine import PrintEngine
 from ..secret_store import SHOPIFY_ACCESS_TOKEN, SHOPIFY_CLIENT_SECRET, SecretStore
 from ..security.policy import PolicyDenied
 from . import packaging as pk
 from .base import BackgroundService
 from .shipping_services import AUTO, FEDEX, Route, by_key, is_domestic, offered_services, selection
-from .shopify_orders import MANUAL_TAG, ManualItem, ManualOrders, OrderDetail, ProductChoice, Recipient
+from .shopify_orders import (
+    MANUAL_TAG,
+    ManualItem,
+    ManualOrders,
+    OrderDetail,
+    ProductChoice,
+    Recipient,
+    attach_photos,
+)
 from .store_report import (
     HISTORY_WEEKS,
     REPORT_QUERY,
@@ -310,6 +320,20 @@ def admin_url(shop: str, path: str = "") -> str:
 
 
 package_input = pk.custom_input  # un empaque propio como paquete de Shopify Shipping (customPackage)
+
+
+PAGE_MAX_AGE = 48 * 3600  # la página no se imprime para pedidos de más de dos días (p. ej. uno viejo que se modificó)
+
+
+def page_problem_text(problem: str) -> str:
+    """Por qué no sale la página del pedido, para la persona (routing.page_problem)."""
+    return {
+        "unset": tr("Elige la impresora de la página del pedido en Shopify → Por dónde sale cada cosa."),
+        "shipping": tr("La página del pedido saldría por la impresora de las guías: elige otra en Shopify → Por dónde "
+                       "sale cada cosa."),
+        "label": tr("La página del pedido es una hoja carta y esa impresora es de etiquetas: elige una de hojas en "
+                    "Shopify → Por dónde sale cada cosa."),
+    }.get(problem, problem)
 
 
 def _domestic(order: dict) -> bool:
@@ -718,7 +742,8 @@ class ShopifyService(BackgroundService):
     def _on_event(self, kind: str, data: Any) -> None:
         if kind != ev.JOB or not isinstance(data, dict):
             return
-        if data.get("source") == "shopify" and data.get("status") == "done" and self.cfg.data.shopify.tag_after_print:
+        if (data.get("source") == "shopify" and data.get("status") == "done" and data.get("format") != "order_page"
+                and self.cfg.data.shopify.tag_after_print):  # la página no es la etiqueta: no marca el pedido
             gid = (data.get("meta") or {}).get("order_gid")
             if gid:
                 self._tag_queue.append(gid)
@@ -879,10 +904,6 @@ class ShopifyService(BackgroundService):
             if self.ledger(legacy).get("state") in ACTION_STATES:
                 self._note(legacy, "resolved", name=name)  # cancelado: ya no hace falta la guía
             return 0
-        if shipping_problem(order):
-            # Sin envío o sin a quién y adónde mandarlo (retiro en tienda, venta en el local, un pedido de otro canal
-            # sin dirección…): LabelBridge no lo trata (ni aviso, ni etiquetas, ni guía).
-            return 0
         tags = [t.lower() for t in order.get("tags") or []]
         if s.required_tag.strip() and s.required_tag.strip().lower() not in tags:
             return 0
@@ -893,6 +914,13 @@ class ShopifyService(BackgroundService):
         open_ok = not s.only_unfulfilled or order.get("displayFulfillmentStatus") in OPEN_FULFILLMENT
         is_new = _iso_to_ts(order.get("createdAt", "")) >= since
         meta = {"order_gid": order.get("id"), "order_name": name, "order_id": legacy}
+        # La página del pedido sale con todos los pedidos nuevos pagados, también los que no llevan guía. Va después de
+        # la guía (y si falla, no frena nada): la compra nunca espera a la página.
+        page_due = is_new and paid_ok and not manual
+        if shipping_problem(order):
+            # Sin envío o sin a quién y adónde mandarlo (retiro en tienda, venta en el local, un pedido de otro canal
+            # sin dirección…): ni aviso, ni etiqueta del pedido, ni guía; solo su página.
+            return self._safe_page(client, s, order, meta) if page_due else 0
         queued = 0
         announced = self._key(f"order:{legacy}:announced")
         fresh = _iso_to_ts(order.get("createdAt", "")) >= self._announce_since()
@@ -986,6 +1014,8 @@ class ShopifyService(BackgroundService):
                 pass  # alguien eligió comprarla en Shopify, o Flow la está comprando: la compra automática no la toca
             else:
                 queued += self._buy_labels(client, s, order, meta, stop)
+        if page_due:
+            queued += self._safe_page(client, s, order, meta)
         return queued
 
     def overview(self, days: int = 30, now: float | None = None) -> list[OrderRow]:
@@ -1319,6 +1349,101 @@ class ShopifyService(BackgroundService):
                meta["order_name"], reason),
             "error", kind="action",
         )
+
+    def _safe_page(self, client: ShopifyClient, s: ShopifySettings, order: dict, meta: dict) -> int:
+        """La página del pedido sin que nada de ella pueda frenar el ciclo (la compra de guías, las impresiones)."""
+        try:
+            return self._print_order_page(client, s, order, meta)
+        except Exception as exc:  # noqa: BLE001  se anota, se avisa y no se reintenta en cada vuelta
+            self.store.mark_seen(self._key(f"order:{meta['order_id']}:page"))
+            errors.report(tr("Página del pedido"), exc,
+                          tr("No se pudo preparar la página de {0}: {1}", meta["order_name"], errors.user_message(exc)))
+            return 0
+
+    def _page_since(self) -> float:
+        """Desde cuándo se imprime la página: los pedidos de antes (al actualizar, al elegir su impresora o al volver a
+        activarla) no se imprimen de golpe."""
+        key = self._key("page_since")
+        value = self.store.kv_get(key)
+        if not value:
+            value = str(time.time() - 300)
+            self.store.kv_set(key, value)
+        return float(value)
+
+    def _print_order_page(self, client: ShopifyClient, s: ShopifySettings, order: dict, meta: dict) -> int:
+        """La página del pedido (como «Imprimir página de pedido» de Shopify), una vez por pedido, por su impresora.
+        Sin impresora elegida, o si es la de las guías o una de etiquetas, no sale y se avisa (una vez)."""
+        since_key = self._key("page_since")
+        if not s.print_order_page:
+            self.store.kv_set(since_key, "")  # al volver a activarla, empieza desde ese momento
+            return 0
+        legacy = meta["order_id"]
+        key = self._key(f"order:{legacy}:page")
+        if self.store.seen(key):
+            return 0
+        if (order.get("displayFulfillmentStatus") or "") == "FULFILLED":
+            return 0  # llegó ya preparado (venta en el local, algo digital): no hay nada que preparar
+        problem = routing.page_problem(self.cfg)
+        if problem:
+            self.store.kv_set(since_key, "")  # al elegir la impresora, empieza desde ese momento
+            self._page_notice(problem, meta["order_name"])
+            return 0
+        created = _iso_to_ts(order.get("createdAt", ""))
+        if created < self._page_since() or created < time.time() - PAGE_MAX_AGE:
+            return 0  # de antes de que la página empezara a imprimirse: no salen de golpe pedidos viejos
+        try:  # con fotos, precios, totales, lo pagado y si se retira en la tienda
+            page = ManualOrders(client).page_order(str(order.get("id") or ""))
+        except (ShopifyError, net.NetworkError, net.HttpError) as exc:
+            log.warning("Shopify: la página de %s sale con lo básico (%s)", meta["order_name"], exc)
+            page = {**order, "_basic": True}  # sin precios: la hoja lo dice y no muestra montos en cero
+        else:
+            attach_photos(page)
+        self.store.mark_seen(key)
+        return self._enqueue(JobRequest(
+            external_id=f"pagina-{legacy}",
+            title=tr("Página del pedido {0}", meta["order_name"]),
+            printer=routing.page_printer(self.cfg),
+            format="order_page",
+            order=page,
+            meta=meta,
+        ))
+
+    def _page_notice(self, problem: str, name: str) -> None:
+        """Una vez (hasta que cambie el motivo): la página no sale y por qué."""
+        key = self._key("page-notice")
+        if self.store.kv_get(key) == problem:
+            return
+        self.store.kv_set(key, problem)
+        log.warning("Shopify: la página de %s no se imprimió (%s)", name, problem)
+        if problem == "shipping":
+            text = tr("No se imprimió la página de {0}: saldría por la impresora de las guías. Elige otra en Shopify → "
+                      "Por dónde sale cada cosa.", name)
+        elif problem == "label":
+            text = tr("No se imprimió la página de {0}: su impresora es de etiquetas y la página es una hoja carta. "
+                      "Elige una de hojas en Shopify → Por dónde sale cada cosa.", name)
+        else:
+            text = tr("No se imprimió la página de {0}: elige su impresora en Shopify → Por dónde sale cada cosa (nunca "
+                      "sale a ciegas por la predeterminada).", name)
+        self.events.notify(tr("Página del pedido sin impresora"), text, "error", kind="action")
+
+    def print_order_page(self, legacy: str, name: str) -> int:
+        """«Imprimir página del pedido» desde Pedidos: otra copia, cuando la persona la pide."""
+        problem = routing.page_problem(self.cfg, on=True)
+        if problem:
+            raise ShopifyError(page_problem_text(problem))
+        page = ManualOrders(self.client()).page_order(self.order_gid(legacy))
+        attach_photos(page)
+        queued = self._enqueue(JobRequest(
+            external_id=f"pagina-{legacy}-{uuid.uuid4().hex[:10]}",  # cada copia pedida, un trabajo nuevo
+            title=tr("Página del pedido {0}", name),
+            printer=routing.page_printer(self.cfg),
+            format="order_page",
+            order=page,
+            meta={"order_gid": page.get("id"), "order_name": name, "order_id": str(legacy)},
+        ))
+        if queued:
+            self.engine.wake()
+        return queued
 
     def _announce_since(self) -> float:
         """Desde cuándo se avisa de pedidos nuevos: desde que esta versión empezó a avisar (al actualizar, los

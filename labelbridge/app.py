@@ -475,7 +475,12 @@ def _run(app, argv: list[str], hints: dict, instance) -> int:
     wants_hidden = "--minimized" in argv or cfg.data.general.start_minimized
     if "--show" in argv or "--updated" in argv or not guide_complete(ctx) or not wants_hidden or connect_store:
         window.show()
-    if connect_store:  # recién instalada con la tienda: directo a conectarla (y probarla, si vino la clave)
+    from .ui.setup_wizard import should_open as setup_pending
+
+    if setup_pending(ctx):  # la primera vez: el asistente de inicio (con la tienda del instalador ya escrita)
+        window.show()
+        QTimer.singleShot(700, window.open_setup)
+    elif connect_store:  # recién instalada con la tienda: directo a conectarla (y probarla, si vino la clave)
         QTimer.singleShot(700, lambda: window.connect_store(test=auto_connect))
     not_installed = failed_update(store.kv_get)
     if not_installed is not None:

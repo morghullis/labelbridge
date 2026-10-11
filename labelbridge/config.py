@@ -100,6 +100,7 @@ class GeneralSettings:
     paused: bool = False
     auto_discover: bool = True
     guide_acknowledged: str = ""  # pasos informativos de la guía marcados como «Entendido»
+    setup_done: bool = False  # el asistente de inicio ya se mostró (no vuelve a abrirse solo)
     auto_update_check: bool = True
     auto_install_updates: bool = True  # «Actualizar sola»: se instala cuando no está imprimiendo ni comprando
     keep_awake: bool = True  # el equipo no se duerme solo mientras LabelBridge está abierto (la pantalla sí)
@@ -236,6 +237,11 @@ class ShopifySettings:
     # La etiqueta de pedido de LabelBridge es opcional y no lleva franqueo.
     print_order_label: bool = False
     order_label_printer: str = ""  # alias; vacío = predeterminada
+    # La página del pedido (como «Imprimir página de pedido» de Shopify), en hoja carta, con cada pedido nuevo pagado:
+    # también los que no llevan guía (retiro en tienda, venta en el local). Solo sale por una impresora elegida aquí
+    # (nunca por la predeterminada a ciegas) y nunca por la de las guías.
+    print_order_page: bool = True
+    order_page_printer: str = ""
     buy_shipping_label: bool = False
     shipping_label_printer: str = ""
     label_size: str = "4x6"  # LABEL_SIZES: la guía sale a 4×6 in aunque la impresora tenga hojas carta o A4

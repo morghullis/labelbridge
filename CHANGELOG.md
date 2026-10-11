@@ -2,6 +2,14 @@
 
 Cada versión publicada muestra estas notas en la ventana de actualización de la app y en la página de descargas.
 
+## 1.21.0
+
+- **Asistente de inicio para quien recién instala LabelBridge.** La primera vez pregunta qué quieres que haga (comprar e imprimir guías de Shopify, solo imprimir los pedidos o imprimir lo que mande n8n o tu web) y muestra solo los pasos que hacen falta: las impresoras (detecta las instaladas y propone cuál es de etiquetas y cuál de hojas, con «Imprimir prueba»), la tienda («Conectar y probar»), qué hacer con cada pedido y que trabaje solo. Al terminar, **«Seguir con el asistente»** deja que la IA configure lo demás contigo, poco a poco. Se vuelve a abrir desde la **Guía**.
+- **Página del pedido, como «Imprimir página de pedido» de Shopify.** Con cada pedido nuevo pagado sale una hoja carta con el pedido y su estado, el cliente, cómo se entrega (envío o **retiro en tienda** y dónde), los productos con su **foto** y su precio, los totales, lo pagado y las notas, más un código de barras del pedido.
+- **También con los pedidos que no llevan guía**, como los de retiro en tienda: no se compra guía (no hace falta), pero su página sí se imprime.
+- **Sale por la impresora que elijas** en Shopify → **Por dónde sale cada cosa** (si ya tenías una para la etiqueta del pedido, usa esa). Nunca por la de las guías, y nunca a ciegas por la predeterminada: si falta elegirla, LabelBridge te lo avisa.
+- Otra copia cuando quieras: clic derecho en un pedido → **Imprimir página del pedido**. Se apaga en Shopify → **Página del pedido**.
+
 ## 1.20.0
 
 - **Guías que sirven para cualquier empaque, sin configurar nada.** Antes Shopify elegía el servicio, casi siempre Ground Advantage, y USPS no lo acepta en su empaque oficial. Ahora las guías de USPS se compran con **Priority Mail**, que vale en el sobre blanco, la bolsa de nailon, tus cajas y las cajas o sobres Priority de USPS. Priority Mail cuesta más que Ground Advantage; si prefieres otro servicio para algunos pedidos, cámbialo en **Reglas de paquetería**. Los pedidos a otro país siguen con el servicio que elija Shopify.

@@ -55,7 +55,8 @@ log = logging.getLogger(__name__)
 
 COLUMNS = [N_("Fecha"), N_("Trabajo"), N_("Origen"), N_("Impresora"), N_("Formato"), N_("Estado"), N_("Intentos"),
            N_("Detalle")]
-FORMAT_LABELS = {"pdf": "PDF", "image": N_("Imagen"), "zpl": "ZPL", "raw": "RAW", "order": N_("Etiqueta pedido"), "auto": "—"}
+FORMAT_LABELS = {"pdf": "PDF", "image": N_("Imagen"), "zpl": "ZPL", "raw": "RAW", "order": N_("Etiqueta pedido"),
+                 "order_page": N_("Página del pedido"), "auto": "—"}
 
 
 class JobsModel(QAbstractTableModel):

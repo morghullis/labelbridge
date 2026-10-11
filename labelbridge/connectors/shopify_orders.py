@@ -14,12 +14,17 @@ Las consultas y lo que no depende de la pantalla viven aquí para poder probarlo
 
 from __future__ import annotations
 
+import base64
+import binascii
+import logging
 import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
 
 from ..i18n import N_, tr
+
+log = logging.getLogger(__name__)
 
 MANUAL_TAG = "LabelBridge-manual"
 NOTE_MARK = "— Instrucciones (LabelBridge) —"
@@ -62,6 +67,75 @@ CUSTOMER_FIELDS = "    email\n    customer { numberOfOrders amountSpent { amount
 ORDER_DETAIL_QUERY_CUSTOMER = ORDER_DETAIL_QUERY.replace("    note tags\n", "    note tags\n" + CUSTOMER_FIELDS)
 DETAIL_QUERIES = (ORDER_DETAIL_QUERY_CUSTOMER, ORDER_DETAIL_QUERY, ORDER_DETAIL_QUERY_BASIC)
 PROTECTED_FIELDS = ("email", "customer")  # datos protegidos: si Shopify no los aprobó, llegan vacíos
+
+# «Página del pedido» (la que se imprime con cada pedido, como «Imprimir página de pedido» de Shopify): lo de «Ver
+# pedido» más a nombre de quién (la dirección de facturación, para los retiros en tienda), lo pagado y lo pendiente, y
+# si se retira en la tienda (y en cuál).
+PAGE_FIELDS = ("    billingAddress { name phone }\n"
+               "    totalReceivedSet { shopMoney { amount } }\n"
+               "    totalOutstandingSet { shopMoney { amount } }\n")
+PAGE_DELIVERY = "    fulfillmentOrders(first: 5) { nodes { deliveryMethod { methodType } assignedLocation { name } } }\n"
+
+
+def _page_query(detail: str, extra: str) -> str:
+    """La consulta de «Ver pedido» con lo de la página (las fotos de los productos, chicas, como en la de Shopify)."""
+    # En JPG: las fotos subidas desde un iPhone son HEIC, que la impresión no sabe leer.
+    return (detail.replace("query LabelBridgeOrderDetail", "query LabelBridgeOrderPage")
+            .replace("    note tags\n", "    note tags\n" + extra)
+            .replace("image { url(transform: {maxWidth: 160, maxHeight: 160}) }",
+                     "image { url(transform: {maxWidth: 300, maxHeight: 300, preferredContentType: JPG}) }"))
+
+
+PHOTO_HOSTS = ("cdn.shopify.com",)  # las fotos de los productos solo se descargan de la CDN de Shopify
+MAX_PHOTOS = 8  # las que caben en la hoja
+MAX_PHOTO_BYTES = 300_000
+PHOTO_SECONDS = 8.0  # entre todas: la página nunca hace esperar al ciclo
+
+
+def photo_guard(url: str) -> None:
+    """Cada salto (también las redirecciones) solo a la CDN de Shopify, por https."""
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url)
+    if parsed.scheme != "https" or (parsed.hostname or "").lower() not in PHOTO_HOSTS:
+        raise ValueError(f"foto fuera de la CDN de Shopify: {url[:80]}")
+
+
+def attach_photos(order: dict, fetch=None, *, seconds: float = PHOTO_SECONDS) -> int:
+    """Descarga la foto chica de cada producto y la deja en el pedido («photo», en base64): la página se imprime sin
+    salir a internet y la foto queda con el trabajo (cifrada, como todo lo de la cola). Solo las que caben, una vez cada
+    foto, en `seconds` como mucho y sin insistir si la CDN no contesta: sin foto, el producto sale igual. Devuelve
+    cuántas se agregaron."""
+    from .. import net
+
+    fetch = fetch or (lambda url: net.request("GET", url, timeout=min(5.0, seconds), max_bytes=MAX_PHOTO_BYTES,
+                                              url_guard=photo_guard).body)
+    deadline = time.monotonic() + seconds
+    cache: dict[str, str] = {}
+    added = 0
+    for node in ((order.get("lineItems") or {}).get("nodes") or [])[:MAX_PHOTOS]:
+        url = str((node.get("image") or {}).get("url") or "")
+        try:
+            photo_guard(url)
+        except ValueError:
+            continue
+        if url not in cache:
+            if time.monotonic() > deadline:
+                break
+            try:
+                cache[url] = base64.b64encode(fetch(url)).decode("ascii")
+            except Exception as exc:  # noqa: BLE001  sin esa foto (ni las demás: la CDN no contesta) sale igual
+                log.info("Página del pedido sin fotos (%s): %s", url[:120], exc)
+                break
+        node["photo"] = cache[url]
+        added += 1
+    return added
+
+
+ORDER_PAGE_QUERY = _page_query(ORDER_DETAIL_QUERY, PAGE_FIELDS + PAGE_DELIVERY)
+ORDER_PAGE_QUERY_BASIC = _page_query(ORDER_DETAIL_QUERY_BASIC, PAGE_FIELDS)
+PAGE_QUERIES = (ORDER_PAGE_QUERY, ORDER_PAGE_QUERY_BASIC)
+PAGE_PROTECTED = ("billingAddress",) + PROTECTED_FIELDS
 
 ORDER_LOOKUP_QUERY = """
 query LabelBridgeOrderLookup($query: String!) {
@@ -173,6 +247,7 @@ class OrderItem:
     image: str = ""
     properties: list[tuple[str, str]] = field(default_factory=list)  # personalización (grabado, talla…)
     shipping: bool = True
+    photo: bytes = b""  # la foto ya descargada (página del pedido impresa)
 
 
 @dataclass
@@ -204,6 +279,10 @@ class OrderDetail:
     orders_count: int = 0  # pedidos del cliente en la tienda (0: no se sabe)
     customer_since: str = ""  # fecha ISO
     spent: float = 0.0  # lo que lleva gastado en la tienda
+    buyer: str = ""  # a nombre de quién (facturación): los retiros en tienda no tienen dirección de envío
+    pickup: str = ""  # se retira en la tienda: en cuál («» si se envía)
+    paid: float = 0.0  # lo que pagó el cliente
+    due: float = 0.0  # lo que falta pagar
 
     @property
     def manual(self) -> bool:
@@ -237,6 +316,13 @@ class OrderDetail:
         return "\n".join(lines)
 
 
+def _photo(value: Any) -> bytes:
+    try:
+        return base64.b64decode(str(value), validate=True) if value else b""
+    except (binascii.Error, ValueError):
+        return b""
+
+
 def parse_detail(order: dict) -> OrderDetail:
     address = order.get("shippingAddress") or {}
     place = " ".join(part for part in (address.get("city"), address.get("provinceCode") or address.get("province"),
@@ -248,16 +334,18 @@ def parse_detail(order: dict) -> OrderDetail:
     items = []
     for node in ((order.get("lineItems") or {}).get("nodes") or []):
         quantity = node.get("currentQuantity")
+        quantity = node.get("quantity") if quantity is None else quantity
         items.append(OrderItem(
-            title=str(node.get("title") or ""),
+            title=str(node.get("title") or node.get("name") or ""),
             variant=str(node.get("variantTitle") or ""),
             sku=str(node.get("sku") or ""),
-            quantity=int(node.get("quantity") if quantity is None else quantity),
+            quantity=int(quantity or 0),
             price=_money(node.get("originalUnitPriceSet")),
             image=str((node.get("image") or {}).get("url") or ""),
             properties=[(str(a.get("key")), str(a.get("value"))) for a in node.get("customAttributes") or []
-                        if a.get("key") and not str(a.get("key")).startswith("_")],
+                        if a.get("key") and a.get("value") is not None and not str(a.get("key")).startswith("_")],
             shipping=bool(node.get("requiresShipping", True)),
+            photo=_photo(node.get("photo")),
         ))
     customer = order.get("customer") or {}
     try:
@@ -270,6 +358,12 @@ def parse_detail(order: dict) -> OrderDetail:
             if info.get("number"):
                 tracking.append((str(info.get("company") or ""), str(info["number"]), str(info.get("url") or "")))
     total = order.get("totalPriceSet") or {}
+    pickup = ""
+    for node in ((order.get("fulfillmentOrders") or {}).get("nodes") or []):
+        if (node.get("deliveryMethod") or {}).get("methodType") == "PICK_UP":
+            pickup = str((node.get("assignedLocation") or {}).get("name") or "") or tr("la tienda")
+            break
+    billing = order.get("billingAddress") or {}
     return OrderDetail(
         gid=str(order.get("id") or ""),
         legacy=str(order.get("legacyResourceId") or ""),
@@ -280,7 +374,7 @@ def parse_detail(order: dict) -> OrderDetail:
         fulfillment=str(order.get("displayFulfillmentStatus") or ""),
         customer=str(address.get("name") or ""),
         email=str(order.get("email") or ""),
-        phone=str(address.get("phone") or ""),
+        phone=str(address.get("phone") or (order.get("billingAddress") or {}).get("phone") or ""),
         address=lines,
         method=str((order.get("shippingLine") or {}).get("title") or ""),
         customer_note=customer_note,
@@ -299,6 +393,10 @@ def parse_detail(order: dict) -> OrderDetail:
         orders_count=orders_count,
         customer_since=str(customer.get("createdAt") or ""),
         spent=_amount((customer.get("amountSpent") or {}).get("amount")),
+        buyer=str(address.get("name") or billing.get("name") or ""),
+        pickup=pickup,
+        paid=_money(order.get("totalReceivedSet")),
+        due=_money(order.get("totalOutstandingSet")),
     )
 
 
@@ -473,6 +571,16 @@ class ManualOrders:
         if not order:
             raise ShopifyError(tr("Shopify no encontró ese pedido."))
         return parse_detail(order)
+
+    def page_order(self, order_gid: str) -> dict:
+        """El pedido con todo lo que lleva su página impresa (ver PAGE_QUERIES), tal como lo da Shopify."""
+        from .shopify import ShopifyError
+
+        data = self.client.graphql_first(PAGE_QUERIES, {"id": order_gid}, optional=PAGE_PROTECTED)
+        order = (data or {}).get("order")
+        if not order:
+            raise ShopifyError(tr("Shopify no encontró ese pedido."))
+        return order
 
     def products(self, text: str) -> list[ProductChoice]:
         terms = search_terms(text)

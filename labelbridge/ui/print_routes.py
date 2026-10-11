@@ -1,5 +1,6 @@
-"""«Por dónde sale cada cosa» (Shopify): la impresora de la guía, la de la etiqueta del pedido y la de las guías de un
-metafield, una prueba para cada una y un aviso si la etiqueta del pedido sale por la misma impresora que la guía."""
+"""«Por dónde sale cada cosa» (Shopify): la impresora de la guía, la de la etiqueta del pedido, la de la página del
+pedido y la de las guías de un metafield, una prueba para cada una y avisos si la etiqueta o la página del pedido salen
+por la misma impresora que la guía (la página, además, solo sale por una impresora elegida)."""
 
 from __future__ import annotations
 
@@ -17,9 +18,11 @@ from .widgets import Card, button, error, label, run_async
 log = logging.getLogger(__name__)
 
 
-def printer_combo(ctx: AppContext, current: str) -> QComboBox:
-    """Las impresoras de LabelBridge, con la predeterminada por su nombre (así se ve por cuál sale de verdad)."""
+def printer_combo(ctx: AppContext, current: str, choose: bool = False) -> QComboBox:
+    """Las impresoras de LabelBridge, con la predeterminada por su nombre (así se ve por cuál sale de verdad).
+    `choose`: sin «Predeterminada» (la página del pedido sale solo por una impresora elegida)."""
     combo = QComboBox()
+    combo.setProperty("choose", choose)
     fill_printers(combo, ctx, current)
     return combo
 
@@ -28,8 +31,11 @@ def fill_printers(combo: QComboBox, ctx: AppContext, current: str) -> None:
     default = ctx.cfg.default_printer()
     combo.blockSignals(True)
     combo.clear()
-    combo.addItem(tr("Predeterminada ({0})", default.display_name()) if default
-                  else tr("Predeterminada (no hay ninguna)"), "")
+    if combo.property("choose"):
+        combo.addItem(tr("Elige una impresora…"), "")
+    else:
+        combo.addItem(tr("Predeterminada ({0})", default.display_name()) if default
+                      else tr("Predeterminada (no hay ninguna)"), "")
     for profile in ctx.cfg.data.printers:
         combo.addItem(profile.alias, profile.alias)
     if current and combo.findData(current) < 0:  # un alias que ya no está en la lista: se muestra tal cual
@@ -49,6 +55,7 @@ class PrintRoutesCard(Card):
         )
         self.ctx = ctx
         self.order_label_on = ctx.cfg.data.shopify.print_order_label
+        self.page_on = ctx.cfg.data.shopify.print_order_page
         self.combos: dict[str, QComboBox] = {}
         self.tests = {}
         grid = QGridLayout()
@@ -56,7 +63,7 @@ class PrintRoutesCard(Card):
         grid.setVerticalSpacing(10)
         for row, route in enumerate(routing.routes(ctx.cfg)):
             grid.addWidget(label(tr(route.title)), row, 0)
-            combo = printer_combo(ctx, route.alias)
+            combo = printer_combo(ctx, route.alias, choose=route.key == routing.PAGE)
             combo.currentIndexChanged.connect(lambda _i: self.update_notes())
             grid.addWidget(combo, row, 1)
             test = button(tr("Imprimir prueba"), "printer", tooltip=tr("Imprime la etiqueta de ejemplo por esta impresora"))
@@ -71,6 +78,9 @@ class PrintRoutesCard(Card):
         self.clash = label("", "Warning", wrap=True)
         self.clash.setVisible(False)
         self.add(self.clash)
+        self.page_note = label("", "Warning", wrap=True)  # la página del pedido sin impresora o por la de las guías
+        self.page_note.setVisible(False)
+        self.add(self.page_note)
         self.add_printer = button(tr("Agregar impresora"), "plus")
         self.add_printer.setVisible(False)
         if navigate is not None:
@@ -95,11 +105,16 @@ class PrintRoutesCard(Card):
         self.order_label_on = on
         self.update_notes()
 
+    def set_page_active(self, on: bool) -> None:
+        self.page_on = on
+        self.update_notes()
+
     def load(self) -> None:
         """Lo guardado (después de que el asistente cambió la configuración) y la lista de impresoras al día."""
         for route in routing.routes(self.ctx.cfg):
             fill_printers(self.combos[route.key], self.ctx, route.alias)
         self.order_label_on = self.ctx.cfg.data.shopify.print_order_label
+        self.page_on = self.ctx.cfg.data.shopify.print_order_page
         self.update_notes()
 
     def reload_printers(self) -> None:
@@ -129,17 +144,41 @@ class PrintRoutesCard(Card):
             self.unknown.setText(tr("«{0}» no está en Impresoras (o está desactivada): LabelBridge la buscará entre "
                                     "las instaladas en el equipo al imprimir.", "», «".join(missing)))
         self.unknown.setVisible(bool(missing))
+        # La página del pedido, con lo que está elegido en pantalla (la guía, también la de pantalla).
+        page_alias = self.alias(routing.PAGE)
+        page = ""
+        profile = routing.printer_for(page_alias, cfg) if page_alias else None
+        if self.page_on and not page_alias:
+            page = tr("Elige la impresora de la página del pedido: no sale por la predeterminada a ciegas.")
+        elif self.page_on and routing.shared_printer(page_alias, self.alias(routing.SHIPPING), cfg) is not None:
+            page = tr("La página del pedido saldría por la impresora de las guías y no se imprime: elige otra.")
+        elif self.page_on and profile is not None and routing.label_like(profile):
+            page = tr("Esa impresora es de etiquetas y la página del pedido es una hoja carta: elige una de hojas.")
+        self.page_note.setText(page)
+        self.page_note.setVisible(bool(page))
 
     # --- prueba ---------------------------------------------------------------------------------------
     def test(self, key: str) -> None:
         """La etiqueta de ejemplo, directo por la impresora de esa fila (sin pasar por la cola ni la pausa)."""
         alias = self.alias(key)
+        if key == routing.PAGE:  # la página: nunca a ciegas, ni por la de las guías, ni por una de etiquetas
+            from ..connectors.shopify import page_problem_text
+
+            problem = routing.page_problem(self.ctx.cfg, alias=alias, on=True)
+            if not problem and routing.shared_printer(alias, self.alias(routing.SHIPPING), self.ctx.cfg) is not None:
+                problem = "shipping"  # también contra la de la guía elegida en pantalla (sin guardar todavía)
+            if problem:
+                error(self, tr("Imprimir prueba"), page_problem_text(problem))
+                return
         button_ = self.tests[key]
         button_.setEnabled(False)
 
         def work() -> str:
             profile = resolve_printer(alias, self.ctx.cfg)
-            self.ctx.engine.print_test(profile)
+            if key == routing.PAGE:
+                self.ctx.engine.print_test_page(profile)
+            else:
+                self.ctx.engine.print_test(profile)
             return profile.display_name()
 
         def done(name: str) -> None:
