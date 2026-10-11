@@ -2222,5 +2222,9 @@
  "Entrega": "Delivery",
  "Datos básicos: Shopify no dio los precios a tiempo. Míralos en el pedido en Shopify.": "Basic data: Shopify didn't return the prices in time. See them in the order in Shopify.",
  "Esa impresora es de etiquetas y la página del pedido es una hoja carta: elige una de hojas.": "That printer is a label printer and the order page is a letter sheet: choose a sheet printer.",
- "Esa impresora es de etiquetas y la página del pedido es una hoja carta: elige una de hojas, o «Ninguna».": "That printer is a label printer and the order page is a letter sheet: choose a sheet printer, or “None”."
+ "Esa impresora es de etiquetas y la página del pedido es una hoja carta: elige una de hojas, o «Ninguna».": "That printer is a label printer and the order page is a letter sheet: choose a sheet printer, or “None”.",
+ "Pulsa «Conectar y probar» para comprobar la tienda (nada se guarda sin probarlo), o borra los datos para hacerlo después.": "Click “Connect and test” to check the store (nothing is saved without testing it), or clear the fields to do it later.",
+ "✓ Tu tienda {0} ya está conectada.": "✓ Your store {0} is already connected.",
+ "✓ Conectado a «{0}», pero la tienda está apagada en LabelBridge: actívala en Shopify → Conexión.": "✓ Connected to “{0}”, but the store is turned off in LabelBridge: turn it on in Shopify → Connection.",
+ "«{0}» parece una impresora de gran formato o virtual. ¿Imprimir igual una hoja de prueba ahí?": "“{0}” looks like a large-format or virtual printer. Print a test sheet there anyway?"
 }

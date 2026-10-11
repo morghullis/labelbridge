@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import re
 import sys
+from html import escape
 from dataclasses import dataclass
 from typing import Callable
 
@@ -34,6 +35,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..config import PrinterProfile
+from ..events import CONFIG_EXTERNAL
 from ..connectors.shopify import DEV_DASHBOARD_URL, SCOPES_LABELS, ShopifyError, normalize_shop
 from ..i18n import N_, tr
 from ..printing import routing
@@ -41,7 +43,17 @@ from ..printing.hints import looks_like_label_printer, looks_like_zpl, suggest_a
 from ..secret_store import SHOPIFY_CLIENT_SECRET, SecretStoreError
 from ..system.platform import pick
 from .context import AppContext
-from .widgets import SecretField, SwitchRow, button, copy_to_clipboard, error, label, run_async, window_closed
+from .widgets import (
+    SecretField,
+    SwitchRow,
+    button,
+    confirm,
+    copy_to_clipboard,
+    error,
+    label,
+    run_async,
+    window_closed,
+)
 
 log = logging.getLogger(__name__)
 
@@ -54,8 +66,10 @@ GOALS = (
     (N8N, N_("Imprimir lo que me mandan n8n, mi web u otro sistema"),
      N_("LabelBridge recibe etiquetas listas (PDF o ZPL) y las imprime. Para quien ya tiene esa automatización.")),
 )
-# Impresoras que nunca se eligen solas para la página del pedido: virtuales y de gran formato (un plotter).
-NOT_FOR_PAGES = re.compile(r"pdf|xps|onenote|fax|imageprograf|designjet|plotter|pro-?\d{3,4}|send to", re.I)
+# Impresoras que nunca se eligen solas para la página del pedido: virtuales y de gran formato (plotters como la
+# Canon imagePROGRAF PRO/TM, la HP DesignJet o la Epson SureColor T). Se mira el nombre, el modelo y el driver.
+NOT_FOR_PAGES = re.compile(r"pdf|xps|onenote|fax|send to|imageprograf|designjet|plotter|surecolor|large format|"
+                           r"\bpro-?\d{3,4}\b|\btm-?\d{3}\b|\bsc-?[tp]\d{3,5}\b|\bt\d{4}\b", re.I)
 NONE = ""  # «Ninguna por ahora»
 
 
@@ -68,20 +82,33 @@ class Choice:
     label_like: bool
     alias: str = ""
     system_name: str = ""
+    big: bool = False  # virtual o de gran formato: nunca se propone para la hoja (y se pregunta antes de probarla)
 
 
 def printer_choices(ctx: AppContext, system: list[dict]) -> list[Choice]:
     """Las de LabelBridge primero y después las instaladas en el equipo que todavía no están."""
-    out = [Choice(f"lb:{p.alias}", p.display_name(), p.language == "zpl" or p.media in ("4x6", "4x4", "2x1")
-                  or looks_like_label_printer(f"{p.alias} {p.system_name}"), alias=p.alias)
-           for p in ctx.cfg.data.printers if p.enabled]
-    known = {p.system_name.casefold() for p in ctx.cfg.data.printers if p.system_name}
-    for info in system:
-        name = str(info.get("name") or "")
-        if not name or name.casefold() in known:
+    installed = {str(info.get("name") or "").casefold(): info for info in system}
+
+    def described(name: str) -> str:
+        info = installed.get(name.casefold(), {})
+        return f"{name} {info.get('model') or ''} {info.get('driver') or ''}"
+
+    out = []
+    for p in ctx.cfg.data.printers:
+        if not p.enabled:
             continue
-        text = f"{name} {info.get('model') or ''} {info.get('driver') or ''}"
-        out.append(Choice(f"sys:{name}", name, looks_like_label_printer(text), system_name=name))
+        text = f"{p.alias} {described(p.system_name) if p.system_name else ''}"
+        out.append(Choice(f"lb:{p.alias}", p.display_name(),
+                          routing.label_like(p) or looks_like_label_printer(text), alias=p.alias,
+                          system_name=p.system_name, big=bool(NOT_FOR_PAGES.search(text))))
+    known = {p.system_name.casefold() for p in ctx.cfg.data.printers if p.system_name}
+    for name_key, info in installed.items():
+        name = str(info.get("name") or "")
+        if not name or name_key in known:
+            continue
+        text = described(name)
+        out.append(Choice(f"sys:{name}", name, looks_like_label_printer(text), system_name=name,
+                          big=bool(NOT_FOR_PAGES.search(text))))
     return out
 
 
@@ -92,7 +119,7 @@ def pick_label_printer(choices: list[Choice]) -> str:
 def pick_page_printer(choices: list[Choice], default_name: str = "") -> str:
     """Para la hoja: la predeterminada del equipo si es de hojas, si no la primera de hojas. Nunca una virtual o un
     plotter (la persona puede elegirla igual)."""
-    sheets = [c for c in choices if not c.label_like and not NOT_FOR_PAGES.search(c.title)]
+    sheets = [c for c in choices if not c.label_like and not c.big]
     preferred = next((c for c in sheets if c.system_name and c.system_name == default_name), None)
     return (preferred or (sheets[0] if sheets else None)).key if (preferred or sheets) else NONE
 
@@ -204,7 +231,7 @@ class SetupWizard(QDialog):
         g = self.ctx.cfg.data.general
         if not g.setup_done:
             g.setup_done = True  # no vuelve a abrirse solo; se abre otra vez desde la Guía
-            self.ctx.cfg.save("general")
+            self._save("general")
         super().done(result)
 
     # --- 1. objetivo ----------------------------------------------------------------------------------
@@ -326,7 +353,7 @@ class SetupWizard(QDialog):
             media="4x6" if choice.label_like else "auto", dpi=300 if "300" in text else 203,
         )
         self.ctx.cfg.data.printers.append(profile)
-        self.ctx.cfg.save("printers")
+        self._save("printers")
         log.info("Asistente de inicio: impresora %s agregada (%s)", profile.alias, profile.system_name)
         # Desde ahora es de LabelBridge: la lista la muestra por su alias.
         choice.key, choice.alias = f"lb:{profile.alias}", profile.alias
@@ -341,6 +368,16 @@ class SetupWizard(QDialog):
         return profile
 
     def _test_printer(self, kind: str) -> None:
+        if kind == "page":  # la hoja: nunca por una de etiquetas; un plotter, solo si se confirma
+            choice = self._choice(str(self.page_combo.currentData() or ""))
+            problem = self._page_choice_problem(choice)
+            if problem:
+                error(self, tr("Imprimir prueba"), problem)
+                return
+            if choice is not None and choice.big and not confirm(self, tr("Imprimir prueba"), tr(
+                    "«{0}» parece una impresora de gran formato o virtual. ¿Imprimir igual una hoja de prueba ahí?",
+                    choice.title)):
+                return
         profile = self._selected_profile(kind)
         if profile is None:
             error(self, tr("Imprimir prueba"), tr("Primero elige la impresora."))
@@ -373,23 +410,39 @@ class SetupWizard(QDialog):
 
         run_async(work, finished, failed, what=tr("Imprimir prueba"))
 
+    def _page_choice_problem(self, choice: Choice | None) -> str:
+        label_choice = self._choice(str(self.label_combo.currentData() or ""))
+        if choice is None:
+            return ""
+        if label_choice is not None and choice.key == label_choice.key:
+            return tr("La página del pedido va en hoja: elige otra impresora que la de las guías, o «Ninguna».")
+        if choice.label_like:
+            return tr("Esa impresora es de etiquetas y la página del pedido es una hoja carta: elige una de hojas, o "
+                      "«Ninguna».")
+        return ""
+
     def _apply_printers(self) -> str:
+        problem = self._page_choice_problem(self._choice(str(self.page_combo.currentData() or "")))
+        if problem:
+            return problem
         labels = self._selected_profile("label")
         page = self._selected_profile("page")
-        if labels is not None and page is not None and labels.id == page.id:
-            return tr("La página del pedido va en hoja: elige otra impresora que la de las guías, o «Ninguna».")
         if page is not None and routing.label_like(page):
             return tr("Esa impresora es de etiquetas y la página del pedido es una hoja carta: elige una de hojas, o "
                       "«Ninguna».")
         s, g = self.ctx.cfg.data.shopify, self.ctx.cfg.data.general
         if labels is not None:
             s.shipping_label_printer = labels.alias
-            g.default_printer_id = labels.id  # lo que llegue sin impresora (n8n, la API) sale por la de etiquetas
+            if self.ctx.cfg.printer_by_id(g.default_printer_id) is None:
+                g.default_printer_id = labels.id  # sin predeterminada: lo que llegue sin impresora va a la de etiquetas
         if page is not None:
+            if page.alias != s.order_page_printer:  # una hoja recién elegida: se quiere la página (si no, como estaba)
+                s.print_order_page = True
             s.order_page_printer = page.alias
-        s.print_order_page = page is not None
-        self.ctx.cfg.save("general")
-        self.ctx.cfg.save("shopify_package")  # solo impresoras: no hace falta reiniciar la conexión con Shopify
+        else:
+            s.print_order_page = False  # sin hoja: no hay página (elegirla después la vuelve a activar)
+        self._save("general")
+        self._save("shopify_package")  # solo impresoras: no hace falta reiniciar la conexión con Shopify
         self._mark("printers")
         return ""
 
@@ -421,7 +474,7 @@ class SetupWizard(QDialog):
         self.shop_edit.setPlaceholderText("tu-tienda.myshopify.com")
         self.client_id_edit = QLineEdit(s.client_id)
         self.client_id_edit.setPlaceholderText(tr("Client ID de la app"))
-        self.secret_edit = SecretField(tr("Client secret de la app"))
+        self.secret_edit = SecretField(tr("Client secret de la app"), copyable=False)
         self.secret_edit.setText(self.ctx.secrets.get(SHOPIFY_CLIENT_SECRET))
         for row, (text, widget) in enumerate(((tr("Tienda"), self.shop_edit), (tr("Client ID"), self.client_id_edit),
                                               (tr("Client secret"), self.secret_edit))):
@@ -441,35 +494,69 @@ class SetupWizard(QDialog):
         column.addStretch(1)
         return page
 
-    def _save_store(self) -> str:
+    def _store_unchanged(self) -> bool:
+        """La tienda ya conectada y nada cambiado en los campos (también con token, que aquí no se muestra)."""
         s = self.ctx.cfg.data.shopify
+        if not s.enabled or not s.shop:
+            return False
+        if s.auth_mode == "token":
+            return self.shop_edit.text().strip() in ("", s.shop)
+        return (self.shop_edit.text().strip() == s.shop and self.client_id_edit.text().strip() == s.client_id
+                and self.secret_edit.text() == self.ctx.secrets.get(SHOPIFY_CLIENT_SECRET))
+
+    def _check_store(self) -> tuple[str, str, str]:
+        """(problema, tienda, client id) de lo escrito, sin guardar nada."""
         shop = self.shop_edit.text().strip()
         if not shop:
-            return tr("Escribe el dominio de tu tienda (tu-tienda.myshopify.com).")
+            return tr("Escribe el dominio de tu tienda (tu-tienda.myshopify.com)."), "", ""
         try:
             shop = normalize_shop(shop)
         except ShopifyError as exc:
-            return str(exc)
+            return str(exc), "", ""
         if not self.client_id_edit.text().strip() or not self.secret_edit.text().strip():
-            return tr("Pega el Client ID y el Client secret de la app «LabelBridge».")
-        try:  # la clave, en el almacén seguro del equipo (nunca en la configuración)
-            self.ctx.secrets.update(SHOPIFY_CLIENT_SECRET, self.secret_edit.text())
-        except SecretStoreError as exc:
-            return str(exc)
-        s.shop, s.auth_mode, s.client_id = shop, "client_credentials", self.client_id_edit.text().strip()
-        self.shop_edit.setText(shop)
-        self.ctx.cfg.save("shopify")
-        return ""
+            return tr("Pega el Client ID y el Client secret de la app «LabelBridge»."), "", ""
+        return "", shop, self.client_id_edit.text().strip()
 
     def _connect(self) -> None:
-        problem = self._save_store()
+        """Prueba lo escrito. Si la tienda ya funcionaba y la prueba falla, vuelve a lo de antes (nunca se queda con
+        datos sin probar)."""
+        if self._store_unchanged():
+            self._connected_already()
+            return
+        problem, shop, client_id = self._check_store()
         if problem:
             self._store_message(problem, "Warning")
             return
+        s = self.ctx.cfg.data.shopify
+        before = (s.shop, s.auth_mode, s.client_id, self.ctx.secrets.get(SHOPIFY_CLIENT_SECRET))
+        try:  # la clave, en el almacén seguro del equipo (nunca en la configuración)
+            self.ctx.secrets.update(SHOPIFY_CLIENT_SECRET, self.secret_edit.text())
+        except SecretStoreError as exc:
+            self._store_message(str(exc), "Warning")
+            return
+        s.shop, s.auth_mode, s.client_id = shop, "client_credentials", client_id
+        self.shop_edit.setText(shop)
+        self._save("shopify")
         self.connect_btn.setEnabled(False)
         self.connect_btn.setText(tr("Conectando…"))
-        run_async(self.ctx.services.shopify.test_connection, self._connected, self._connect_failed,
-                  what=tr("Conectar la tienda"))
+
+        def failed(message: str) -> None:
+            if before[0]:  # ya había una tienda: se vuelve a la que funcionaba (lo nuevo queda escrito para corregirlo)
+                s.shop, s.auth_mode, s.client_id = before[0], before[1], before[2]
+                try:
+                    self.ctx.secrets.update(SHOPIFY_CLIENT_SECRET, before[3])
+                except SecretStoreError as exc:
+                    log.error("Asistente de inicio: no se pudo volver a la clave anterior: %s", exc)
+                self._save("shopify")
+            self._connect_failed(message)
+
+        run_async(self.ctx.services.shopify.test_connection, self._connected, failed, what=tr("Conectar la tienda"))
+
+    def _connected_already(self) -> None:
+        s = self.ctx.cfg.data.shopify
+        self.connected = s.shop
+        self._store_message(tr("✓ Tu tienda {0} ya está conectada.", s.shop), "Hint")
+        self._mark("store")
 
     def _connected(self, data: dict) -> None:
         try:
@@ -482,12 +569,14 @@ class SetupWizard(QDialog):
         s = self.ctx.cfg.data.shopify
         if not s.enabled and not s.activated_once:  # la primera conexión que funciona activa la tienda
             s.enabled = s.activated_once = True
-            self.ctx.cfg.save("shopify")
+            self._save("shopify")
         if data.get("name") and not self.ctx.cfg.data.labels.store_name.strip():
             self.ctx.cfg.data.labels.store_name = str(data["name"])
-            self.ctx.cfg.save("general")
+            self._save("general")
         self.connected = str(data.get("name") or s.shop)
-        text = tr("✓ Conectado a «{0}». LabelBridge ya revisa sus pedidos nuevos.", self.connected)
+        text = (tr("✓ Conectado a «{0}». LabelBridge ya revisa sus pedidos nuevos.", self.connected) if s.enabled
+                else tr("✓ Conectado a «{0}», pero la tienda está apagada en LabelBridge: actívala en Shopify → "
+                        "Conexión.", self.connected))
         if data.get("missing"):
             text += " " + tr("Faltan permisos en la app: {0}. Pega los permisos con «Copiar permisos» en el Dev "
                              "Dashboard y publica la versión nueva.", ", ".join(data["missing"]))
@@ -513,13 +602,17 @@ class SetupWizard(QDialog):
     def _apply_store(self) -> str:
         if self.connected:
             return ""
+        if self._store_unchanged():  # ya estaba conectada y no se tocó nada: se sigue
+            self.connected = self.ctx.cfg.data.shopify.shop
+            return ""
         filled = any(w.text().strip() for w in (self.shop_edit, self.client_id_edit, self.secret_edit))
         if not filled:
             return ""  # sin tienda por ahora: se sigue (el asistente o la Guía lo retoman)
-        problem = self._save_store()
+        problem, _shop, _client = self._check_store()
         if problem:
             return problem
-        return tr("Pulsa «Conectar y probar» para comprobar la tienda, o borra los datos para hacerlo después.")
+        return tr("Pulsa «Conectar y probar» para comprobar la tienda (nada se guarda sin probarlo), o borra los datos "
+                  "para hacerlo después.")
 
     # --- 4. cada pedido --------------------------------------------------------------------------------
     def _orders_page(self) -> QWidget:
@@ -558,6 +651,7 @@ class SetupWizard(QDialog):
             self.buy_switch.setChecked(True)  # lo que se eligió como objetivo, ya propuesto (se confirma al seguir)
         has_page_printer = bool(self.ctx.cfg.data.shopify.order_page_printer)
         self.page_switch.setEnabled(has_page_printer)
+        self.page_switch.setChecked(self.ctx.cfg.data.shopify.print_order_page and has_page_printer)
         note = "" if has_page_printer else tr("Para la página del pedido elige antes una impresora de hojas (paso "
                                               "Impresoras).")
         if buying and not self.connected and not self.ctx.cfg.data.shopify.enabled:
@@ -568,10 +662,13 @@ class SetupWizard(QDialog):
 
     def _apply_orders(self) -> str:
         s = self.ctx.cfg.data.shopify
-        buy = self.goal == BUY and self.buy_switch.isChecked()
+        s.print_order_page = self.page_switch.isChecked() and bool(s.order_page_printer)
+        if self.goal != BUY:  # «Solo imprimir»: la compra de guías queda como estaba (no se apaga sin preguntar)
+            self._save("shopify")
+            self._mark("orders")
+            return ""
+        buy = self.buy_switch.isChecked()
         if buy and not s.buy_shipping_label:
-            from .widgets import confirm
-
             if not confirm(self, tr("Compra automática de guías"), tr(
                     "LabelBridge comprará una guía de Shopify Shipping (USPS Priority Mail) por cada pedido nuevo pagado "
                     "y pendiente de envío, con cargo a tu cuenta de Shopify.\n\n¿Activar la compra automática?")):
@@ -579,8 +676,7 @@ class SetupWizard(QDialog):
                 buy = False
         s.buy_shipping_label = buy
         s.notify_customer = buy and self.notify_switch.isChecked()
-        s.print_order_page = self.page_switch.isChecked() and bool(s.order_page_printer)
-        self.ctx.cfg.save("shopify")
+        self._save("shopify")
         self._mark("orders")
         return ""
 
@@ -620,7 +716,7 @@ class SetupWizard(QDialog):
             autostart.apply(g.start_with_windows)
         except OSError as exc:
             return tr("No se pudo configurar el inicio automático: {0}", exc)
-        self.ctx.cfg.save("general")
+        self._save("general")
         self._mark("always")
         return ""
 
@@ -668,9 +764,10 @@ class SetupWizard(QDialog):
         if g.start_with_windows:
             done.append(tr("Se abre sola al encender el equipo"))
         pending.append(tr("Hacer un pedido de prueba (la Guía te dice cómo)"))
-        html = "".join(f"<p>✓ {item}</p>" for item in done)
+        html = "".join(f"<p>✓ {escape(item)}</p>" for item in done)
         if pending:
-            html += "<p><b>" + tr("Para después:") + "</b></p>" + "".join(f"<p>• {item}</p>" for item in pending)
+            html += "<p><b>" + escape(tr("Para después:")) + "</b></p>" + "".join(
+                f"<p>• {escape(item)}</p>" for item in pending)
         self.summary.setText(html)
 
     def _continue_with_assistant(self) -> None:
@@ -680,6 +777,12 @@ class SetupWizard(QDialog):
                                    "paso."))
 
     # --- utilidades ------------------------------------------------------------------------------------
+    def _save(self, section: str) -> None:
+        """Guarda y avisa a las pantallas abiertas (Shopify, Ajustes) que recarguen lo guardado: si no, al pulsar
+        «Guardar» en ellas escribirían lo que mostraban antes y desharían lo de este asistente."""
+        self.ctx.cfg.save(section)
+        self.ctx.events.emit(CONFIG_EXTERNAL, "shopify" if section.startswith("shopify") else section)
+
     def _mark(self, step: str) -> None:
         if step not in self.done_steps:
             self.done_steps.append(step)

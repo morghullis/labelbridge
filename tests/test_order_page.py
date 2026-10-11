@@ -351,3 +351,12 @@ def test_the_routes_test_button_refuses_label_printers(core, monkeypatch):
     combo.setCurrentIndex(combo.findData("rollo-2"))
     card.test(routing.PAGE)
     assert "etiquetas" in errors[-1] and "es de etiquetas" in card.page_note.text()
+
+
+def test_a_shipping_order_that_arrives_prepared_still_gets_its_page(core, monkeypatch):
+    _printers(core)
+    fake = StoreWithPickup(iso(datetime.now(timezone.utc).timestamp()))
+    service, s = _service(core, monkeypatch, fake)
+    s.order_page_printer = "oficina"
+    order = FakeShopify.order(fake, 3001, fake.now_iso, displayFulfillmentStatus="FULFILLED")  # FedEx de Flow
+    assert service._print_order_page(service.client(), s, order, {"order_id": "3001", "order_name": "#3001"}) == 1

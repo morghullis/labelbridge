@@ -234,12 +234,18 @@ class MainWindow(QMainWindow):
         version.setContentsMargins(10, 4, 0, 0)
         col.addWidget(version)
 
-    def open_setup(self) -> None:
-        """El asistente de inicio (la primera vez, o desde la Guía)."""
+    def open_setup(self, auto_connect: bool = False) -> None:
+        """El asistente de inicio (la primera vez, o desde la Guía). `auto_connect`: el instalador dejó la tienda con su
+        clave: se prueba y se activa ya (como antes), aunque se cierre el asistente sin llegar a ese paso."""
+        from PySide6.QtCore import Qt
+
         from .setup_wizard import SetupWizard
 
         self.show_and_raise()
+        if auto_connect:
+            self.pages["shopify"].test_now()
         wizard = SetupWizard(self, self.ctx, open_assistant=self.ask_assistant, navigate=self.navigate)
+        wizard.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)  # con ella se va la clave que mostraba
         wizard.finished.connect(lambda _r: self.pages["guide"].refresh())
         wizard.open()
 
@@ -252,10 +258,9 @@ class MainWindow(QMainWindow):
         page = self.assistant.page
         connected = page.conversation.has_key()
         self.open_assistant(connect=not connected)
+        page.input.setPlainText(text)  # si no se puede enviar todavía (sin IA, sin el aviso aceptado), queda escrito
         if connected:
-            page.send_text(text)
-        else:
-            page.input.setPlainText(text)
+            page.send_current()
 
     def open_assistant(self, connect: bool = False, provider: str | None = None) -> None:
         """Muestra la ventana y abre el chat del asistente (con «Conecta tu IA» si se pide)."""

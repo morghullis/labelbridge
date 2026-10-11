@@ -1381,13 +1381,14 @@ class ShopifyService(BackgroundService):
         key = self._key(f"order:{legacy}:page")
         if self.store.seen(key):
             return 0
-        if (order.get("displayFulfillmentStatus") or "") == "FULFILLED":
-            return 0  # llegó ya preparado (venta en el local, algo digital): no hay nada que preparar
+        if (order.get("displayFulfillmentStatus") or "") == "FULFILLED" and shipping_problem(order):
+            return 0  # sin envío y ya preparado al llegar (venta en el local, algo digital): nada que preparar
         problem = routing.page_problem(self.cfg)
         if problem:
             self.store.kv_set(since_key, "")  # al elegir la impresora, empieza desde ese momento
             self._page_notice(problem, meta["order_name"])
             return 0
+        self.store.kv_set(self._key("page-notice"), "")  # resuelto: si vuelve a pasar, se avisa otra vez
         created = _iso_to_ts(order.get("createdAt", ""))
         if created < self._page_since() or created < time.time() - PAGE_MAX_AGE:
             return 0  # de antes de que la página empezara a imprimirse: no salen de golpe pedidos viejos

@@ -479,7 +479,7 @@ def _run(app, argv: list[str], hints: dict, instance) -> int:
 
     if setup_pending(ctx):  # la primera vez: el asistente de inicio (con la tienda del instalador ya escrita)
         window.show()
-        QTimer.singleShot(700, window.open_setup)
+        QTimer.singleShot(700, lambda: window.open_setup(auto_connect=auto_connect))
     elif connect_store:  # recién instalada con la tienda: directo a conectarla (y probarla, si vino la clave)
         QTimer.singleShot(700, lambda: window.connect_store(test=auto_connect))
     not_installed = failed_update(store.kv_get)
